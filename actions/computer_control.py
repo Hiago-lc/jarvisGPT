@@ -13,6 +13,7 @@ else:
     _WIN_HIDE: dict = {}
 import time
 import random
+import threading
 from pathlib import Path
 
 from core import appidentity, outcome
@@ -87,7 +88,7 @@ def _require_pyautogui():
     what it was — the check that turns a missing optional dependency into an
     instruction rather than a traceback.
     """
-    if not _PYAUTOGUI:
+    if not (_PYAUTOGUI or installed("pyautogui")):
         raise RuntimeError("PyAutoGUI not installed. Run: pip install pyautogui")
 
 
@@ -96,7 +97,7 @@ def _require_pyperclip() -> bool:
     every caller already has a hotkey fallback written for the case where it
     is not — turning that into an exception would break the path built to
     survive it."""
-    return _PYPERCLIP
+    return _PYPERCLIP or installed("pyperclip")
 
 _FIRST_NAMES = [
     "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Drew", "Quinn",
@@ -173,37 +174,57 @@ def _user_profile() -> dict:
         pass
     return {}
 
+_INPUT_LOCK = threading.RLock()
+
+
 def _type(text: str, interval: float = 0.03) -> str:
+    # typewrite silently drops accented characters even in short Portuguese words.
+    if not isinstance(text, str) or not text:
+        raise ValueError("Informe o texto que deve ser digitado.")
     _require_pyautogui()
-    time.sleep(0.3)
-    pyautogui.typewrite(text, interval=interval)
-    return f"Typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+    if not text.isascii():
+        return _clipboard_paste(text)
+    pyautogui.write(text, interval=interval)
+    return outcome.unverified("type", "keystrokes sent; verify the target field", characters=len(text))
 
 
 def _smart_type(text: str, clear_first: bool = True) -> str:
-    _require_pyautogui()
+    if not isinstance(text, str) or not text:
+        raise ValueError("Informe o texto que deve ser digitado.")
+    # Prepare the clipboard BEFORE deleting anything in the destination field.
+    if _require_pyperclip():
+        return _clipboard_paste(text, clear_first=clear_first)
+    if not text.isascii():
+        raise RuntimeError("Para digitar acentos, instale pyperclip: python -m pip install pyperclip")
     if clear_first:
         _clear_field()
-        time.sleep(0.1)
+    return _type(text)
 
-    if len(text) > 20 and _require_pyperclip():
-        pyperclip.copy(text)
-        time.sleep(0.1)
-        paste_key = "command" if _get_os() == "mac" else "ctrl"
-        pyautogui.hotkey(paste_key, "v")
-        return f"Smart-typed (clipboard): {text[:60]}{'…' if len(text) > 60 else ''}"
 
-    pyautogui.typewrite(text, interval=0.04)
-    return f"Smart-typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+def _checked_coordinates(x, y):
+    if x is None or y is None:
+        raise ValueError("Informe x e y juntos, ou uma descrição do elemento visível.")
+    if isinstance(x, bool) or isinstance(y, bool):
+        raise ValueError("Coordenadas precisam ser números inteiros.")
+    if int(x) != float(x) or int(y) != float(y):
+        raise ValueError("Coordenadas precisam ser números inteiros.")
+    x, y = int(x), int(y)
+    width, height = pyautogui.size()
+    if not (0 <= x < width and 0 <= y < height):
+        raise ValueError(f"Coordenadas ({x}, {y}) fora da tela principal ({width}x{height}).")
+    return x, y
 
 
 def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
     _require_pyautogui()
-    if x is not None and y is not None:
+    if button not in ("left", "right", "middle"):
+        raise ValueError("Botão inválido: use left, right ou middle.")
+    if x is not None or y is not None:
+        x, y = _checked_coordinates(x, y)
         pyautogui.click(x, y, button=button, clicks=clicks)
-        return f"{'Double-c' if clicks == 2 else 'C'}licked ({x}, {y}) [{button}]"
-    pyautogui.click(button=button, clicks=clicks)
-    return f"Clicked at current position [{button}]"
+    else:
+        pyautogui.click(button=button, clicks=clicks)
+    return outcome.unverified("click", "mouse input sent; inspect the screen before continuing", x=x, y=y, button=button)
 
 
 def _hotkey(*keys) -> str:
@@ -228,12 +249,15 @@ def _scroll(direction: str = "down", amount: int = 3) -> str:
 
 def _move(x: int, y: int, duration: float = 0.3) -> str:
     _require_pyautogui()
+    x, y = _checked_coordinates(x, y)
     pyautogui.moveTo(x, y, duration=duration)
     return f"Mouse → ({x}, {y})"
 
 
 def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
     _require_pyautogui()
+    x1, y1 = _checked_coordinates(x1, y1)
+    x2, y2 = _checked_coordinates(x2, y2)
     pyautogui.moveTo(x1, y1, duration=0.2)
     pyautogui.dragTo(x2, y2, duration=duration, button="left")
     return f"Dragged ({x1},{y1}) → ({x2},{y2})"
@@ -247,20 +271,32 @@ def _clipboard_get() -> str:
     return "(copied — pyperclip unavailable for read)"
 
 
-def _clipboard_paste(text: str) -> str:
-    if _require_pyperclip():
-        pyperclip.copy(text)
-        time.sleep(0.1)
-        _require_pyautogui()
-        paste_key = "command" if _get_os() == "mac" else "ctrl"
-        pyautogui.hotkey(paste_key, "v")
-        return f"Pasted: {text[:60]}{'…' if len(text) > 60 else ''}"
-    return "pyperclip not available"
+def _clipboard_paste(text: str, clear_first: bool = False) -> str:
+    _require_pyautogui()
+    if not _require_pyperclip():
+        raise RuntimeError("Clipboard indisponível. Execute: python -m pip install pyperclip")
+    with _INPUT_LOCK:
+        previous = pyperclip.paste()
+        try:
+            pyperclip.copy(text)
+            if pyperclip.paste() != text:
+                raise RuntimeError("Não foi possível preparar o texto na área de transferência.")
+            if clear_first:
+                _clear_field()
+            paste_key = "command" if _get_os() in ("mac", "darwin", "macos") else "ctrl"
+            pyautogui.hotkey(paste_key, "v")
+            time.sleep(0.25)
+        finally:
+            # Do not overwrite a new clipboard selection the user made meanwhile.
+            if pyperclip.paste() == text:
+                pyperclip.copy(previous)
+    return outcome.unverified("paste", "paste shortcut sent; verify the target field", characters=len(text))
 
 
 def _screenshot(save_path: str | None = None) -> str:
     _require_pyautogui()
     path = _safe_screenshot_path(save_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     img  = pyautogui.screenshot()
     img.save(str(path))
     return f"Screenshot saved: {path}"
@@ -277,17 +313,30 @@ def _clear_field() -> str:
 def _focus_window(title: str) -> str:
     os_name = _get_os()
 
+    if not title or not title.strip():
+        return outcome.failed("focus_window", "Informe parte do título da janela desejada.")
     if os_name == "windows":
         try:
-            script = f'(New-Object -ComObject WScript.Shell).AppActivate("{title}")'
-            subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True, timeout=5, **_WIN_HIDE,
-            )
+            import pygetwindow
+            windows = [w for w in pygetwindow.getWindowsWithTitle(title)
+                       if w.title and w.width > 0 and w.height > 0]
+            exact = [w for w in windows if w.title.casefold() == title.casefold()]
+            windows = exact or windows
+            if not windows:
+                return outcome.failed("focus_window", "Nenhuma janela encontrada", title=title)
+            if len(windows) > 1:
+                return outcome.ask("focus_window", "Mais de uma janela encontrada; informe o título completo", candidates=" | ".join(w.title for w in windows[:5]))
+            window = windows[0]
+            if window.isMinimized:
+                window.restore()
+            window.activate()
             time.sleep(0.3)
-            return f"Focused window: {title}"
+            active = pygetwindow.getActiveWindow()
+            if active is None or active._hWnd != window._hWnd:
+                return outcome.failed("focus_window", "Windows não permitiu ativar a janela; selecione-a manualmente", title=window.title)
+            return outcome.done("focus_window", title=window.title, verified=True)
         except Exception as e:
-            return f"focus_window (Windows) failed: {e}"
+            return outcome.failed("focus_window", str(e), title=title)
 
     if os_name == "mac":
         script = (
@@ -467,8 +516,9 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         from google.genai import types as gtypes
 
         _require_pyautogui()
-        w, h  = pyautogui.size()
-        img   = pyautogui.screenshot()
+        screen_w, screen_h = pyautogui.size()
+        img = pyautogui.screenshot()
+        w, h = img.size
         buf   = io.BytesIO()
         img.save(buf, format="PNG")
         image_bytes = buf.getvalue()
@@ -494,14 +544,16 @@ def _screen_find(description: str) -> tuple[int, int] | None:
 
         match = re.search(r"(\d+)\s*,\s*(\d+)", text)
         if match:
-            return int(match.group(1)), int(match.group(2))
+            px, py = int(match.group(1)), int(match.group(2))
+            if 0 <= px < w and 0 <= py < h:
+                return _checked_coordinates(round(px * screen_w / w), round(py * screen_h / h))
 
     except Exception as e:
         print(f"[ComputerControl] ⚠️ screen_find failed: {e}")
 
     return None
 
-def computer_control(
+def _computer_control(
     parameters: dict,
     response=None,
     player=None,
@@ -561,9 +613,23 @@ def computer_control(
         # core/outcome.is_problem().
         print(f"[ComputerControl] {action}")
 
-    print(f"[ComputerControl] ▶ {action}  {params}")
+    print(f"[ComputerControl] action={action}")
 
     try:
+        # Focus is part of the SAME call so text never goes to an unintended window
+        # after a failed activation. The caller may also focus in a separate call.
+        input_actions = {"type", "smart_type", "paste", "click", "left_click", "double_click", "right_click", "screen_click", "press", "hotkey", "clear_field", "scroll"}
+        if action in input_actions and params.get("title"):
+            focused = _focus_window(params["title"])
+            if not focused.startswith("status=done"):
+                return focused
+
+        if action in ("type", "smart_type", "paste") and params.get("description"):
+            coords = _screen_find(params["description"])
+            if coords is None:
+                return outcome.failed(action, "Campo de texto não localizado; nada digitado")
+            _click(*coords)
+            time.sleep(0.2)
 
         if action == "type":
             return _type(params.get("text", ""))
@@ -574,14 +640,19 @@ def computer_control(
                 clear_first=params.get("clear_first", True),
             )
 
-        if action in ("click", "left_click"):
-            return _click(params.get("x"), params.get("y"), "left", 1)
-
-        if action == "double_click":
-            return _click(params.get("x"), params.get("y"), "left", 2)
-
-        if action == "right_click":
-            return _click(params.get("x"), params.get("y"), "right", 1)
+        if action in ("click", "left_click", "double_click", "right_click", "screen_click"):
+            x, y = params.get("x"), params.get("y")
+            description = params.get("description", "").strip()
+            if description:
+                coords = _screen_find(description)
+                if coords is None:
+                    return outcome.failed("click", "Elemento não localizado; nenhum clique executado", description=description)
+                x, y = coords
+            elif action == "screen_click":
+                return outcome.failed("click", "Informe a descrição do elemento visível.")
+            return _click(x, y,
+                          "right" if action == "right_click" else params.get("button", "left"),
+                          2 if action == "double_click" else 1)
 
         if action == "move":
             return _move(int(params.get("x", 0)), int(params.get("y", 0)))
@@ -618,15 +689,6 @@ def computer_control(
         if action == "screen_find":
             coords = _screen_find(params.get("description", ""))
             return f"{coords[0]},{coords[1]}" if coords else "NOT_FOUND"
-
-        if action == "screen_click":
-            desc   = params.get("description", "")
-            coords = _screen_find(desc)
-            if coords:
-                time.sleep(0.2)
-                _click(x=coords[0], y=coords[1])
-                return f"Clicked '{desc}' at {coords}"
-            return f"Element not found on screen: '{desc}'"
 
         if action == "wait":
             secs = float(params.get("seconds", 1.0))
@@ -665,13 +727,24 @@ def computer_control(
 
     except Exception as e:
         print(f"[ComputerControl] ❌ {action}: {e}")
-        return f"computer_control '{action}' failed: {e}"
+        if e.__class__.__name__ == "FailSafeException":
+            return outcome.failed(action, "Automação interrompida: mouse em um canto da tela. Afaste-o do canto antes de tentar novamente.")
+        return outcome.failed(action, str(e))
+
+
+def computer_control(parameters, response=None, player=None, session_memory=None):
+    # Live and dashboard calls share one mouse, keyboard and clipboard.
+    with _INPUT_LOCK:
+        return _computer_control(parameters, response, player, session_memory)
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
     "description": (
+        "When asked to type or click, execute this tool rather than just describing an action. "
+        "For a named target app, pass title with the input action to focus it first. "
+        "For clicking a named element or typing into a specific field use description; never invent coordinates. "
         "Direct computer control: type, click, hotkeys, scroll, move mouse, "
         "screenshots, find elements on screen, and CLOSE an application. "
         "Use action='close_app' with 'app_name' whenever the user asks to "
@@ -694,7 +767,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "type | smart_type | click | double_click | right_click | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | close_app | screen_find | screen_click | random_data | user_data"
+                "description": "type | smart_type | click | double_click | right_click | drag | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | close_app | screen_find | screen_click | random_data | user_data"
             },
             "app_name": {
                 "type": "STRING",
@@ -724,6 +797,8 @@ TOOL = {
                 "type": "INTEGER",
                 "description": "Y coordinate"
             },
+            **{name: {"type": "INTEGER", "description": "Drag start/end screen coordinate"} for name in ("x1", "y1", "x2", "y2")},
+            "button": {"type": "STRING", "enum": ["left", "right", "middle"], "description": "Mouse button, default left"},
             "keys": {
                 "type": "STRING",
                 "description": "Key combination e.g. 'ctrl+c'"
@@ -746,11 +821,11 @@ TOOL = {
             },
             "title": {
                 "type": "STRING",
-                "description": "Window title for focus_window"
+                "description": "Target window title. For type, paste, click or hotkey, focus and verify this window BEFORE sending input. For focus_window, title is required."
             },
             "description": {
                 "type": "STRING",
-                "description": "Element description for screen_find/screen_click"
+                "description": "Visible element or text field to locate with Gemini. For type, smart_type and paste, click this field before typing. Prefer this to guessing coordinates."
             },
             "type": {
                 "type": "STRING",

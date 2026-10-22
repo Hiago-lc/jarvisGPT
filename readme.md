@@ -1,3 +1,5 @@
+> **Gemini + controle do computador:** veja [o guia atualizado](CONTROLE-COMPUTADOR.md). Inicie com `python start_gemini.py` para voltar ao Gemini.
+
 > **Versão Jarvis GPT:** use `python start_openai.py` para iniciar com OpenAI.
 > Veja [o guia em português](LEIA-ME-GPT.md) para configurar a chave e importar conversas do ChatGPT.
 > A documentação original abaixo também descreve recursos do modo Gemini.
