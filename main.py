@@ -1036,6 +1036,8 @@ class JarvisLive:
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
+        from actions.screen_task import cancel
+        cancel()
         self._interrupted = True
         q = self.audio_in_queue
         if q:
@@ -1424,6 +1426,11 @@ class JarvisLive:
                 else:
                     result = f"Unknown tool: {name}"
 
+        except asyncio.CancelledError:
+            if name == "screen_task":
+                from actions.screen_task import cancel
+                cancel()
+            raise
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()

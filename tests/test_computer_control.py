@@ -104,8 +104,8 @@ class DesktopTests(unittest.TestCase):
     def test_screenshot_coordinates_scale_to_input_dimensions(self):
         from core import gemini
         self.gui.screenshot.return_value.size = (3840, 2160)
-        response = types.SimpleNamespace(text='1920,1080')
-        with patch.object(cc, '_get_api_key', return_value='test'), patch.object(gemini, 'call', return_value=response):
+        response = {'found': True, 'confidence': .95, 'box_2d': [400, 400, 600, 600]}
+        with patch.object(cc, '_get_api_key', return_value='test'), patch.object(gemini, 'as_json', return_value=response):
             self.assertEqual(cc._screen_find('campo'), (960, 540))
 
     def test_emergency_stop_is_reported(self):

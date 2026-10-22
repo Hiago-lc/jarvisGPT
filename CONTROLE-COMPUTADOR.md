@@ -64,3 +64,39 @@ Jarvis para digitar “Olá, João! Ação e café.”, confira o texto e peça 
 em um menu sem alterações destrutivas. Se falhar, envie a linha de erro do log,
 sem enviar chaves de API. Capturas, buscas visuais e voz exigem cota Gemini
 disponível; o funcionamento não é ilimitado.
+
+## Cliques precisos e tarefas com várias etapas
+
+Atualize o código e dependências e use `python start_gemini.py`.
+No Windows, a busca tenta primeiro um controle acessível com nome exato e único
+na janela ativa (UI Automation, via pywinauto). Se não encontrar, o Gemini
+localiza uma caixa na captura com coordenadas normalizadas; respostas inválidas,
+alvos incertos e mudanças da janela ativa durante a busca são recusados.
+Isso melhora a localização, mas não elimina erros de interpretação visual.
+A captura continua limitada ao monitor principal. Coloque ali o aplicativo alvo.
+
+Para uma sequência, peça por exemplo:
+
+> “Na página aberta, clique na busca, pesquise receitas de bolo e abra um resultado.”
+
+O modelo recebe a ferramenta `screen_task` para executar essa sequência.
+Ela observa a tela após cada comando e só escolhe a próxima ação a partir da
+nova captura. Não é uma lista de cliques calculada de uma vez.
+O limite padrão é 8 ações, ajustável até 12, com janela de execução de 2 minutos.
+Se o objetivo não for confirmado nesse limite, a ferramenta informa que ficou
+incompleto. Não é monitoramento permanente nem uma rotina agendada.
+
+Para interromper, clique em **INTERRUPT** ou pressione **Esc com a janela do
+Jarvis em foco**. O cancelamento é checado também após as chamadas ao Gemini;
+nenhum novo comando de entrada deve ser enviado após a checagem detectar a
+interrupção. O canto da tela continua acionando a parada de emergência do mouse.
+Chamadas de rede já iniciadas podem levar alguns segundos para terminar.
+Não dependa de um pedido de parada por voz durante uma tarefa: use o botão.
+
+O agente foi instruído a pausar antes de envio de mensagens, compras, exclusões
+e outras ações irreversíveis, pedindo intervenção manual. Isso é uma orientação
+ao modelo, não um mecanismo de isolamento do sistema. Use tarefas pequenas e
+acompanhe o computador durante a execução.
+Cada observação e busca visual pode consumir cota do Gemini.
+Os testes automatizados usam simulações; a precisão no seu Windows ainda
+precisa ser conferida com seus aplicativos, resolução e escala de tela.
