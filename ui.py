@@ -2510,9 +2510,9 @@ class MemoryOverlay(_HudOverlay):
 
         rows = all_entries_for_ui()
 
+        from memory.memory_manager import MEMORY_PATH
         cap = QLabel(f"{len(rows)} stored facts — newest first. "
-                     f"Nothing here is sent anywhere; it lives in "
-                     f"memory/long_term.json on this machine.")
+                     f"Saved locally in {MEMORY_PATH}. Relevant context is sent to your configured model when needed.")
         cap.setWordWrap(True)
         cap.setFont(QFont("Courier New", 7))
         cap.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")

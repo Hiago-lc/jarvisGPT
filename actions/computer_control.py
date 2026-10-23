@@ -43,7 +43,6 @@ def _base_dir() -> Path:
 
 _BASE         = _base_dir()
 _CONFIG_PATH  = _BASE / "config" / "api_keys.json"
-_MEMORY_PATH  = _BASE / "memory" / "long_term.json"
 
 def _load_config() -> dict:
     try:
@@ -172,10 +171,10 @@ def _random_data(data_type: str) -> str:
 def _user_profile() -> dict:
     """Read identity fields from long-term memory."""
     try:
-        if _MEMORY_PATH.exists():
-            data     = json.loads(_MEMORY_PATH.read_text(encoding="utf-8"))
-            identity = data.get("identity", {})
-            return {k: v.get("value", "") for k, v in identity.items()}
+        from memory.memory_manager import load_memory
+        data = load_memory()
+        identity = data.get("identity", {})
+        return {k: v.get("value", "") for k, v in identity.items() if isinstance(v, dict)}
     except Exception:
         pass
     return {}
@@ -188,7 +187,7 @@ def _type(text: str, interval: float = 0.03) -> str:
     if not isinstance(text, str) or not text:
         raise ValueError("Informe o texto que deve ser digitado.")
     _require_pyautogui()
-    if not text.isascii():
+    if not text.isascii() or (len(text) > 20 and _require_pyperclip()):
         return _clipboard_paste(text)
     pyautogui.write(text, interval=interval)
     return outcome.unverified("type", "keystrokes sent; verify the target field", characters=len(text))
@@ -527,11 +526,11 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         from core.screen_target import foreground_id
         original_window = foreground_id()
         screen_w, screen_h = pyautogui.size()
-        img = pyautogui.screenshot()
         from core.screen_target import accessible_target, box_center
         target = accessible_target(description, screen_w, screen_h)
         if target is not None:
             return _checked_coordinates(*target)
+        img = pyautogui.screenshot()
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         prompt = (

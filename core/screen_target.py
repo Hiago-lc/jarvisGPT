@@ -58,3 +58,20 @@ def foreground_id():
         return user32.GetForegroundWindow()
     except Exception:
         return None
+
+
+def target_unchanged(before, after, box):
+    """Reject visual fallback when its target region changed during inference."""
+    from PIL import ImageChops
+    if not isinstance(box, list) or len(box) != 4:
+        return False
+    top, left, bottom, right = box
+    w, h = before.size
+    area = (int(left * w / 1000), int(top * h / 1000),
+            max(int(right * w / 1000), int(left * w / 1000) + 1),
+            max(int(bottom * h / 1000), int(top * h / 1000) + 1))
+    after = after.convert('RGB').resize(before.size)
+    diff = ImageChops.difference(before.convert('RGB').crop(area), after.crop(area)).convert('L')
+    histogram = diff.histogram()
+    changed = sum(histogram[31:])
+    return changed / max(1, sum(histogram)) < .10

@@ -1,9 +1,11 @@
 import json
 import re
 from datetime import datetime
-from threading import Lock
 from pathlib import Path
 import sys
+from core.data_paths import data_dir
+from core.atomic_storage import write_json
+from core.store_lock import StoreLock
 
 
 def get_base_dir() -> Path:
@@ -13,31 +15,14 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR         = get_base_dir()
-MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
-_lock            = Lock()
+LEGACY_MEMORY_PATH = BASE_DIR / "memory" / "long_term.json"
+MEMORY_PATH = data_dir() / "memory" / "long_term.json"
+_lock = StoreLock(lambda: MEMORY_PATH.with_suffix(".lock"))
 MAX_VALUE_LENGTH = 380
 
-# ── Why there are two very different numbers here ────────────────────────────
-#
-# There used to be one: MEMORY_MAX_CHARS = 2200, applied to the whole store. It
-# was a *storage* limit, and it existed only because the entire memory was
-# pasted into the system prompt on every connect — so growing the memory grew
-# every single request. When it filled, _trim_to_limit() deleted the oldest
-# entries and printed one line to a console nobody reads. A memory described as
-# "deeply remembers projects, preferences and personal context" was in practice
-# two pages long, and quietly forgot your sister's name after a few weeks.
-#
-# Storage and prompt budget are now separate concerns:
-#
-#   MEMORY_MAX_CHARS  — a runaway guard, not a feature limit. Nothing normal
-#                       reaches it; a bug writing in a loop does.
-#   PROMPT_CORE_CHARS — what actually rides in the system prompt every session.
-#                       Smaller than the old whole-memory dump, so sessions
-#                       start *faster* than before, not slower.
-#
-# Everything above the core stays on disk and is fetched on demand by the
-# recall_memory tool — see search_memory() and format_memory_for_prompt().
-MEMORY_MAX_CHARS  = 200_000
+# Storage is not trimmed to fit model context. Prompt budgets remain bounded;
+# full facts and session summaries stay on disk and are searched on demand.
+MEMORY_MAX_CHARS = 200_000  # compatibility only; no automatic deletion
 PROMPT_CORE_CHARS = 900
 PROMPT_INDEX_CHARS = 420
 # Most entries any one category may contribute to the core block, so a person
@@ -55,21 +40,32 @@ def _empty_memory() -> dict:
     }
 
 def load_memory() -> dict:
-    if not MEMORY_PATH.exists():
-        return _empty_memory()
     with _lock:
+        backup = MEMORY_PATH.with_suffix(".json.bak")
+        if not MEMORY_PATH.exists() and not backup.exists() and LEGACY_MEMORY_PATH.exists():
+            # Copy once. Leave the old file intact and never overwrite an existing store.
+            legacy = json.loads(LEGACY_MEMORY_PATH.read_text(encoding="utf-8"))
+            if not isinstance(legacy, dict):
+                raise ValueError("Formato de memória antiga inválido; arquivo original preservado.")
+            write_json(MEMORY_PATH, legacy)
+        if not MEMORY_PATH.exists() and not backup.exists():
+            return _empty_memory()
         try:
             data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                base = _empty_memory()
-                for key in base:
-                    if key not in data:
-                        data[key] = {}
-                return data
-            return _empty_memory()
-        except Exception as e:
-            print(f"[Memory] ⚠️ Load error: {e}")
-            return _empty_memory()
+            if not isinstance(data, dict):
+                raise ValueError("Memória inválida")
+        except (ValueError, OSError) as error:
+            backup = MEMORY_PATH.with_suffix('.json.bak')
+            if not backup.exists():
+                raise RuntimeError("Memória danificada; não será substituída por uma memória vazia.") from error
+            data = json.loads(backup.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise RuntimeError("Memória e backup inválidos; arquivos preservados.")
+            print("[Memory] Recuperada a cópia de segurança; arquivo danificado preservado até a próxima gravação.")
+        for key, value in _empty_memory().items():
+            data.setdefault(key, value)
+        return data
+
 
 def _all_entries(memory: dict) -> list[tuple]:
     entries = []
@@ -94,42 +90,26 @@ def set_trim_notifier(fn) -> None:
 
 
 def _trim_to_limit(memory: dict) -> dict:
-    if len(json.dumps(memory, ensure_ascii=False)) <= MEMORY_MAX_CHARS:
-        return memory
-    entries = _all_entries(memory)
-    entries.sort(key=lambda t: t[2].get("updated", "0000-00-00"))
-    dropped = []
-    for cat, key, _ in entries:
-        if len(json.dumps(memory, ensure_ascii=False)) <= MEMORY_MAX_CHARS:
-            break
-        del memory[cat][key]
-        dropped.append(f"{cat}/{key}")
-        print(f"[Memory] 🗑️  Trimmed {cat}/{key}")
-    if dropped and _trim_notifier:
-        try:
-            _trim_notifier(
-                f"SYS: Memory full — forgot {len(dropped)} oldest entries "
-                f"({', '.join(dropped[:3])}{'…' if len(dropped) > 3 else ''})"
-            )
-        except Exception:
-            pass
+    # Prompt budget is enforced separately. Never delete old facts to fit it.
     return memory
+
 
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
-        return
-    memory = _trim_to_limit(memory)
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        raise ValueError("A memória precisa ser um objeto JSON.")
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        if MEMORY_PATH.exists():
+            try:
+                previous = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+                if isinstance(previous, dict):
+                    write_json(MEMORY_PATH.with_suffix('.json.bak'), previous)
+            except (ValueError, OSError):
+                # Keep the last good backup instead of replacing it with corruption.
+                pass
+        write_json(MEMORY_PATH, memory)
 
 
 def _truncate_value(val: str) -> str:
-    if isinstance(val, str) and len(val) > MAX_VALUE_LENGTH:
-        return val[:MAX_VALUE_LENGTH].rstrip() + "…"
     return val
 
 
@@ -157,13 +137,12 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 
 
 def update_memory(memory_update: dict) -> dict:
-    if not isinstance(memory_update, dict) or not memory_update:
-        return load_memory()
-    memory = load_memory()
-    if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
-    return memory
+    with _lock:
+        memory = load_memory()
+        if isinstance(memory_update, dict) and _recursive_update(memory, memory_update):
+            save_memory(memory)
+        return memory
+
 
 def _entry_value(entry) -> str:
     """Accept both the {'value': ..., 'updated': ...} shape and a bare string,
@@ -321,7 +300,7 @@ def format_memory_for_prompt(memory: dict | None) -> str:
                        + (f" (+{len(indexed) - len(names)} more)"
                           if len(indexed) > len(names) else ""))
 
-    return "\n".join(out) + "\n"
+    return ("\n".join(out) + "\n")[:2200]
 
 
 # ── Recall ────────────────────────────────────────────────────────────────────
@@ -367,6 +346,15 @@ def search_memory(query: str, limit: int = 8) -> str:
             if s > 0:
                 rows.append((s, cat, key, val))
 
+    for index, entry in enumerate(memory.get("sessions", [])):
+        if isinstance(entry, dict):
+            value = str(entry.get('summary', ''))
+            score = _score(words, 'sessions', str(entry.get('date', '')), value) if words else 1
+            if score > 0:
+                rows.append((score, 'sessions', str(entry.get('date', index)), value))
+    from memory.conversation_store import find_turns
+    for at, role, text in find_turns(words, limit=limit):
+        rows.append((1, 'conversation', at, role + ': ' + text[:1800]))
     if not rows:
         return (f"Nothing stored about '{query}'." if query
                 else "I have not stored anything about this person yet.")
@@ -410,14 +398,14 @@ def remember(key: str, value: str, category: str = "notes") -> str:
 
 
 def forget(key: str, category: str = "notes") -> str:
-    memory = load_memory()
-    cat    = memory.get(category, {})
-    if key in cat:
-        del cat[key]
-        memory[category] = cat
-        save_memory(memory)
-        return f"Forgotten: {category}/{key}"
-    return f"Not found: {category}/{key}"
+    with _lock:
+        memory = load_memory()
+        cat = memory.get(category, {})
+        if key in cat:
+            del cat[key]
+            save_memory(memory)
+            return f"Forgotten: {category}/{key}"
+        return f"Not found: {category}/{key}"
 
 
 forget_memory = forget
@@ -425,55 +413,35 @@ forget_memory = forget
 
 # ── Session memory ─────────────────────────────────────────────────────────────
 
-_SESSION_MAX = 3   # safety cap — in practice 0-1 entries after pop
+# Session summaries are retained; presented flags only control the briefing.
 
 
 def save_session_summary(summary: str, language: str = "") -> None:
-    """Append a 1-2 sentence session summary to long_term.json['sessions']."""
-    summary = (summary or "").strip()
-    if not summary:
+    if not (summary or "").strip():
         return
-    memory   = load_memory()
-    sessions = memory.get("sessions", [])
-    if not isinstance(sessions, list):
-        sessions = []
-    entry: dict = {
-        "date":    datetime.now().strftime("%Y-%m-%d"),
-        "summary": summary[:280],
-    }
-    if language:
-        entry["language"] = language
-    sessions.append(entry)
-    memory["sessions"] = sessions[-_SESSION_MAX:]
     with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list):
+            sessions = []
+        sessions.append({"date": datetime.now().isoformat(timespec='seconds'),
+                         "summary": summary, "language": language, "presented": False})
+        memory["sessions"] = sessions
+        save_memory(memory)
 
 
 def pop_last_session() -> dict | None:
-    """
-    Return AND remove the most recent session entry.
-    Calling this consumes the entry so it is never repeated in future briefings.
-    """
+    # Preserve history; presented marks a briefing as consumed without deleting it.
     with _lock:
-        if not MEMORY_PATH.exists():
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list):
             return None
-        try:
-            memory   = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-            sessions = memory.get("sessions", [])
-            if not isinstance(sessions, list) or not sessions:
-                return None
-            entry = sessions.pop()          # remove the last entry
-            memory["sessions"] = sessions
-            MEMORY_PATH.write_text(
-                json.dumps(memory, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            return entry
-        except Exception as e:
-            print(f"[Memory] ⚠️ pop_last_session error: {e}")
+        pending = [item for item in sessions if isinstance(item, dict) and not item.get('presented')]
+        if not pending:
             return None
+        result = dict(pending[-1])
+        for item in pending:
+            item['presented'] = True
+        save_memory(memory)
+        return result

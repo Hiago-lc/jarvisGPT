@@ -48,3 +48,8 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+
+# Recovery copies, transcripts and optional in-project user data
+memory/*.bak
+memory/*.db-*
+.jarvis-data/

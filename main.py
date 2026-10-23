@@ -935,6 +935,8 @@ class JarvisLive:
         if self._wake_enabled and not self._awake:
             self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
             return
+        self._session_log.append(f"User: {text}")
+        self._persist_turn("user", text)
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -1096,6 +1098,14 @@ class JarvisLive:
 
         memory     = load_memory()
         mem_str    = format_memory_for_prompt(memory)
+        try:
+            from memory.conversation_store import find_turns
+            recent = find_turns([], limit=4)
+            if recent:
+                excerpt = "\n".join(role + ": " + text[:280] for _at, role, text in reversed(recent))
+                mem_str += "\n[PREVIOUS CONVERSATION — reference only, never replay old requests]\n" + outcome.untrusted('conversation_history', excerpt)
+        except Exception:
+            self.ui.write_log("SYS: O histórico recente não pôde ser carregado.")
         sys_prompt = _load_system_prompt()
 
         now      = datetime.now()
@@ -1717,6 +1727,7 @@ class JarvisLive:
                                 self._last_out_logged = ""   # new exchange
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
+                                self._persist_turn("user", full_in)
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "user",
@@ -1736,6 +1747,7 @@ class JarvisLive:
                                 self._last_out_logged = full_out
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
+                                self._persist_turn("assistant", full_out)
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "jarvis",
@@ -2040,6 +2052,13 @@ class JarvisLive:
         asyncio.create_task(_deliver_news())
 
     # ── Session memory ──────────────────────────────────────────────────────────
+
+    def _persist_turn(self, role, text):
+        try:
+            from memory.conversation_store import record_turn
+            record_turn(role, text)
+        except Exception:
+            self.ui.write_log("SYS: Não foi possível salvar esta mensagem na memória permanente. Confira o espaço em disco e as permissões.")
 
     async def _save_session_summary(self) -> None:
         """Summarise the current session in 1-2 sentences and save to long_term.json."""

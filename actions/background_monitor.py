@@ -43,15 +43,11 @@ def _load() -> dict:
     return data if isinstance(data, dict) else {}
 
 def _save(monitors: dict) -> None:
-    from memory.memory_manager import load_memory, MEMORY_PATH, _lock
-    memory = load_memory()
-    memory["monitors"] = monitors
+    from memory.memory_manager import load_memory, save_memory, _lock
     with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        memory = load_memory()
+        memory['monitors'] = monitors
+        save_memory(memory)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

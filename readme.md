@@ -1,3 +1,5 @@
+> **Atualização: agilidade, Google Agenda e memória persistente:** leia [este guia](GOOGLE-AGENDA-E-MEMORIA.md).
+
 > **Gemini + controle do computador:** veja [o guia atualizado](CONTROLE-COMPUTADOR.md). Inicie com `python start_gemini.py` para voltar ao Gemini.
 
 > **Versão Jarvis GPT:** use `python start_openai.py` para iniciar com OpenAI.
