@@ -81,6 +81,12 @@ _KEY_FILE = _BASE / "config" / "api_keys.json"
 
 # Ladders, tried left to right. Change a model HERE and the whole app follows.
 FAST = "fast"      # short classification, extraction, one-line decisions
+class VisualCallError(RuntimeError):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
+
+
 VISUAL_FAST = "visual_fast"
 VISUAL_SMART = "visual_smart"
 SMART = "smart"    # reasoning, generation, long documents, images
@@ -690,6 +696,8 @@ def call(contents, tier: str = FAST, config=None,
         # meant every one-shot call in the app failed — which is exactly the
         # situation somebody configuring another provider is trying to leave.
         if not rungs:
+            if tier in (VISUAL_FAST, VISUAL_SMART):
+                raise VisualCallError("no_key", "A chave Gemini não está configurada para a análise visual.")
             print("[Gemini] no Gemini API key is configured")
             return None
         ladder = rungs
@@ -709,6 +717,7 @@ def call(contents, tier: str = FAST, config=None,
     visual = tier in (VISUAL_FAST, VISUAL_SMART)
     deadline = time.monotonic() + max(1, timeout_ms) / 1000 if visual else None
     cl = None
+    visual_errors = []
     tried = [m for m in ladder if not _cooling(m)]
     if not visual:
         tried = tried or list(ladder)
@@ -736,6 +745,11 @@ def call(contents, tier: str = FAST, config=None,
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
+            elif visual:
+                from google.genai import types as gtypes
+                kwargs["config"] = gtypes.GenerateContentConfig(
+                    response_mime_type="application/json", temperature=0,
+                    thinking_config=gtypes.ThinkingConfig(thinking_budget=0), max_output_tokens=4096)
             if visual:
                 try:
                     return cl.models.generate_content(**kwargs)
@@ -744,6 +758,19 @@ def call(contents, tier: str = FAST, config=None,
             return cl.models.generate_content(**kwargs)
         except Exception as e:
             msg = str(e) or type(e).__name__
+            if visual:
+                if is_quota_error(msg):
+                    code = "quota"
+                elif isinstance(e, TimeoutError) or "timeout" in msg.lower() or "timed out" in msg.lower():
+                    code = "timeout"
+                elif "403" in msg or "401" in msg:
+                    code = "access_denied"
+                elif is_gone_error(msg):
+                    code = "model_unavailable"
+                else:
+                    code = "network_or_service"
+                visual_errors.append(code)
+                print(f"[GeminiVisual] model={model} code={code}")
             if is_quota_error(msg):
                 _cool(model)
                 print(f"[Gemini] {model}: out of quota — skipping it for "
@@ -757,6 +784,17 @@ def call(contents, tier: str = FAST, config=None,
                 print(f"[Gemini] {model}: not answering — resting it for {pause}s")
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
+    if visual:
+        code = visual_errors[-1] if visual_errors else "cooldown"
+        messages = {
+            "quota": "A cota dos modelos visuais Gemini foi recusada. A voz Live tem cota separada; confira as cotas no Google AI Studio.",
+            "timeout": "O modelo visual Gemini excedeu o tempo de resposta. Nenhuma entrada foi enviada nesta etapa.",
+            "access_denied": "A chave não tem acesso ao modelo visual solicitado. Confira as permissões e restrições da chave Gemini.",
+            "model_unavailable": "Os modelos visuais configurados não estão disponíveis para esta chave. Confira os modelos habilitados na sua conta.",
+            "cooldown": "Os modelos visuais estão temporariamente em espera após erros anteriores. Consulte as linhas [GeminiVisual] no terminal antes de repetir.",
+            "network_or_service": "A consulta visual falhou na rede ou no serviço Gemini. Consulte o diagnóstico [GeminiVisual] no terminal."
+        }
+        raise VisualCallError(code, messages[code])
     return None
 
 
@@ -767,7 +805,19 @@ def text(contents, tier: str = FAST, config=None,
                 timeout_ms=timeout_ms, key=key)
     if resp is None:
         return default
-    return (getattr(resp, "text", None) or "").strip() or default
+    if tier in (VISUAL_FAST, VISUAL_SMART):
+        candidates = getattr(resp, 'candidates', None)
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                finish = str(getattr(candidate, 'finish_reason', '') or '')
+                if 'MAX_TOKENS' in finish:
+                    raise VisualCallError('truncated_response', 'A resposta visual foi truncada pelo limite de saída. Nenhuma ação foi escolhida desta resposta incompleta.')
+                if any(value in finish for value in ('SAFETY', 'PROHIBITED', 'BLOCKLIST')):
+                    raise VisualCallError('blocked_response', 'O Gemini bloqueou a análise visual desta tela. Nenhuma ação foi escolhida.')
+    value = (getattr(resp, "text", None) or "").strip()
+    if not value and tier in (VISUAL_FAST, VISUAL_SMART):
+        raise VisualCallError("empty_response", "O Gemini respondeu sem conteúdo visual utilizável; nenhuma ação foi escolhida.")
+    return value or default
 
 
 def as_json(contents, tier: str = FAST, config=None,
@@ -784,5 +834,7 @@ def as_json(contents, tier: str = FAST, config=None,
     try:
         return json.loads(raw)
     except Exception as e:
+        if tier in (VISUAL_FAST, VISUAL_SMART):
+            raise VisualCallError("invalid_json", "O Gemini respondeu, mas não retornou os dados estruturados necessários para escolher uma ação. Nenhum clique desta etapa foi enviado.") from None
         print(f"[Gemini] reply was not JSON: {e}")
         return default

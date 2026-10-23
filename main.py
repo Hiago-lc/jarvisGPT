@@ -1040,6 +1040,8 @@ class JarvisLive:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
         from actions.screen_task import cancel
         cancel()
+        from core.whatsapp_web import cancel as cancel_draft
+        cancel_draft()
         self._interrupted = True
         q = self.audio_in_queue
         if q:
@@ -1440,6 +1442,9 @@ class JarvisLive:
             if name == "screen_task":
                 from actions.screen_task import cancel
                 cancel()
+            elif name == "whatsapp_draft":
+                from core.whatsapp_web import cancel
+                cancel()
             raise
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
@@ -1450,7 +1455,7 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
-        if name == "screen_task" and outcome.is_problem(str(result)):
+        if name in ("screen_task", "whatsapp_draft") and outcome.is_problem(str(result)):
             self.ui.write_log("SYS: " + str(result))
 
         # A tool that declared itself NON_BLOCKING also says when its answer may

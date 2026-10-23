@@ -53,3 +53,4 @@ screenshots/
 memory/*.bak
 memory/*.db-*
 .jarvis-data/
+**/whatsapp-web-profile/

@@ -144,3 +144,57 @@ Se uma tarefa parar, o motivo completo também aparece no painel, sem depender
 da linha resumida de 80 caracteres do terminal. Os testes automatizados usam
 simulações: esta atualização não foi validada em uma sessão real do WhatsApp
 ou Telegram no Windows.
+
+## Rascunhos no WhatsApp Web sem depender de visão Gemini
+
+Quando o pedido menciona **WhatsApp Web**, use a ferramenta `whatsapp_draft`.
+Ela abre uma janela visível de Chrome/Edge com perfil próprio do Jarvis, busca
+o nome exato, confere o cabeçalho da conversa, preenche o campo e lê o conteúdo
+de volta antes de afirmar que o rascunho foi preparado. Não implementa envio,
+não pressiona Enter e não clica em botão de enviar. Pode também ler ou limpar
+o rascunho. Se já houver outro rascunho, uma substituição deve ser pedida
+explicitamente. Contatos com nomes ambíguos exigem um nome único.
+
+Atualize e reinicie o Jarvis. Exemplos:
+
+- “No WhatsApp Web, escreva para Vitor ‘Estou testando agora’, sem enviar,
+  e leia o rascunho para mim.”
+- “Leia o rascunho do Vitor no WhatsApp Web.”
+- “Limpe o rascunho do Vitor no WhatsApp Web.”
+- “Substitua o rascunho do Vitor no WhatsApp Web por ‘Chego às 14h’.”
+
+O perfil é separado do seu navegador habitual. No primeiro uso, se aparecer
+QR Code, vincule pelo celular: WhatsApp → Dispositivos conectados → Conectar
+um dispositivo. Após conectar, repita o pedido. O perfil fica na pasta de dados
+do usuário, em `whatsapp-web-profile`, e não deve ser publicado ou compartilhado.
+Os backups de memória do Jarvis não incluem esse perfil de autenticação.
+
+Se faltar Playwright, instale com `python -m pip install playwright`. O driver
+tenta Chrome e Edge instalados; alternativamente, instale um navegador próprio
+para automação com `python -m playwright install chromium`. Não conecta uma
+conta sem sua autorização nem recupera sessões de outros perfis do navegador.
+
+Esse fluxo é específico do **Web**, não do aplicativo nativo do Windows. Não
+será usado para um pedido explicitamente dirigido ao aplicativo nativo. Mudanças
+na interface do site podem impedir a localização dos controles; nesses casos
+o fluxo para em vez de escrever em outro contato. Interrompa pelo botão
+INTERRUPT do Jarvis; operações locais já iniciadas podem terminar e o texto deve
+ser conferido no campo. Nenhum fluxo de envio foi acrescentado.
+
+Os testes cobrem o driver com uma interface simulada e também uma página HTML
+simulada em um navegador real. Não houve login nem validação em conta real do
+WhatsApp. O teste de navegador pode ser repetido localmente com:
+
+```sh
+python tests/smoke_whatsapp_browser.py
+```
+
+### Diagnóstico visual específico
+
+As falhas visuais agora exibem um código no resultado:
+`quota`, `timeout`, `access_denied`, `model_unavailable`, `cooldown`,
+`invalid_json`, `empty_response`, `truncated_response` ou `blocked_response`.
+A cota do Gemini Live para voz pode estar disponível enquanto a dos modelos
+REST visuais não está. Uma falha visual não prova falha na voz, nem prova que
+faltam créditos OpenAI. As requisições visuais pedem JSON e desativam raciocínio
+extra para reduzir respostas de texto livre e esperas desnecessárias.

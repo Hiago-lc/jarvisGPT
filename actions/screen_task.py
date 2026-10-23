@@ -191,7 +191,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
                 return outcome.unverified('screen_task', 'Tarefa interrompida', steps=len(history))
         return outcome.unverified('screen_task', 'Limite de etapas atingido; resultado ainda não confirmado', steps=len(history))
     except Exception as error:
-        return outcome.failed('screen_task', str(error), steps=len(history))
+        return outcome.failed('screen_task', str(error), steps=len(history), code=getattr(error, 'code', 'execution_error'))
     finally:
         timer.cancel()
         _RUNNING.release()

@@ -36,7 +36,9 @@ class VisualLatencyTests(unittest.TestCase):
 
     def test_all_cooled_visual_models_do_not_force_retries(self):
         with patch.object(gemini, 'api_key', return_value='test'), patch.object(gemini, '_provider_rungs', return_value=()), patch.object(gemini, '_cooling', return_value=True), patch.object(gemini, 'client') as client:
-            self.assertIsNone(gemini.call('locate', tier=gemini.VISUAL_FAST))
+            with self.assertRaises(gemini.VisualCallError) as result:
+                gemini.call('locate', tier=gemini.VISUAL_FAST)
+            self.assertEqual(result.exception.code, 'cooldown')
         client.assert_not_called()
 
     def test_visual_sdk_deadline_is_not_raised_to_ten_seconds(self):
