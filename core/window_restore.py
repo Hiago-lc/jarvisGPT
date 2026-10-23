@@ -19,6 +19,7 @@ def foreground_matches(title):
 
 def restore_visual(title, player=None):
     from actions.screen_task import screen_task
+    print('[WindowRestore] fallback=taskbar_labels_then_vision')
     goal = (
         'Restore ONLY the requested existing Windows application to the foreground. '
         'Native activation failed. Inspect the PRIMARY desktop taskbar. If auto-hidden, '

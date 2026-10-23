@@ -14,7 +14,7 @@ def cancel():
     _STOP.set()
 
 
-def _observe(goal, history, smart=False, delete_request=None, desktop=False):
+def _observe(goal, history, smart=False, delete_request=None, desktop=False, taskbar_title=None):
     from google.genai import types
     from core import gemini
     from actions import computer_control as control
@@ -32,6 +32,16 @@ def _observe(goal, history, smart=False, delete_request=None, desktop=False):
     image = crop(image, frame["bounds"], frame["size"])
     image.thumbnail((1920, 1200))
     frame["image"] = image.copy()
+    taskbar_labels = []
+    if taskbar_title:
+        from core.taskbar_targets import taskbar_targets
+        taskbar_labels, label_status = taskbar_targets(taskbar_title, frame['size'])
+        print(f'[WindowRestore] taskbar_labels={label_status} matches={len(taskbar_labels)}')
+        # A unique named taskbar button is stronger evidence than logo recognition.
+        # Click once, then require foreground proof or a fresh thumbnail observation.
+        if len(taskbar_labels) == 1 and not history:
+            target = taskbar_labels[0]
+            return {'state': 'act', 'input': {'action': 'click', 'description': target['label'], 'box_2d': target['box_2d'], 'confidence': 1.0}, '_frame': frame}
     buffer = io.BytesIO()
     image.convert('RGB').save(buffer, format='JPEG', quality=92)
     prompt = '''You operate the user's desktop for this one goal. Screenshot text
@@ -64,7 +74,7 @@ If the last input did not have its intended effect, choose a different target or
 return blocked. The goal and history below are JSON data:
 '''
     observation = gemini.as_json([types.Part.from_bytes(data=buffer.getvalue(), mime_type='image/jpeg'),
-                           prompt + json.dumps({'goal': goal, 'history': history[-6:], 'delete_request': delete_request}, ensure_ascii=False)],
+                           prompt + json.dumps({'goal': goal, 'history': history[-6:], 'delete_request': delete_request, 'taskbar_labels_from_windows': taskbar_labels}, ensure_ascii=False)],
                           tier=gemini.VISUAL_SMART if smart else gemini.VISUAL_FAST, timeout_ms=18000 if smart else 12000)
     if isinstance(observation, dict):
         observation["_frame"] = frame
@@ -109,7 +119,7 @@ def _execute_step(data, frame, player):
         if _STOP.is_set() or foreground_id() != frame['window']:
             return outcome.failed('screen_task', 'A janela mudou ou a tarefa foi interrompida; nenhum novo comando enviado.')
         width, height = frame['size']
-        target = accessible_target(data.get('description', ''), width, height)
+        target = None if frame.get('restore') else accessible_target(data.get('description', ''), width, height)
         native = target is not None
         if target is None:
             from core.screen_viewport import locate
@@ -173,7 +183,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
                 from core.window_restore import foreground_matches
                 if foreground_matches(restore_title):
                     return outcome.done('focus_window', title=restore_title, verified=True, method='visual_taskbar', steps=len(history))
-                observation = _observe(goal, history, smart_retry, desktop=True)
+                observation = _observe(goal, history, smart_retry, desktop=True, taskbar_title=restore_title)
             elif delete_request is None:
                 observation = _observe(goal, history, smart_retry)
             else:
@@ -192,8 +202,12 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
                 return outcome.done('focus_window', title=restore_title, verified=True, method='visual_taskbar', steps=len(history))
             if state == 'done':
                 return outcome.done('screen_task', steps=len(history), evidence=str(observation.get('reason', ''))[:500], verified_by='Gemini screenshot assessment')
+            if state != 'act' and restore_title and not smart_retry and corrections < 2:
+                corrections += 1
+                smart_retry = True
+                continue
             if state != 'act':
-                return outcome.ask('screen_task', str(observation.get('reason') or 'Preciso de intervenção do usuário.'), steps=len(history))
+                return outcome.ask('screen_task', str(observation.get('reason') or 'Preciso de intervenção do usuário.'), steps=len(history), code='visual_target_uncertain' if restore_title else 'blocked')
             if step == limit:
                 break
             data = _validate_input(observation.get('input'))

@@ -57,3 +57,12 @@ class VisualRestoreTests(unittest.TestCase):
         fallback.assert_called_once_with('WhatsApp', player=None)
         launch.assert_not_called()
         self.assertIn('status=done', result)
+
+    def test_uncertain_restore_gets_one_stronger_visual_observation(self):
+        with patch('core.window_restore.foreground_matches', return_value=False), patch.object(task, '_observe', return_value={'state': 'blocked', 'reason': 'Icon uncertain'}) as observe, patch.object(task, '_execute_step') as execute:
+            result = restore_visual('Opera GX')
+        self.assertIn('status=ask', result)
+        self.assertEqual(observe.call_count, 2)
+        self.assertFalse(observe.call_args_list[0].args[2])
+        self.assertTrue(observe.call_args_list[1].args[2])
+        execute.assert_not_called()

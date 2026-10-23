@@ -282,3 +282,22 @@ O fail-safe continua ativo e movimentos aos cantos são rejeitados.
 A interrupção do comando cancela também a alternativa visual.
 Essa integração foi testada com simulações; ainda requer validação no Windows
 real, inclusive para a disposição específica da barra de tarefas do usuário.
+
+### Ícones pequenos, incluindo Opera GX
+
+A alternativa de restauração agora consulta os rótulos acessíveis dos botões
+visíveis da barra de tarefas do Windows. Havendo um único nome correspondente,
+propõe um clique nesse botão usando a posição informada pela acessibilidade,
+sem depender do reconhecimento visual do logo. O alvo ainda é comparado com
+uma captura recente antes do clique, e o resultado exige confirmação da janela.
+Os nomes preservam variantes: `Opera GX` não é tratado como `Opera`.
+
+Se não houver um rótulo único, o fluxo continua pela imagem e pelas miniaturas.
+Uma análise visual incerta recebe uma tentativa com o modelo visual mais forte
+antes de pedir intervenção. A disponibilidade dos rótulos depende da versão e
+configuração do Windows; não é garantida. O limite do monitor principal permanece.
+
+O terminal mostra `[WindowRestore] fallback=taskbar_labels_then_vision` ao entrar
+nesse fluxo e `taskbar_labels=... matches=...` com o resultado da consulta.
+Se o problema persistir, envie essas linhas e o retorno técnico da ferramenta,
+pois a frase falada pelo assistente não identifica a etapa que falhou.
