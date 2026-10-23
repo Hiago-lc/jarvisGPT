@@ -217,6 +217,8 @@ def _checked_coordinates(x, y):
     width, height = pyautogui.size()
     if not (0 <= x < width and 0 <= y < height):
         raise ValueError(f"Coordenadas ({x}, {y}) fora da tela principal ({width}x{height}).")
+    if x in (0, width - 1) and y in (0, height - 1):
+        raise ValueError("Coordenadas em um canto de parada de segurança; nenhum movimento enviado.")
     return x, y
 
 
@@ -645,7 +647,7 @@ def _computer_control(
     try:
         # Focus is part of the SAME call so text never goes to an unintended window
         # after a failed activation. The caller may also focus in a separate call.
-        input_actions = {"type", "smart_type", "paste", "click", "left_click", "double_click", "right_click", "screen_click", "press", "hotkey", "clear_field", "scroll"}
+        input_actions = {"type", "smart_type", "paste", "click", "left_click", "double_click", "right_click", "screen_click", "press", "hotkey", "clear_field", "scroll", "move", "hover"}
         if action in input_actions and params.get("title"):
             focused = _focus_window(params["title"])
             if not focused.startswith("status=done"):
@@ -681,13 +683,20 @@ def _computer_control(
                           "right" if action == "right_click" else params.get("button", "left"),
                           2 if action == "double_click" else 1)
 
-        if action == "move":
-            return _move(int(params.get("x", 0)), int(params.get("y", 0)))
+        if action in ("move", "hover"):
+            x, y = params.get("x"), params.get("y")
+            description = str(params.get("description") or "").strip()
+            if description:
+                coords = _screen_find(description)
+                if coords is None:
+                    return outcome.failed("move", "Elemento não localizado; nenhum movimento executado.")
+                x, y = coords
+            return _move(*_checked_coordinates(x, y))
 
         if action == "drag":
             return _drag(
-                int(params.get("x1", 0)), int(params.get("y1", 0)),
-                int(params.get("x2", 0)), int(params.get("y2", 0)),
+                params.get("x1"), params.get("y1"),
+                params.get("x2"), params.get("y2"),
             )
 
         if action == "hotkey":
@@ -776,11 +785,16 @@ def computer_control(parameters, response=None, player=None, session_memory=None
         keyboard = {'type', 'smart_type', 'paste', 'replace_text', 'clear_field', 'clear_draft', 'hotkey', 'press'}
         if _INPUT_TARGET_BLOCKED and action in keyboard and not params.get('description'):
             return outcome.failed(action, 'O último alvo não foi localizado. Entrada de teclado bloqueada até localizar e clicar no campo correto; nenhum texto foi enviado.')
+        pointer = {'click', 'left_click', 'double_click', 'right_click', 'screen_click', 'move', 'hover', 'drag'}
+        if _INPUT_TARGET_BLOCKED and action in pointer and not params.get('description'):
+            required = ('x1', 'y1', 'x2', 'y2') if action == 'drag' else ('x', 'y')
+            if any(params.get(key) is None for key in required):
+                return outcome.failed(action, 'O último alvo falhou. Informe um alvo localizado ou coordenadas completas; nenhum comando enviado.')
         previous = getattr(_CANCEL_CONTEXT, "event", None)
         _CANCEL_CONTEXT.event = cancel_event
         try:
             result = _computer_control(parameters, response, player, session_memory)
-            target_actions = {'click', 'left_click', 'double_click', 'right_click', 'screen_click', 'screen_find', 'focus_window'}
+            target_actions = {'click', 'left_click', 'double_click', 'right_click', 'screen_click', 'screen_find', 'focus_window', 'move', 'hover', 'drag'}
             failed = result.startswith(('status=failed', 'status=ask')) or result == 'NOT_FOUND'
             if failed and (action in target_actions or params.get('description')):
                 _INPUT_TARGET_BLOCKED = True

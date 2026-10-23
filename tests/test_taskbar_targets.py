@@ -18,6 +18,7 @@ class TaskbarLabelTests(unittest.TestCase):
     def test_only_visible_named_primary_taskbar_buttons_are_candidates(self):
         def button(label, left=100, visible=True):
             obj = MagicMock()
+            obj.element_info.control_type = 'Button'
             obj.window_text.return_value = label
             obj.is_visible.return_value = visible
             obj.is_enabled.return_value = True

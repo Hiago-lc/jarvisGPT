@@ -135,3 +135,29 @@ class GeminiStartupTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MissingPointerTargetTests(unittest.TestCase):
+    setUp = DesktopTests.setUp
+    def test_missing_move_coordinates_never_defaults_to_origin(self):
+        result = cc.computer_control({'action': 'move'})
+        self.gui.moveTo.assert_not_called()
+        self.assertIn('status=failed', result)
+
+    def test_description_move_is_located_and_not_defaulted(self):
+        with patch.object(cc, '_screen_find', return_value=(300, 1040)):
+            cc.computer_control({'action': 'move', 'description': 'Opera GX icon'})
+        self.gui.moveTo.assert_called_once_with(300, 1040, duration=.3)
+
+    def test_failed_move_blocks_subsequent_targetless_click(self):
+        with patch.object(cc, '_screen_find', return_value=None):
+            result = cc.computer_control({'action': 'move', 'description': 'Opera GX icon'})
+        self.assertIn('status=failed', result)
+        result = cc.computer_control({'action': 'click', 'button': 'left'})
+        self.assertIn('status=failed', result)
+        self.gui.moveTo.assert_not_called()
+        self.gui.click.assert_not_called()
+
+    def test_explicit_corner_move_is_rejected_before_pyautogui(self):
+        self.assertIn('status=failed', cc.computer_control({'action': 'move', 'x': 0, 'y': 0}))
+        self.gui.moveTo.assert_not_called()

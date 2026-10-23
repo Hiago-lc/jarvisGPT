@@ -20,7 +20,9 @@ def _read(title, size):
     for window in Desktop(backend='uia').windows():
         if window.class_name() not in ('Shell_TrayWnd', 'Shell_SecondaryTrayWnd'):
             continue
-        for button in window.descendants(control_type='Button')[:200]:
+        for button in window.descendants()[:400]:
+            if button.element_info.control_type not in ('Button', 'ListItem', 'TabItem', 'MenuItem'):
+                continue
             if not button.is_visible() or not button.is_enabled():
                 continue
             label = button.window_text().strip()

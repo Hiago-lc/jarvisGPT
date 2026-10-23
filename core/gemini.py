@@ -681,6 +681,15 @@ def call(contents, tier: str = FAST, config=None,
     if ladder is None:
         ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
 
+    if tier in (VISUAL_FAST, VISUAL_SMART):
+        try:
+            settings = json.loads(_KEY_FILE.read_text(encoding='utf-8'))
+            selected = settings.get('gemini_visual_model')
+            if isinstance(selected, str) and selected.startswith('gemini-') and '/' not in selected:
+                ladder = (selected,) + tuple(m for m in ladder if m != selected)
+        except (OSError, ValueError, TypeError):
+            pass
+
     # A configured provider joins the ladder — behind Gemini by default, in
     # front of it when the user has asked for that. One config read; on an
     # install with no provider this is an empty tuple and nothing changes.
@@ -749,7 +758,7 @@ def call(contents, tier: str = FAST, config=None,
                 from google.genai import types as gtypes
                 kwargs["config"] = gtypes.GenerateContentConfig(
                     response_mime_type="application/json", temperature=0,
-                    thinking_config=gtypes.ThinkingConfig(thinking_budget=0), max_output_tokens=4096)
+                    thinking_config=gtypes.ThinkingConfig(thinking_budget=0) if model.startswith('gemini-2.5-') else None, max_output_tokens=4096)
             if visual:
                 try:
                     return cl.models.generate_content(**kwargs)

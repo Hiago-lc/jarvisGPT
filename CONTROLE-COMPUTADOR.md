@@ -301,3 +301,31 @@ O terminal mostra `[WindowRestore] fallback=taskbar_labels_then_vision` ao entra
 nesse fluxo e `taskbar_labels=... matches=...` com o resultado da consulta.
 Se o problema persistir, envie essas linhas e o retorno técnico da ferramenta,
 pois a frase falada pelo assistente não identifica a etapa que falhou.
+
+### `model_unavailable` e movimento indevido para `(0, 0)`
+
+`move`/`hover` agora resolve `description` ou exige x e y completos. Não assume
+mais zero para coordenadas ausentes. Uma falha de localização bloqueia o clique
+seguinte sem alvo, e coordenadas nos cantos de parada são rejeitadas antes do
+PyAutoGUI. Arrastar também exige todas as coordenadas. O fail-safe continua ativo.
+A consulta da barra agora inclui botões e itens de lista/aba/menu expostos pelo Windows.
+
+Se ambos os modelos visuais padrão retornarem `model_unavailable`, na pasta do
+projeto e usando o mesmo Python do Jarvis, execute:
+
+```bat
+python check_gemini_visual.py --configure
+```
+
+O diagnóstico usa a chave já configurada, consulta os modelos publicados para
+ela e testa até quatro candidatos com uma imagem vermelha sintética (não envia
+a tela nem conversas). Essas chamadas podem consumir cota Gemini. Salva apenas
+um modelo que respondeu corretamente ao teste, preservando as outras configurações.
+Reinicie o Jarvis depois. Um modelo listado não implica cota disponível; se nenhum
+passar, a configuração é preservada e será necessário verificar acesso/cota/rede.
+Sem `--configure`, apenas lista os candidatos. Não compartilhe sua chave.
+
+O aviso `Revert to STA COM threading mode` não é, sozinho, uma falha de clique.
+`taskbar_labels=not_found` significa que a consulta não encontrou um rótulo
+correspondente; não comprova que o ícone inexiste. Use o retorno técnico completo
+para distinguir isso de indisponibilidade do modelo visual.
