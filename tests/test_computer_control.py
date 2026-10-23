@@ -20,7 +20,7 @@ class DesktopTests(unittest.TestCase):
         self.clipboard = 'texto anterior'
         self.clip.paste.side_effect = lambda: self.clipboard
         self.clip.copy.side_effect = lambda value: setattr(self, 'clipboard', value)
-        self.patches = [patch.object(cc, 'pyautogui', self.gui),
+        self.patches = [patch.object(cc, '_INPUT_TARGET_BLOCKED', False), patch.object(cc, 'pyautogui', self.gui),
                         patch.object(cc, 'pyperclip', self.clip),
                         patch.object(cc, '_PYAUTOGUI', True),
                         patch.object(cc, '_PYPERCLIP', True),

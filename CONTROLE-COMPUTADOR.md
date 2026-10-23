@@ -198,3 +198,38 @@ A cota do Gemini Live para voz pode estar disponível enquanto a dos modelos
 REST visuais não está. Uma falha visual não prova falha na voz, nem prova que
 faltam créditos OpenAI. As requisições visuais pedem JSON e desativam raciocínio
 extra para reduzir respostas de texto livre e esperas desnecessárias.
+
+## Busca no WhatsApp/WhatsApp Business nativo do Windows
+
+O fluxo Web e o aplicativo do Windows são diferentes. Para o aplicativo aberto
+no Windows, o modelo agora tem `whatsapp_desktop_search`: localiza uma janela
+nativa única, procura um campo de pesquisa Edit reconhecido pela acessibilidade,
+confere o foco, edita esse controle e lê a consulta de volta. Navegadores são
+excluídos dessa busca de janelas. Não usa captura Gemini nem coordenadas para
+digitar o nome. Se o campo não for único, acessível ou editável, a ferramenta
+para com o motivo correspondente, sem tentar digitar por atalhos às cegas.
+
+Teste primeiro: “No WhatsApp Business do Windows, pesquise Vitor. Ainda não
+escreva uma mensagem.” O resultado `query_verified=true` confirma somente o
+texto do campo de busca. `chat_selected=false` e `draft_written=false` indicam
+que localizar o contato na lista, abrir a conversa e focar o campo de mensagem
+são etapas posteriores. Não deve anunciar que o rascunho está pronto por ter
+pesquisado o nome. Interfaces do WhatsApp podem não expor os mesmos controles;
+a operação real precisa ser conferida no Windows.
+
+Além disso, uma falha ao localizar/clicar no alvo agora bloqueia as chamadas de
+teclado genéricas seguintes até ocorrer uma nova localização/clique bem-sucedido.
+Informar só o título da janela não libera o teclado após falhar em um campo.
+A busca nativa também deixa esse bloqueio ativo ao terminar: o foco ainda está
+na pesquisa, não no campo de mensagem. Isso evita continuar digitando o corpo
+da mensagem dentro da busca. O modelo deve localizar e clicar no campo correto
+antes de continuar. A proteção não comprova por si só que qualquer coordenada
+escolhida pelo modelo é a correta; os resultados precisam ser verificados.
+
+A busca nativa usa `pywinauto` e `pywin32`, já declarados nas dependências
+Windows. O tempo de espera do chamador é de 8 segundos. Uma chamada de
+acessibilidade do sistema pode levar mais tempo para retornar; nesse caso a
+interrupção é sinalizada e a ferramenta não afirma que a busca foi concluída.
+O botão INTERRUPT também solicita o cancelamento dessa busca. Testes usam
+controles simulados; não houve validação numa instalação real do WhatsApp
+Business para esta alteração.

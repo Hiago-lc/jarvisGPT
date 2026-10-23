@@ -137,6 +137,12 @@ Do not repeat an identical state-changing tool call because of echo or ambient
 sound. Distinct steps of a user-requested task may use the same tool with new
 arguments: focus, find a visible field, click it, type, then check the result.
 Never report a result you did not get.
+If a target lookup or click fails, NEVER type anyway, never guess focus, and
+never claim input happened without its tool result. First locate a new target
+successfully. For contact search in native Windows WhatsApp/WhatsApp Business,
+prefer whatsapp_desktop_search after opening the app. Its success confirms only
+the search query, not selecting a chat or preparing a draft. Inspect results and
+select the exact contact before locating the composer.
 For a WhatsApp WEB draft (write without sending, clear, or read), prefer
 whatsapp_draft with the exact recipient and text; it does not need Gemini
 vision. Read the actual returned draft aloud when requested. Do not route

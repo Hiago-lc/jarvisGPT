@@ -36,6 +36,9 @@ class TargetTests(unittest.TestCase):
 
 class TaskTests(unittest.TestCase):
     def setUp(self):
+        self.guard = patch.object(control, '_INPUT_TARGET_BLOCKED', False)
+        self.guard.start()
+        self.addCleanup(self.guard.stop)
         self.sleep = patch.object(task._STOP, 'wait', return_value=False)
         self.sleep.start()
         self.addCleanup(self.sleep.stop)

@@ -647,7 +647,7 @@ def _computer_control(
             if not focused.startswith("status=done"):
                 return focused
 
-        if action in ("type", "smart_type", "paste", "clear_field") and params.get("description"):
+        if action in ("type", "smart_type", "paste", "clear_field", "hotkey", "press") and params.get("description"):
             coords = _screen_find(params["description"])
             if coords is None:
                 return outcome.failed(action, "Campo de texto não localizado; nada digitado")
@@ -755,13 +755,34 @@ def _computer_control(
         return outcome.failed(action, str(e))
 
 
+_INPUT_TARGET_BLOCKED = False
+
+
+def _target_ready():
+    """Called only after a driver actually verifies focus/target, never by the model."""
+    global _INPUT_TARGET_BLOCKED
+    _INPUT_TARGET_BLOCKED = False
+
+
 def computer_control(parameters, response=None, player=None, session_memory=None, cancel_event=None):
-    # Live and dashboard calls share one mouse, keyboard and clipboard.
+    global _INPUT_TARGET_BLOCKED
     with _INPUT_LOCK:
+        params = parameters or {}
+        action = str(params.get('action', '')).lower().strip()
+        keyboard = {'type', 'smart_type', 'paste', 'replace_text', 'clear_field', 'clear_draft', 'hotkey', 'press'}
+        if _INPUT_TARGET_BLOCKED and action in keyboard and not params.get('description'):
+            return outcome.failed(action, 'O último alvo não foi localizado. Entrada de teclado bloqueada até localizar e clicar no campo correto; nenhum texto foi enviado.')
         previous = getattr(_CANCEL_CONTEXT, "event", None)
         _CANCEL_CONTEXT.event = cancel_event
         try:
-            return _computer_control(parameters, response, player, session_memory)
+            result = _computer_control(parameters, response, player, session_memory)
+            target_actions = {'click', 'left_click', 'double_click', 'right_click', 'screen_click', 'screen_find', 'focus_window'}
+            failed = result.startswith(('status=failed', 'status=ask')) or result == 'NOT_FOUND'
+            if failed and (action in target_actions or params.get('description')):
+                _INPUT_TARGET_BLOCKED = True
+            elif not failed and (action in {'click', 'left_click', 'double_click', 'right_click', 'screen_click'} or (action in keyboard and params.get('description'))):
+                _target_ready()
+            return result
         finally:
             _CANCEL_CONTEXT.event = previous
 
