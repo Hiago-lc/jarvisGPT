@@ -791,51 +791,9 @@ def focus(match: "Match") -> bool:
         if not hwnds:
             return False
         try:
-            import ctypes
-            from ctypes import wintypes
-
-            user32 = ctypes.WinDLL("user32", use_last_error=True)
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            SW_RESTORE = 9
-
-            # WINDOWS REFUSES TO LET A BACKGROUND PROCESS STEAL FOCUS.
-            #
-            # SetForegroundWindow only succeeds when the calling process
-            # already owns the foreground — a rule that exists so a background
-            # program cannot yank the screen away mid-sentence. It is also
-            # exactly our situation: the user says "open WhatsApp" while
-            # working in something else, so the assistant is NOT in front and
-            # the call is refused. Seen directly in testing — the same code
-            # succeeded twelve times in a row with the HUD in front, and failed
-            # every time with another window focused.
-            #
-            # The documented way through is to borrow the foreground thread's
-            # input queue for the length of the call: while two threads share
-            # one queue, Windows treats them as the same context and allows the
-            # change. Attach, raise, detach.
-            def _raise(hwnd) -> bool:
-                if user32.IsIconic(hwnd):
-                    user32.ShowWindow(hwnd, SW_RESTORE)
-                if user32.SetForegroundWindow(hwnd):
-                    return True
-
-                fore = user32.GetForegroundWindow()
-                if not fore:
-                    return False
-                their = user32.GetWindowThreadProcessId(fore, None)
-                ours = kernel32.GetCurrentThreadId()
-                if their == ours:
-                    return False
-                if not user32.AttachThreadInput(ours, their, True):
-                    return False
-                try:
-                    user32.BringWindowToTop(hwnd)
-                    return bool(user32.SetForegroundWindow(hwnd))
-                finally:
-                    user32.AttachThreadInput(ours, their, False)
-
+            from core.window_activation import activate
             for hwnd in hwnds:
-                if _raise(hwnd):
+                if activate(hwnd):
                     return True
             return False
         except Exception as exc:

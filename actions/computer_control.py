@@ -351,12 +351,8 @@ def _focus_window(title: str) -> str:
             if len(windows) > 1:
                 return outcome.ask("focus_window", "Mais de uma janela encontrada; informe o título completo", candidates=" | ".join(w.title for w in windows[:5]))
             window = windows[0]
-            if window.isMinimized:
-                window.restore()
-            window.activate()
-            time.sleep(0.3)
-            active = pygetwindow.getActiveWindow()
-            if active is None or active._hWnd != window._hWnd:
+            from core.window_activation import activate
+            if not activate(window._hWnd):
                 return outcome.failed("focus_window", "Windows não permitiu ativar a janela; selecione-a manualmente", title=window.title)
             return outcome.done("focus_window", title=window.title, verified=True)
         except Exception as e:

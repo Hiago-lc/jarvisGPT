@@ -251,3 +251,15 @@ do Windows, a quantidade de monitores e envie uma captura com dados pessoais ocu
 Para redigir mensagens no WhatsApp Web, prefira a ação `whatsapp_draft`, que usa
 os elementos da página em vez de estimar cliques pela imagem. Ela não atende o
 aplicativo WhatsApp do Windows; a busca nativa nele continua sendo uma ação separada.
+
+### Restaurar aplicativos minimizados no Windows
+
+`open_app` e `computer_control` com `action=focus_window` agora compartilham a
+ativação nativa, com identificadores compatíveis com Windows de 64 bits.
+A restauração aguarda até 1,2 segundo para confirmar que a janela deixou de
+estar minimizada e está realmente em primeiro plano. O retorno da chamada de
+ativação sozinho não conta como sucesso. O assistente é orientado a restaurar
+a janela antes da análise visual, sem tentar adivinhar ícones da barra de tarefas.
+Se houver várias janelas com o título solicitado, informe o título completo.
+O Windows ainda pode recusar a ativação; nesse caso, o resultado é falha.
+Essa alteração foi validada com testes simulados, sem acesso ao Windows do usuário.

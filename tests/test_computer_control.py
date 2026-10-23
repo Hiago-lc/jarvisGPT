@@ -90,15 +90,14 @@ class DesktopTests(unittest.TestCase):
         window = MagicMock(title='Documento - Notepad', width=800, height=600, _hWnd=10)
         window.isMinimized = True
         windows = types.SimpleNamespace(getWindowsWithTitle=lambda title: [window], getActiveWindow=lambda: window)
-        with patch.dict('sys.modules', {'pygetwindow': windows}):
+        with patch.dict('sys.modules', {'pygetwindow': windows}), patch('core.window_activation.activate', return_value=True) as activate:
             self.assertIn('status=done', cc._focus_window('Notepad'))
-        window.restore.assert_called_once()
-        window.activate.assert_called_once()
+        activate.assert_called_once_with(10)
 
     def test_windows_focus_refusal_does_not_report_success(self):
         window = MagicMock(title='Notepad', width=800, height=600, _hWnd=10)
         windows = types.SimpleNamespace(getWindowsWithTitle=lambda title: [window], getActiveWindow=lambda: None)
-        with patch.dict('sys.modules', {'pygetwindow': windows}):
+        with patch.dict('sys.modules', {'pygetwindow': windows}), patch('core.window_activation.activate', return_value=False):
             self.assertIn('status=failed', cc._focus_window('Notepad'))
 
     def test_screenshot_coordinates_scale_to_input_dimensions(self):
