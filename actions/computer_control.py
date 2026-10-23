@@ -549,7 +549,10 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         target = accessible_target(description, screen_w, screen_h)
         if target is not None:
             return _checked_coordinates(*target)
-        img = pyautogui.screenshot()
+        from core.screen_viewport import active_bounds, crop, locate
+        bounds = active_bounds((screen_w, screen_h))
+        img = crop(pyautogui.screenshot(), bounds, (screen_w, screen_h))
+        img.thumbnail((1920, 1200))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         prompt = (
@@ -566,8 +569,11 @@ def _screen_find(description: str) -> tuple[int, int] | None:
             [gtypes.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"), prompt],
             tier=gemini.VISUAL_FAST, timeout_ms=12_000,
         )
-        target = box_center(result, screen_w, screen_h)
-        if target is not None and foreground_id() == original_window:
+        target = locate(result, bounds)
+        from core.screen_target import target_unchanged
+        fresh_size = tuple(pyautogui.size())
+        stable = fresh_size == (screen_w, screen_h) and active_bounds(fresh_size) == bounds
+        if target is not None and stable and foreground_id() == original_window and target_unchanged(img, crop(pyautogui.screenshot(), bounds, fresh_size), result.get("box_2d")):
             return _checked_coordinates(*target)
 
     except Exception as e:

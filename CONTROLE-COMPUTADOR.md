@@ -233,3 +233,21 @@ interrupção é sinalizada e a ferramenta não afirma que a busca foi concluíd
 O botão INTERRUPT também solicita o cancelamento dessa busca. Testes usam
 controles simulados; não houve validação numa instalação real do WhatsApp
 Business para esta alteração.
+
+### Precisão da captura e dos cliques
+
+As tarefas visuais e a localização de controles agora recortam a janela ativa
+no Windows antes de enviar a imagem ao Gemini. O recorte preserva a transformação
+entre pixels da captura e coordenadas do mouse, inclusive quando as resoluções
+diferem. As tarefas usam imagens de até 1920 × 1200 com maior qualidade.
+Se a janela mudar de posição/tamanho durante a análise, o clique visual é descartado.
+A localização direta também compara o alvo com uma captura recente antes de retornar.
+
+Esta implementação ainda captura apenas o monitor principal. Mantenha o aplicativo
+inteiro nele e evite mover a janela durante a tarefa. Não garante reconhecimento
+correto de todo botão e não foi validada em um WhatsApp real no Windows.
+Para investigar falhas persistentes, informe o comando exato, a escala de exibição
+do Windows, a quantidade de monitores e envie uma captura com dados pessoais ocultos.
+Para redigir mensagens no WhatsApp Web, prefira a ação `whatsapp_draft`, que usa
+os elementos da página em vez de estimar cliques pela imagem. Ela não atende o
+aplicativo WhatsApp do Windows; a busca nativa nele continua sendo uma ação separada.
