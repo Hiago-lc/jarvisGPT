@@ -1450,6 +1450,8 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        if name == "screen_task" and outcome.is_problem(str(result)):
+            self.ui.write_log("SYS: " + str(result))
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it

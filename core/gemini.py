@@ -81,6 +81,8 @@ _KEY_FILE = _BASE / "config" / "api_keys.json"
 
 # Ladders, tried left to right. Change a model HERE and the whole app follows.
 FAST = "fast"      # short classification, extraction, one-line decisions
+VISUAL_FAST = "visual_fast"
+VISUAL_SMART = "visual_smart"
 SMART = "smart"    # reasoning, generation, long documents, images
 SEARCH = "search"  # grounded search — REST only, see below
 
@@ -154,6 +156,9 @@ PROVIDER_PREFIX = "prov:"
 # real quota when they are healthy, and a rung that is down is set aside by the
 # cooldown after one attempt instead of being paid for on every call.
 _LADDERS = {
+    # Desktop actions need bounded REST calls, not an extra audio Live session.
+    VISUAL_FAST: ("gemini-2.5-flash-lite", "gemini-2.5-flash"),
+    VISUAL_SMART: ("gemini-2.5-flash", "gemini-2.5-flash-lite"),
     FAST: (LIVE,
            "gemini-2.5-flash-lite", "gemini-3.5-flash-lite",
            "gemini-3.1-flash-lite", "gemini-flash-lite-latest",
@@ -335,7 +340,7 @@ def api_key(refresh: bool = False) -> str:
         return _cached_key
 
 
-def client(timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = ""):
+def client(timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = "", strict_timeout: bool = False):
     """A configured genai.Client with a deadline on it. Raises if there is no
     key, because a caller that cannot work without one should say so."""
     from google import genai
@@ -344,10 +349,10 @@ def client(timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = ""):
     key = key or api_key()
     if not key:
         raise RuntimeError("no Gemini API key is configured")
-    return genai.Client(
-        api_key=key,
-        http_options=gtypes.HttpOptions(timeout=max(MIN_TIMEOUT_MS, int(timeout_ms))),
-    )
+    options = {"timeout": max(1 if strict_timeout else MIN_TIMEOUT_MS, int(timeout_ms))}
+    if strict_timeout:
+        options["retry_options"] = gtypes.HttpRetryOptions(attempts=1)
+    return genai.Client(api_key=key, http_options=gtypes.HttpOptions(**options))
 
 
 class _Reply:
@@ -628,7 +633,7 @@ def _to_openai_messages(contents, config) -> tuple[list[dict], Optional[float]]:
     return messages, temperature
 
 
-def _provider_call(model: str, contents, config, timeout_ms: int):
+def _provider_call(model: str, contents, config, timeout_ms: int, strict_timeout: bool = False):
     """One generation through a configured provider. Raises like every other
     rung, so the loop's error classification applies to it unchanged."""
     from memory.config_manager import get_provider_config
@@ -644,7 +649,7 @@ def _provider_call(model: str, contents, config, timeout_ms: int):
     messages, temperature = _to_openai_messages(contents, config)
     text_out, _calls = llm.complete(
         messages, tools=None,
-        timeout=max(MIN_TIMEOUT_MS, int(timeout_ms)) / 1000.0,
+        timeout=max(1 if strict_timeout else MIN_TIMEOUT_MS, int(timeout_ms)) / 1000.0,
         temperature=temperature)
     if not (text_out or "").strip():
         raise RuntimeError("the provider returned an empty answer")
@@ -701,9 +706,19 @@ def call(contents, tier: str = FAST, config=None,
             print("[Gemini] nothing on this ladder can read a recording")
             return None
 
+    visual = tier in (VISUAL_FAST, VISUAL_SMART)
+    deadline = time.monotonic() + max(1, timeout_ms) / 1000 if visual else None
     cl = None
-    tried = [m for m in ladder if not _cooling(m)] or list(ladder)
-    for model in tried:
+    tried = [m for m in ladder if not _cooling(m)]
+    if not visual:
+        tried = tried or list(ladder)
+    for model in tried[:2] if visual else tried:
+        attempt_timeout = timeout_ms
+        if visual:
+            remaining = int((deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
+                break
+            attempt_timeout = min(remaining, 9000 if tier == VISUAL_SMART else 6000)
         try:
             if model == LIVE:
                 reply = _live_call(contents, config, timeout_ms, resolved_key)
@@ -711,15 +726,24 @@ def call(contents, tier: str = FAST, config=None,
                     return reply
                 raise RuntimeError("the Live turn came back empty")
             if model.startswith(PROVIDER_PREFIX):
+                if visual:
+                    return _provider_call(model, contents, config, attempt_timeout, strict_timeout=True)
                 return _provider_call(model, contents, config, timeout_ms)
-            if cl is None:
+            if visual:
+                cl = client(timeout_ms=attempt_timeout, key=resolved_key, strict_timeout=True)
+            elif cl is None:
                 cl = client(timeout_ms=timeout_ms, key=resolved_key)
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
+            if visual:
+                try:
+                    return cl.models.generate_content(**kwargs)
+                finally:
+                    cl.close()
             return cl.models.generate_content(**kwargs)
         except Exception as e:
-            msg = str(e)
+            msg = str(e) or type(e).__name__
             if is_quota_error(msg):
                 _cool(model)
                 print(f"[Gemini] {model}: out of quota — skipping it for "
@@ -727,10 +751,10 @@ def call(contents, tier: str = FAST, config=None,
             elif is_gone_error(msg):
                 _cool(model, _GONE_SECONDS)
                 print(f"[Gemini] {model}: unavailable to this key — set aside")
-            elif is_unavailable_error(msg):
-                _cool(model, _UNAVAILABLE_SECONDS)
-                print(f"[Gemini] {model}: not answering — resting it for "
-                      f"{_UNAVAILABLE_SECONDS // 60} minutes")
+            elif isinstance(e, TimeoutError) or "timeout" in msg.lower() or "timed out" in msg.lower() or is_unavailable_error(msg):
+                pause = min(30, _UNAVAILABLE_SECONDS) if visual else _UNAVAILABLE_SECONDS
+                _cool(model, pause)
+                print(f"[Gemini] {model}: not answering — resting it for {pause}s")
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     return None

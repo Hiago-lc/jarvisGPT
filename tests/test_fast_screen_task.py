@@ -28,7 +28,7 @@ class FastTaskTests(unittest.TestCase):
             gui.size.return_value = (1920, 1080)
             result = task._observe('Search', [])
         model.assert_called_once()
-        self.assertEqual(model.call_args.kwargs['tier'], gemini.FAST)
+        self.assertEqual(model.call_args.kwargs['tier'], gemini.VISUAL_FAST)
         self.assertEqual(result['_frame']['size'], (1920, 1080))
         self.assertEqual(result['input']['box_2d'], self.data['box_2d'])
 

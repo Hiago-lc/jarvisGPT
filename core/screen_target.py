@@ -1,9 +1,10 @@
 """Ground targets in visible Windows controls, then normalized screenshot boxes."""
 import math
 import platform
+import threading
 
 
-def accessible_target(description, width, height):
+def _accessible_target(description, width, height):
     if platform.system() != 'Windows':
         return None
     try:
@@ -28,6 +29,39 @@ def accessible_target(description, width, height):
         return matches[0] if len(matches) == 1 else None
     except Exception:
         return None
+
+
+_PROBE_LOCK = threading.Lock()
+
+
+def accessible_target(description, width, height):
+    """A hung Windows accessibility provider must not freeze the whole task."""
+    if platform.system() != 'Windows' or not _PROBE_LOCK.acquire(blocking=False):
+        return None
+    finished = threading.Event()
+    result = []
+    def inspect():
+        try:
+            # COM must be initialized in the worker that uses UI Automation.
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                result.append(_accessible_target(description, width, height))
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception:
+            result.append(None)
+        finally:
+            _PROBE_LOCK.release()
+            finished.set()
+    try:
+        threading.Thread(target=inspect, daemon=True, name='uia-target-probe').start()
+    except RuntimeError:
+        _PROBE_LOCK.release()
+        return None
+    if finished.wait(.35) and result:
+        return result[0]
+    return None
 
 
 def box_center(result, width, height):

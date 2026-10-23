@@ -28,7 +28,7 @@ class TargetTests(unittest.TestCase):
         desktop = MagicMock()
         desktop.window.return_value.descendants.return_value = [control]
         import types
-        with patch.object(screen_target.platform, 'system', return_value='Windows'), patch.object(screen_target, 'foreground_id', return_value=42), patch.dict('sys.modules', {'pywinauto': types.SimpleNamespace(Desktop=lambda **kwargs: desktop)}):
+        with patch.object(screen_target.platform, 'system', return_value='Windows'), patch.object(screen_target, 'foreground_id', return_value=42), patch.dict('sys.modules', {'pywinauto': types.SimpleNamespace(Desktop=lambda **kwargs: desktop), 'pythoncom': MagicMock()}):
             self.assertEqual(screen_target.accessible_target('botão Salvar', 1920, 1080), (150, 40))
             desktop.window.return_value.descendants.return_value = [control, control]
             self.assertIsNone(screen_target.accessible_target('Salvar', 1920, 1080))

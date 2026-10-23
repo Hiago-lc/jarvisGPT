@@ -100,3 +100,47 @@ acompanhe o computador durante a execução.
 Cada observação e busca visual pode consumir cota do Gemini.
 Os testes automatizados usam simulações; a precisão no seu Windows ainda
 precisa ser conferida com seus aplicativos, resolução e escala de tela.
+
+## Mensagens: digitar, corrigir, limpar e excluir
+
+Atualize os arquivos, mantendo suas configurações privadas, e inicie por
+`python start_gemini.py`.
+
+- “Na conversa com Vitor, digite ‘Estou testando o JARVIS agora’, sem enviar.”
+- “Limpe o rascunho da mensagem que ainda não foi enviada.”
+- “Substitua o rascunho por ‘Vou chegar às 14h’, sem enviar.”
+- “Apague as últimas três letras do campo de mensagem.”
+- “Na conversa com Vitor, exclua **para mim** a mensagem enviada com o texto
+  exato ‘Estou testando o JARVIS agora.’”
+
+`clear_field`/`clear_draft` seleciona e remove o texto do campo informado;
+`replace_text` substitui seu conteúdo. O campo é localizado e clicado antes de
+editar. Atalhos como Control+A e DEL são normalizados, e teclas inválidas deixam
+de ser reportadas como se tivessem sido executadas. `press` aceita de 1 a 100
+repetições, útil para Backspace em correções pequenas.
+
+Para uma mensagem já enviada, o modelo precisa fornecer à ferramenta screen_task
+`delete_recipient`, `delete_message_text` e `delete_scope` (`for_me` ou
+`for_everyone`) a partir do pedido do usuário. Quando falta o escopo, ele pergunta.
+O agente visual pode passar o mouse sobre o balão com `hover` para revelar o
+menu, observar os controles e seguir a opção solicitada. Esse fluxo depende do
+aplicativo mostrar a mensagem e permitir a exclusão: não é uma API universal
+de WhatsApp/Telegram. A identificação do alvo é feita pelo modelo na tela;
+acompanhe a operação, especialmente em exclusões. Não autoriza excluir conversas
+inteiras, contatos ou arquivos, nem enviar o rascunho. Uma tela ou mensagem
+recebida não pode autorizar exclusões.
+
+A análise visual agora usa uma faixa REST do Gemini com no máximo duas
+tentativas e orçamento de 12 segundos (rápido) ou 18 segundos (análise mais
+complexa), em vez de abrir primeiro uma sessão auxiliar Gemini Live. Cada
+requisição recebe só a parcela restante, com repetição automática do SDK
+desativada nessa faixa. A conversa por voz continua no Live. Isso reduz as
+esperas causadas pelo `live: TimeoutError`; limites de rede, SDK e cota ainda
+podem impedir a tarefa. Modelos temporariamente indisponíveis não são testados
+em um ciclo sem limite. A consulta aos controles nativos do Windows espera no
+máximo 350 ms antes de seguir pelo caminho visual.
+
+Se uma tarefa parar, o motivo completo também aparece no painel, sem depender
+da linha resumida de 80 caracteres do terminal. Os testes automatizados usam
+simulações: esta atualização não foi validada em uma sessão real do WhatsApp
+ou Telegram no Windows.

@@ -232,16 +232,35 @@ def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
     return outcome.unverified("click", "mouse input sent; inspect the screen before continuing", x=x, y=y, button=button)
 
 
+def _key_name(key):
+    if not isinstance(key, str):
+        raise ValueError("Informe uma tecla válida.")
+    name = key.strip().lower()
+    aliases = {"control": "ctrl", "cmd": "command", "return": "enter", "del": "delete", "escape": "esc", "back_space": "backspace", "windows": "win", "option": "alt"}
+    name = aliases.get(name, name)
+    supported = {"ctrl", "shift", "alt", "command", "win", "enter", "tab", "esc", "delete", "backspace", "space", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "insert", "capslock", "numlock", "printscreen"}
+    if not (name in supported or (len(name) == 1 and name.isascii()) or re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", name)):
+        raise ValueError(f"Tecla não reconhecida: {name}")
+    return name
+
+
 def _hotkey(*keys) -> str:
     _require_pyautogui()
+    if not keys:
+        raise ValueError("Informe as teclas do atalho.")
+    keys = [_key_name(key) for key in keys]
     pyautogui.hotkey(*keys)
-    return f"Hotkey: {'+'.join(keys)}"
+    return outcome.unverified("hotkey", "keyboard shortcut sent; verify the target", keys="+".join(keys))
 
 
-def _press(key: str) -> str:
+def _press(key: str, count: int = 1) -> str:
     _require_pyautogui()
-    pyautogui.press(key)
-    return f"Pressed: {key}"
+    key = _key_name(key)
+    count = int(count)
+    if not 1 <= count <= 100:
+        raise ValueError("A quantidade de teclas precisa ficar entre 1 e 100.")
+    pyautogui.press(key, presses=count, interval=0.015)
+    return outcome.unverified("press", "keypresses sent; verify the target", key=key, count=count)
 
 
 def _scroll(direction: str = "down", amount: int = 3) -> str:
@@ -311,9 +330,9 @@ def _clear_field() -> str:
     _require_pyautogui()
     select_key = "command" if _get_os() == "mac" else "ctrl"
     pyautogui.hotkey(select_key, "a")
-    time.sleep(0.1)
-    pyautogui.press("delete")
-    return "Field cleared"
+    time.sleep(0.05)
+    pyautogui.press("backspace")
+    return outcome.unverified("clear_field", "focused draft text selected and cleared; verify the field")
 
 def _focus_window(title: str) -> str:
     os_name = _get_os()
@@ -545,7 +564,7 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         from core import gemini
         result = gemini.as_json(
             [gtypes.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"), prompt],
-            tier=gemini.SMART, timeout_ms=20_000,
+            tier=gemini.VISUAL_FAST, timeout_ms=12_000,
         )
         target = box_center(result, screen_w, screen_h)
         if target is not None and foreground_id() == original_window:
@@ -606,6 +625,7 @@ def _computer_control(
     """
     params = parameters or {}
     action = params.get("action", "").lower().strip()
+    action = {"clear_draft": "clear_field", "replace_text": "smart_type"}.get(action, action)
 
     if not action:
         return "No action specified for computer_control."
@@ -627,7 +647,7 @@ def _computer_control(
             if not focused.startswith("status=done"):
                 return focused
 
-        if action in ("type", "smart_type", "paste") and params.get("description"):
+        if action in ("type", "smart_type", "paste", "clear_field") and params.get("description"):
             coords = _screen_find(params["description"])
             if coords is None:
                 return outcome.failed(action, "Campo de texto não localizado; nada digitado")
@@ -640,7 +660,7 @@ def _computer_control(
         if action == "smart_type":
             return _smart_type(
                 params.get("text", ""),
-                clear_first=params.get("clear_first", True),
+                clear_first=True if params.get("action") == "replace_text" else params.get("clear_first", True),
             )
 
         if action in ("click", "left_click", "double_click", "right_click", "screen_click"):
@@ -672,7 +692,7 @@ def _computer_control(
             return _hotkey(*keys)
 
         if action == "press":
-            return _press(params.get("key", "enter"))
+            return _press(params.get("key", ""), params.get("count", 1))
 
         if action == "scroll":
             return _scroll(
@@ -752,6 +772,7 @@ TOOL = {
     "description": (
         "When asked to type or click, execute this tool rather than just describing an action. "
         "For a named target app, pass title with the input action to focus it first. "
+        "To erase an unsent draft use clear_field with its field description; to replace it use replace_text. "
         "For clicking a named element or typing into a specific field use description; never invent coordinates. "
         "Direct computer control: type, click, hotkeys, scroll, move mouse, "
         "screenshots, find elements on screen, and CLOSE an application. "
@@ -775,7 +796,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "type | smart_type | click | double_click | right_click | drag | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | close_app | screen_find | screen_click | random_data | user_data"
+                "description": "type | smart_type | replace_text | clear_draft | click | double_click | right_click | drag | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | close_app | screen_find | screen_click | random_data | user_data"
             },
             "app_name": {
                 "type": "STRING",
@@ -811,6 +832,7 @@ TOOL = {
                 "type": "STRING",
                 "description": "Key combination e.g. 'ctrl+c'"
             },
+            "count": {"type": "INTEGER", "description": "For press: number of keypresses, 1..100, default 1"},
             "key": {
                 "type": "STRING",
                 "description": "Single key e.g. 'enter'"
@@ -833,7 +855,7 @@ TOOL = {
             },
             "description": {
                 "type": "STRING",
-                "description": "Visible element or text field to locate with Gemini. For type, smart_type and paste, click this field before typing. Prefer this to guessing coordinates."
+                "description": "Visible element or text field to locate with Gemini. For type, smart_type, replace_text, paste or clear_field, click this field before editing it. Prefer this to guessing coordinates."
             },
             "type": {
                 "type": "STRING",
