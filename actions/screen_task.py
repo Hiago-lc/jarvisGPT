@@ -14,7 +14,7 @@ def cancel():
     _STOP.set()
 
 
-def _observe(goal, history, smart=False, delete_request=None):
+def _observe(goal, history, smart=False, delete_request=None, desktop=False):
     from google.genai import types
     from core import gemini
     from actions import computer_control as control
@@ -26,7 +26,9 @@ def _observe(goal, history, smart=False, delete_request=None):
         return {"state": "blocked", "reason": "A janela mudou durante a captura; selecione o aplicativo alvo."}
     frame = {"size": tuple(control.pyautogui.size()), "window": window}
     from core.screen_viewport import active_bounds, crop
-    frame["bounds"] = active_bounds(frame["size"])
+    frame["bounds"] = (0, 0, *frame["size"]) if desktop else active_bounds(frame["size"])
+    frame["desktop"] = desktop
+    frame["restore"] = desktop
     image = crop(image, frame["bounds"], frame["size"])
     image.thumbnail((1920, 1200))
     frame["image"] = image.copy()
@@ -112,13 +114,15 @@ def _execute_step(data, frame, player):
         if target is None:
             from core.screen_viewport import locate
             target = locate({'found': True, 'confidence': data.get('confidence'), 'box_2d': data.get('box_2d')}, frame.get('bounds', (0, 0, width, height)))
+        if target is not None and frame.get('restore') and (target[0] < 5 or target[0] >= width - 5) and (target[1] < 5 or target[1] >= height - 5):
+            return outcome.failed('focus_window', 'Alvo muito próximo de um canto; nenhum movimento enviado.', reobserve=True)
         if target is None:
             return outcome.failed('screen_task', 'Alvo incerto na captura; nenhuma ação executada.', reobserve=True, escalate=True)
         if frame.get('image') is not None and not native:
             from core.screen_target import target_unchanged
             from core.screen_viewport import active_bounds, crop
             bounds = frame.get('bounds', (0, 0, width, height))
-            if 'bounds' in frame and (tuple(control.pyautogui.size()) != frame['size'] or active_bounds(frame['size']) != bounds):
+            if 'bounds' in frame and (tuple(control.pyautogui.size()) != frame['size'] or (not frame.get('desktop') and active_bounds(frame['size']) != bounds)):
                 return outcome.failed('screen_task', 'A posição ou o tamanho da janela mudou; capturando novamente.', reobserve=True)
             fresh = crop(control.pyautogui.screenshot(), bounds, frame['size'])
             if not target_unchanged(frame['image'], fresh, data.get('box_2d')):
@@ -151,6 +155,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
     if not _RUNNING.acquire(blocking=False):
         return outcome.failed('screen_task', 'Já existe uma tarefa em execução; interrompa-a antes de iniciar outra.')
     _STOP.clear()
+    restore_title = parameters.get("_restore_title")
     history = []
     corrections = 0
     smart_retry = False
@@ -164,7 +169,12 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
             if _STOP.is_set() or time.monotonic() >= deadline:
                 return outcome.unverified('screen_task', 'Tarefa interrompida ou limite de tempo atingido', steps=len(history))
             started = time.monotonic()
-            if delete_request is None:
+            if restore_title:
+                from core.window_restore import foreground_matches
+                if foreground_matches(restore_title):
+                    return outcome.done('focus_window', title=restore_title, verified=True, method='visual_taskbar', steps=len(history))
+                observation = _observe(goal, history, smart_retry, desktop=True)
+            elif delete_request is None:
                 observation = _observe(goal, history, smart_retry)
             else:
                 observation = _observe(goal, history, smart_retry, delete_request)
@@ -175,6 +185,11 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
             if not isinstance(observation, dict):
                 return outcome.failed('screen_task', 'A análise visual não respondeu no prazo ou não retornou dados válidos. Confira a rede e a cota Gemini; nenhuma ação foi executada nesta etapa.', steps=len(history))
             state = observation.get('state')
+            if state == 'done' and restore_title:
+                from core.window_restore import foreground_matches
+                if not foreground_matches(restore_title):
+                    return outcome.unverified('focus_window', 'A imagem sugere restauração, mas a janela alvo não está confirmada em primeiro plano.', steps=len(history))
+                return outcome.done('focus_window', title=restore_title, verified=True, method='visual_taskbar', steps=len(history))
             if state == 'done':
                 return outcome.done('screen_task', steps=len(history), evidence=str(observation.get('reason', ''))[:500], verified_by='Gemini screenshot assessment')
             if state != 'act':
@@ -182,6 +197,8 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
             if step == limit:
                 break
             data = _validate_input(observation.get('input'))
+            if restore_title and data['action'] not in ('click', 'hover', 'wait'):
+                return outcome.failed('focus_window', 'Restauração visual permite apenas clicar, passar o mouse e aguardar; ação rejeitada.', steps=len(history))
             if history and not history[-1]['result'].startswith('status=failed') and data == history[-1]['input'] and data['action'] not in ('scroll', 'wait'):
                 return outcome.unverified('screen_task', 'A mesma ação foi proposta novamente; tarefa pausada para evitar repetição', steps=len(history))
             from actions import computer_control as control

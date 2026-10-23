@@ -347,13 +347,15 @@ def _focus_window(title: str) -> str:
             exact = [w for w in windows if w.title.casefold() == title.casefold()]
             windows = exact or windows
             if not windows:
-                return outcome.failed("focus_window", "Nenhuma janela encontrada", title=title)
+                from core.window_restore import restore_visual
+                return restore_visual(title)
             if len(windows) > 1:
                 return outcome.ask("focus_window", "Mais de uma janela encontrada; informe o título completo", candidates=" | ".join(w.title for w in windows[:5]))
             window = windows[0]
             from core.window_activation import activate
             if not activate(window._hWnd):
-                return outcome.failed("focus_window", "Windows não permitiu ativar a janela; selecione-a manualmente", title=window.title)
+                from core.window_restore import restore_visual
+                return restore_visual(window.title)
             return outcome.done("focus_window", title=window.title, verified=True)
         except Exception as e:
             return outcome.failed("focus_window", str(e), title=title)

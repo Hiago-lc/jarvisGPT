@@ -1441,7 +1441,7 @@ class JarvisLive:
                     result = f"Unknown tool: {name}"
 
         except asyncio.CancelledError:
-            if name == "screen_task":
+            if name in ("screen_task", "open_app", "computer_control"):
                 from actions.screen_task import cancel
                 cancel()
             elif name == "whatsapp_desktop_search":

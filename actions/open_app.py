@@ -347,9 +347,9 @@ def open_app(parameters=None, response=None, player=None,
                     "open_app", app=spoken, matched=candidate.label,
                     already_running=True, focused=True, verified=True,
                 )
-        print(f"[open_app] {best.label} is running but no window could be "
-              f"raised — launching it instead, which is what brings back an "
-              f"app that is only in the tray.")
+        if _SYSTEM == "Windows":
+            from core.window_restore import restore_visual
+            return restore_visual(spoken, player=player)
 
     launcher_name = appidentity.launcher_name(spoken)
     before = appidentity.snapshot()

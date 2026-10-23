@@ -97,8 +97,9 @@ class DesktopTests(unittest.TestCase):
     def test_windows_focus_refusal_does_not_report_success(self):
         window = MagicMock(title='Notepad', width=800, height=600, _hWnd=10)
         windows = types.SimpleNamespace(getWindowsWithTitle=lambda title: [window], getActiveWindow=lambda: None)
-        with patch.dict('sys.modules', {'pygetwindow': windows}), patch('core.window_activation.activate', return_value=False):
+        with patch.dict('sys.modules', {'pygetwindow': windows}), patch('core.window_activation.activate', return_value=False), patch('core.window_restore.restore_visual', return_value='status=failed') as fallback:
             self.assertIn('status=failed', cc._focus_window('Notepad'))
+        fallback.assert_called_once_with('Notepad')
 
     def test_screenshot_coordinates_scale_to_input_dimensions(self):
         from core import gemini

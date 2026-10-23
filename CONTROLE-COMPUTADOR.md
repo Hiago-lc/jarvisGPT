@@ -263,3 +263,22 @@ a janela antes da análise visual, sem tentar adivinhar ícones da barra de tare
 Se houver várias janelas com o título solicitado, informe o título completo.
 O Windows ainda pode recusar a ativação; nesse caso, o resultado é falha.
 Essa alteração foi validada com testes simulados, sem acesso ao Windows do usuário.
+
+### Alternativa visual para restauração
+
+No Windows, se a ativação nativa falhar, `focus_window` tenta localizar o aplicativo
+na barra de tarefas. `open_app` também usa essa alternativa quando encontra um
+aplicativo já em execução, mas não consegue trazê-lo à frente pelo sistema.
+A alternativa permite até seis ações (clique, passar o mouse ou aguardar),
+com nova observação entre elas. Pode revelar a barra oculta e miniaturas de
+janelas agrupadas. A captura inclui o monitor principal inteiro, não apenas a
+janela ativa. Não inicia outro aplicativo nem digita durante a restauração.
+
+O reconhecimento depende da disponibilidade e da cota visual do Gemini.
+Ícones sem identificação suficiente e janelas ambíguas causam uma pausa.
+A conclusão exige também uma janela correspondente, única e não minimizada em
+primeiro plano, verificada pelo Windows. O destaque do ícone sozinho não basta.
+O fail-safe continua ativo e movimentos aos cantos são rejeitados.
+A interrupção do comando cancela também a alternativa visual.
+Essa integração foi testada com simulações; ainda requer validação no Windows
+real, inclusive para a disposição específica da barra de tarefas do usuário.
