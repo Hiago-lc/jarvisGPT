@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from core import outcome
+from core.google_calendar_errors import CalendarSetupError
 
 
 def _datetime(value):
@@ -63,9 +64,9 @@ def google_agenda(parameters, response=None, player=None, session_memory=None):
                     raise
                 event = events.get(calendarId=calendar_id, eventId=body['id']).execute(num_retries=0)
                 if event.get('extendedProperties', {}).get('private', {}).get('jarvisDigest') != body['id']:
-                    raise RuntimeError('Conflito de evento; nenhuma nova inclusão foi feita.')
+                    raise CalendarSetupError('Conflito de evento; nenhuma nova inclusão foi feita.')
             if event.get('id') != body['id'] or event.get('status') == 'cancelled':
-                raise RuntimeError('O Google não confirmou o evento solicitado.')
+                raise CalendarSetupError('O Google não confirmou o evento solicitado.')
             return outcome.done('google_agenda', title=event.get('summary', body['summary']), start=body['start']['dateTime'], event_id=event['id'], link=event.get('htmlLink'), verified=True)
         result = events.list(calendarId=calendar_id, timeMin=start.isoformat(), timeMax=end.isoformat(), singleEvents=True, orderBy='startTime', maxResults=30).execute(num_retries=1)
         rows = [{'title': e.get('summary', '(sem título)'), 'start': e.get('start'), 'end': e.get('end')} for e in result.get('items', [])]
@@ -73,19 +74,18 @@ def google_agenda(parameters, response=None, player=None, session_memory=None):
     except (ValueError, TypeError, ZoneInfoNotFoundError) as error:
         return outcome.ask('google_agenda', str(error))
     except Exception as error:
-        # Do not print Google responses, OAuth tokens or personal calendar content.
-        status = getattr(getattr(error, 'resp', None), 'status', None)
-        if status in (401, 403):
-            reason = 'O Google recusou o acesso. Confira a autorização, a API Calendar e as permissões dessa agenda.'
-        elif status == 404:
-            reason = 'Agenda não encontrada ou sem acesso para esta conta.'
-        elif status == 429:
-            reason = 'Limite de uso do Google Agenda atingido; tente mais tarde.'
-        elif isinstance(error, RuntimeError):
+        from core.google_calendar_errors import diagnose
+        code, reason = diagnose(error)
+        if isinstance(error, CalendarSetupError) and getattr(error, 'resp', None) is None:
             reason = str(error)
-        else:
-            reason = 'Não foi possível confirmar a operação no Google. Se repetir os mesmos dados de criação, o identificador estável evita duplicar o evento.'
-        return outcome.failed('google_agenda', reason)
+        # The old terminal receipt cut the reason after 80 characters. Emit this
+        # sanitized diagnostic in full so users can act on it and share it safely.
+        message = f"SYS: Google Agenda [{code}]: {reason}"
+        print(f"[GoogleAgenda] {message}")
+        if player:
+            player.write_log(message)
+        return outcome.failed('google_agenda', reason, code=code)
+
 
 
 TOOL = {

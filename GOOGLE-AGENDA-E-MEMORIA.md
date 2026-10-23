@@ -134,3 +134,33 @@ Persistência não é armazenamento infalível: mantenha backups fora do disco d
 computador. Disco cheio, remoção manual da pasta e falhas físicas ainda podem
 causar perda. Os testes desta versão simulam Gemini, mouse, Windows e Google
 Calendar; a conta Google e a precisão na sua tela exigem validação local.
+
+## Diagnosticar recusa de acesso (401/403)
+
+Atualize o código e execute, no mesmo ambiente em que inicia o Jarvis:
+
+```sh
+python connect_google_calendar.py --check
+```
+
+O teste é somente de leitura: não cria eventos e não mostra seus compromissos.
+Compartilhe somente a linha `[GoogleAgenda] código: orientação` se precisar de
+ajuda. Não envie o arquivo de token nem o JSON de cliente OAuth.
+
+- `api_disabled`: habilite **Google Calendar API** no mesmo projeto do Google
+  Cloud que criou seu cliente OAuth. Autorizar a conta não habilita a API.
+- `scope_missing`: execute novamente `python connect_google_calendar.py --client
+  "caminho/client_secret.json"` e aceite a permissão de eventos no navegador.
+- `unauthorized`: reconecte a conta; a autorização atual foi recusada.
+- `workspace_policy`: peça a liberação do aplicativo ao administrador da empresa.
+- `quota_limit`: aguarde e confira as cotas; reconectar não resolve esse limite.
+- `permission_denied`: confira a conta escolhida, a API habilitada e a permissão
+  de alterar a agenda. O Google não deu uma causa mais específica reconhecida.
+- `read_ok`: a leitura da agenda principal funcionou; ainda não é prova de
+  escrita em uma agenda compartilhada. Se a criação falhar, copie a nova linha
+  completa `[GoogleAgenda]` que aparece no terminal/HUD ao tentar criar.
+
+Não é preciso apagar o token antes de uma nova autorização. A conexão agora
+pede consentimento explícito e só substitui o arquivo após autorização válida.
+Se houver erro ao renovar a autorização, a mensagem orienta reconectar sem
+mostrar a resposta privada do servidor Google.
