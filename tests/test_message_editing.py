@@ -25,10 +25,10 @@ class VisualLatencyTests(unittest.TestCase):
             client.models.generate_content.side_effect = generate
             return client
         with patch.object(gemini, 'api_key', return_value='test'), patch.object(gemini, '_provider_rungs', return_value=()), patch.object(gemini, '_cooling', return_value=False), patch.object(gemini.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(gemini, 'client', side_effect=build), patch.object(gemini, '_live_call') as live, patch.object(gemini, '_cool') as cool:
-            result = gemini.call('locate', tier=gemini.VISUAL_FAST, timeout_ms=9000)
+            result = gemini.call('locate', tier=gemini.VISUAL_FAST, timeout_ms=24000)
         self.assertEqual(result.text, '{}')
-        self.assertEqual(limits, [6000, 3000])
-        self.assertEqual(clock[0], 9)
+        self.assertEqual(limits, [12000, 12000])
+        self.assertEqual(clock[0], 24)
         live.assert_not_called()
         cool.assert_called_once()
         for client in clients:

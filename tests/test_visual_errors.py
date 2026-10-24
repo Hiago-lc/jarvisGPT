@@ -40,3 +40,38 @@ class VisualErrorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class VisualDeadlineTests(unittest.TestCase):
+    def run_call(self, errors=None, timeout=12000):
+        client = MagicMock()
+        if errors:
+            client.models.generate_content.side_effect = errors
+        with patch.object(gemini, 'api_key', return_value='test'), patch.object(gemini, '_provider_rungs', return_value=()), patch.object(gemini, '_cooling', return_value=False), patch.object(gemini, '_cool'), patch.object(gemini.time, 'monotonic', return_value=100), patch.object(gemini, 'client', return_value=client) as factory:
+            try:
+                gemini.call('image', tier=gemini.VISUAL_FAST, timeout_ms=timeout)
+                error = None
+            except gemini.VisualCallError as caught:
+                error = caught
+        return factory, client, error
+
+    def test_request_has_at_least_service_minimum(self):
+        factory, _, error = self.run_call()
+        self.assertIsNone(error)
+        self.assertGreaterEqual(factory.call_args.kwargs['timeout_ms'], 10000)
+        self.assertLessEqual(factory.call_args.kwargs['timeout_ms'], 12000)
+
+    def test_insufficient_budget_sends_no_invalid_request(self):
+        factory, client, error = self.run_call(timeout=9000)
+        factory.assert_not_called()
+        client.models.generate_content.assert_not_called()
+        self.assertEqual(error.code, 'timeout')
+
+    def test_deadline_rejection_is_not_masked_as_missing_fallback(self):
+        factory, client, error = self.run_call(errors=RuntimeError('400 Manually set deadline 6s is too short. Minimum allowed deadline is 10s.'))
+        self.assertEqual(error.code, 'request_deadline')
+        self.assertEqual(client.models.generate_content.call_count, 1)
+
+    def test_missing_fallback_does_not_hide_primary_network_failure(self):
+        _, _, error = self.run_call(errors=[RuntimeError('connection reset'), RuntimeError('404 model not found')])
+        self.assertEqual(error.code, 'network_or_service')

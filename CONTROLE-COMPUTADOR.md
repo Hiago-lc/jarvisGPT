@@ -329,3 +329,15 @@ O aviso `Revert to STA COM threading mode` não é, sozinho, uma falha de clique
 `taskbar_labels=not_found` significa que a consulta não encontrou um rótulo
 correspondente; não comprova que o ícone inexiste. Use o retorno técnico completo
 para distinguir isso de indisponibilidade do modelo visual.
+
+### Gemini: prazo mínimo de 10 segundos
+
+Alguns modelos recusam a requisição se o prazo HTTP for menor que 10 segundos.
+As chamadas visuais agora respeitam esse mínimo, mantendo o orçamento total:
+se não restarem 10 segundos, não enviam outra tentativa inválida. O prazo padrão
+passa a 12 segundos. Uma rejeição explícita de prazo recebe `request_deadline`,
+sem ser mascarada pela indisponibilidade de um modelo alternativo.
+Se você já configurou `gemini-flash-lite-latest` com sucesso no diagnóstico,
+basta atualizar e reiniciar o Jarvis; não é necessário repetir a configuração
+por causa desse erro de prazo. O teste de configuração usava 15 segundos,
+por isso podia funcionar enquanto a automação, que limitava a 6 segundos, falhava.

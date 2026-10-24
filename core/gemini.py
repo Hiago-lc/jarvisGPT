@@ -240,7 +240,7 @@ _ONE_SHOT_SYSTEM = (
 # Milliseconds. Not a preference: the API rejects anything under ten seconds
 # with "Minimum allowed deadline is 10s", so this is the tightest bound it will
 # accept. Callers with a long job (a whole document, a big image) pass more.
-DEFAULT_TIMEOUT_MS = 10_000
+DEFAULT_TIMEOUT_MS = 12_000
 MIN_TIMEOUT_MS = 10_000
 
 _key_lock = threading.Lock()
@@ -734,9 +734,14 @@ def call(contents, tier: str = FAST, config=None,
         attempt_timeout = timeout_ms
         if visual:
             remaining = int((deadline - time.monotonic()) * 1000)
-            if remaining <= 0:
+            # Gemini REST rejects manually set deadlines shorter than 10 s.
+            # Keep the overall budget: skip a fallback rather than send an
+            # invalid short deadline or silently extend the task.
+            if remaining < 10000:
+                if not visual_errors:
+                    visual_errors.append("timeout")
                 break
-            attempt_timeout = min(remaining, 9000 if tier == VISUAL_SMART else 6000)
+            attempt_timeout = min(remaining, 15000 if tier == VISUAL_SMART else 12000)
         try:
             if model == LIVE:
                 reply = _live_call(contents, config, timeout_ms, resolved_key)
@@ -768,7 +773,9 @@ def call(contents, tier: str = FAST, config=None,
         except Exception as e:
             msg = str(e) or type(e).__name__
             if visual:
-                if is_quota_error(msg):
+                if "minimum allowed deadline" in msg.lower() or "deadline" in msg.lower() and "too short" in msg.lower():
+                    code = "request_deadline"
+                elif is_quota_error(msg):
                     code = "quota"
                 elif isinstance(e, TimeoutError) or "timeout" in msg.lower() or "timed out" in msg.lower():
                     code = "timeout"
@@ -780,6 +787,8 @@ def call(contents, tier: str = FAST, config=None,
                     code = "network_or_service"
                 visual_errors.append(code)
                 print(f"[GeminiVisual] model={model} code={code}")
+                if code == "request_deadline":
+                    break
             if is_quota_error(msg):
                 _cool(model)
                 print(f"[Gemini] {model}: out of quota — skipping it for "
@@ -794,8 +803,11 @@ def call(contents, tier: str = FAST, config=None,
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     if visual:
-        code = visual_errors[-1] if visual_errors else "cooldown"
+        # A missing fallback must not hide the actual selected-model failure.
+        code = next((item for item in visual_errors if item != "model_unavailable"),
+                    visual_errors[-1] if visual_errors else "cooldown")
         messages = {
+            "request_deadline": "O serviço Gemini recusou o prazo da requisição visual. Atualize o Jarvis; o prazo precisa ser de pelo menos 10 segundos.",
             "quota": "A cota dos modelos visuais Gemini foi recusada. A voz Live tem cota separada; confira as cotas no Google AI Studio.",
             "timeout": "O modelo visual Gemini excedeu o tempo de resposta. Nenhuma entrada foi enviada nesta etapa.",
             "access_denied": "A chave não tem acesso ao modelo visual solicitado. Confira as permissões e restrições da chave Gemini.",
