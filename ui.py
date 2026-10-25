@@ -4235,6 +4235,7 @@ class RemoteKeyOverlay(QWidget):
 
 
 class MainWindow(QMainWindow):
+    _automation_sig = pyqtSignal(str, object)
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
@@ -4520,6 +4521,11 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self._desktop_monitor = None
+        self._automation_sig.connect(self._automation_event)
+        from core.automation_view import install
+        install(self._automation_sig.emit)
+        QApplication.instance().aboutToQuit.connect(lambda: install(None))
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
@@ -4557,6 +4563,39 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+    def _monitor_stop(self):
+        from actions.screen_task import cancel
+        cancel()
+        self._do_interrupt()
+
+    def _show_desktop_monitor(self):
+        if self._desktop_monitor is None:
+            from core.desktop_monitor import DesktopMonitor
+            self._desktop_monitor = DesktopMonitor(self._monitor_stop, self.show)
+        self._desktop_monitor.show()
+        self.hide()
+
+    def _automation_event(self, action, payload):
+        try:
+            if action == 'begin':
+                self._show_desktop_monitor()
+                self._desktop_monitor.begin(payload.get('goal', ''))
+            elif action == 'occlude' and self._desktop_monitor is not None:
+                if payload.get('hidden'):
+                    self._monitor_was_visible = self._desktop_monitor.isVisible()
+                    self._desktop_monitor.hide()
+                elif getattr(self, '_monitor_was_visible', False):
+                    self._desktop_monitor.show()
+            elif action == 'step' and self._desktop_monitor is not None:
+                self._desktop_monitor.status.setText(f"Etapa {payload.get('step')}: {payload.get('description', '')[:200]}")
+            elif action == 'end' and self._desktop_monitor is not None:
+                self._desktop_monitor.finish(payload.get('steps', 0))
+                if not self._desktop_monitor.returned:
+                    self._desktop_monitor.show()
+            payload['_ok'] = True
+        finally:
+            payload['_ack'].set()
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -6201,6 +6240,9 @@ class MainWindow(QMainWindow):
             return l
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        desktop_btn = QPushButton("Desktop ao vivo")
+        desktop_btn.clicked.connect(self._show_desktop_monitor)
+        lay.addWidget(desktop_btn)
         lay.addStretch()
         lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
         return w

@@ -387,3 +387,41 @@ Uma ordem como "não enviar" continua válida em todas as etapas. O usuário pod
 interromper a execução e o fail-safe do mouse permanece ativo. As recuperações
 podem consumir chamadas Gemini adicionais. A validação automatizada usa cenários
 simulados; não garante que qualquer interface possa ser concluída sem intervenção.
+
+### Sequências até terminar e painel do desktop
+
+Esta versão substitui o teto anterior de 24 ações/cinco minutos: tarefas normais
+continuam até o resultado ser confirmado, surgir um impedimento ou o usuário
+interromper. `max_steps` é opcional, usado somente quando se deseja um limite
+explícito. A restauração da barra de tarefas continua sendo uma operação curta,
+com limite próprio; não limita a sequência de trabalho seguinte.
+
+A proteção contra repetição permanece: dez observações consecutivas sem mudança
+visual detectável encerram a tarefa com `no_progress`. Falhas recuperáveis ainda
+têm tentativas limitadas, renovadas quando há mudança de tela e uma entrada bem
+sucedida. Isso não garante reconhecer todo ciclo possível em páginas dinâmicas.
+O histórico recente fica limitado a 64 entradas na memória de trabalho, e um
+resumo de progresso acompanha as observações seguintes. O total de entradas
+continua sendo contado mesmo depois de o histórico recente ser reduzido.
+
+Ao executar uma sequência, o Jarvis abre automaticamente um painel compacto de
+acompanhamento, recolhendo a janela principal. Também é possível abri-lo pelo
+botão **Desktop ao vivo** no rodapé. O painel mostra a captura do monitor principal,
+o cursor e a etapa atual, atualizando a prévia duas vezes por segundo. A prévia
+é local, somente leitura e não é gravada. Os cliques continuam acontecendo no
+desktop real, não dentro de um computador virtual ou de uma área isolada.
+
+No Windows compatível, o painel solicita exclusão das capturas para evitar
+reflexos infinitos. Se o sistema não permitir isso, a prévia informa que está
+indisponível. Antes de capturar ou enviar entradas, o painel se oculta brevemente
+com confirmação da interface; depois reaparece. Não aceita cliques na imagem
+como comandos. **PARAR** solicita interrupção; **Voltar ao Jarvis** interrompe uma
+execução ativa e reabre a interface completa. Uma chamada Gemini já em andamento
+pode levar até seu prazo para retornar, mas nenhuma nova entrada é enviada após
+a interrupção ser detectada. O fail-safe do mouse continua ativo.
+
+O painel não torna o reconhecimento visual infalível e não isola a automação
+do uso manual simultâneo do computador. Se precisar usar o PC, interrompa a tarefa.
+Foram verificados o painel em Qt offscreen e cenários simulados de 70 ações ao
+longo de mais de cinco minutos, cancelamento e ausência de progresso. A captura
+ao vivo e a exclusão da janela ainda precisam ser validadas no Windows real.

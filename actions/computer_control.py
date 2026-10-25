@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 
 from core import appidentity, outcome
+from core.automation_view import without_obstruction
 from core.lazyimport import LazyModule, installed
 
 # pyautogui and pyperclip are imported on first USE, not at launch — see
@@ -182,6 +183,7 @@ def _user_profile() -> dict:
 _INPUT_LOCK = threading.RLock()
 
 
+@without_obstruction
 def _type(text: str, interval: float = 0.03) -> str:
     # typewrite silently drops accented characters even in short Portuguese words.
     if not isinstance(text, str) or not text:
@@ -193,6 +195,7 @@ def _type(text: str, interval: float = 0.03) -> str:
     return outcome.unverified("type", "keystrokes sent; verify the target field", characters=len(text))
 
 
+@without_obstruction
 def _smart_type(text: str, clear_first: bool = True) -> str:
     if not isinstance(text, str) or not text:
         raise ValueError("Informe o texto que deve ser digitado.")
@@ -222,6 +225,7 @@ def _checked_coordinates(x, y):
     return x, y
 
 
+@without_obstruction
 def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
     _require_pyautogui()
     if button not in ("left", "right", "middle"):
@@ -246,6 +250,7 @@ def _key_name(key):
     return name
 
 
+@without_obstruction
 def _hotkey(*keys) -> str:
     _require_pyautogui()
     if not keys:
@@ -255,6 +260,7 @@ def _hotkey(*keys) -> str:
     return outcome.unverified("hotkey", "keyboard shortcut sent; verify the target", keys="+".join(keys))
 
 
+@without_obstruction
 def _press(key: str, count: int = 1) -> str:
     _require_pyautogui()
     key = _key_name(key)
@@ -265,6 +271,7 @@ def _press(key: str, count: int = 1) -> str:
     return outcome.unverified("press", "keypresses sent; verify the target", key=key, count=count)
 
 
+@without_obstruction
 def _scroll(direction: str = "down", amount: int = 3) -> str:
     _require_pyautogui()
     vertical   = direction in ("up", "down")
@@ -273,6 +280,7 @@ def _scroll(direction: str = "down", amount: int = 3) -> str:
     return f"Scrolled {direction} ×{amount}"
 
 
+@without_obstruction
 def _move(x: int, y: int, duration: float = 0.3) -> str:
     _require_pyautogui()
     x, y = _checked_coordinates(x, y)
@@ -280,6 +288,7 @@ def _move(x: int, y: int, duration: float = 0.3) -> str:
     return f"Mouse → ({x}, {y})"
 
 
+@without_obstruction
 def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
     _require_pyautogui()
     x1, y1 = _checked_coordinates(x1, y1)
@@ -297,6 +306,7 @@ def _clipboard_get() -> str:
     return "(copied — pyperclip unavailable for read)"
 
 
+@without_obstruction
 def _clipboard_paste(text: str, clear_first: bool = False) -> str:
     _require_pyautogui()
     if not _require_pyperclip():
@@ -328,6 +338,7 @@ def _screenshot(save_path: str | None = None) -> str:
     return f"Screenshot saved: {path}"
 
 
+@without_obstruction
 def _clear_field() -> str:
     _require_pyautogui()
     select_key = "command" if _get_os() == "mac" else "ctrl"
@@ -532,6 +543,7 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
     )
 
 
+@without_obstruction
 def _screen_find(description: str) -> tuple[int, int] | None:
     if not isinstance(description, str) or not description.strip():
         return None
