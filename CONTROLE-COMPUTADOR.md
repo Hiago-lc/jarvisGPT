@@ -406,7 +406,7 @@ continua sendo contado mesmo depois de o histórico recente ser reduzido.
 
 Ao executar uma sequência, o Jarvis abre automaticamente um painel compacto de
 acompanhamento, recolhendo a janela principal. Também é possível abri-lo pelo
-botão **Desktop ao vivo** no rodapé. O painel mostra a captura do monitor principal,
+botão **Desktop ao vivo** no topo, ao lado dos controles, ou pela tecla **F8**. O painel mostra a captura do monitor principal,
 o cursor e a etapa atual, atualizando a prévia duas vezes por segundo. A prévia
 é local, somente leitura e não é gravada. Os cliques continuam acontecendo no
 desktop real, não dentro de um computador virtual ou de uma área isolada.

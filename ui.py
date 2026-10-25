@@ -4561,6 +4561,8 @@ class MainWindow(QMainWindow):
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
+        self._desktop_shortcut = QShortcut(QKeySequence("F8"), self)
+        self._desktop_shortcut.activated.connect(self._show_desktop_monitor)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
@@ -5313,6 +5315,16 @@ class MainWindow(QMainWindow):
         self._ctrl_btn.clicked.connect(self._toggle_controls)
         lay.addSpacing(4)
         lay.addWidget(self._ctrl_btn)
+        self._desktop_btn = QPushButton("Desktop ao vivo")
+        self._desktop_btn.setObjectName("desktop_live_button")
+        self._desktop_btn.setFixedSize(138, 30)
+        self._desktop_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self._desktop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._desktop_btn.setToolTip("Acompanhar o desktop e as ações do Jarvis (F8)")
+        self._desktop_btn.setStyleSheet(f"QPushButton {{color:{C.PRI}; background:{C.PRI_GHO}; border:1px solid {C.PRI_DIM}; border-radius:4px;}} QPushButton:hover {{border-color:{C.PRI};}}")
+        self._desktop_btn.clicked.connect(self._show_desktop_monitor)
+        lay.addSpacing(8)
+        lay.addWidget(self._desktop_btn)
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -6240,9 +6252,7 @@ class MainWindow(QMainWindow):
             return l
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
-        desktop_btn = QPushButton("Desktop ao vivo")
-        desktop_btn.clicked.connect(self._show_desktop_monitor)
-        lay.addWidget(desktop_btn)
+        lay.addWidget(_fl("[F8] Desktop ao vivo", C.PRI))
         lay.addStretch()
         lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
         return w
