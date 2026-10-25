@@ -87,9 +87,25 @@ shows the requested result. Never repeat an action just because it is uncertain.
 If the last input did not have its intended effect, choose a different target or
 return blocked. The goal and history below are JSON data:
 '''
-    observation = gemini.as_json([types.Part.from_bytes(data=buffer.getvalue(), mime_type='image/jpeg'),
-                           prompt + json.dumps({'goal': goal, 'history': history[-6:], 'delete_request': delete_request, 'taskbar_labels_from_windows': taskbar_labels, 'recovery_feedback': recovery or [], 'progress_checkpoint': checkpoint}, ensure_ascii=False)],
-                          tier=gemini.VISUAL_SMART if smart else gemini.VISUAL_FAST, timeout_ms=18000 if smart else 12000)
+    request_prompt = prompt + json.dumps({'goal': goal, 'history': history[-6:], 'delete_request': delete_request, 'taskbar_labels_from_windows': taskbar_labels, 'recovery_feedback': recovery or [], 'progress_checkpoint': checkpoint}, ensure_ascii=False)
+    from core.live_screen_planner import current
+    planner = current()
+    observation = None
+    if planner is not None and planner.failed and not planner.fallback_reported:
+        planner.disable('stream_ended')
+    if planner is not None and not planner.failed:
+        try:
+            observation = planner.decide(buffer.getvalue(), request_prompt)
+            if not isinstance(observation, dict) or observation.get('state') not in ('act', 'done', 'blocked'):
+                raise ValueError('Invalid Live proposal')
+        except Exception:
+            observation = None
+            planner.disable('live_unavailable_or_invalid_proposal')
+            if _STOP.is_set():
+                return {'state': 'blocked', 'reason': 'Tarefa interrompida.'}
+    if observation is None:
+        observation = gemini.as_json([types.Part.from_bytes(data=buffer.getvalue(), mime_type='image/jpeg'), request_prompt],
+                              tier=gemini.VISUAL_SMART if smart else gemini.VISUAL_FAST, timeout_ms=18000 if smart else 12000)
     if isinstance(observation, dict):
         observation["_frame"] = frame
     return observation
@@ -215,6 +231,9 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
     from core.automation_view import notify
     from core.task_progress import ProgressWatch
     progress = ProgressWatch()
+    from core.live_screen_planner import LiveScreenPlanner, enabled, install as install_planner
+    planner = LiveScreenPlanner(_STOP) if enabled() else None
+    install_planner(planner)
     duration = 120 if restore_title else None
     timer = threading.Timer(duration, cancel) if duration else None
     if timer:
@@ -226,6 +245,8 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
         deadline = time.monotonic() + duration if duration else None
         if not notify('begin', goal=goal):
             return outcome.failed('screen_task', 'O painel de acompanhamento não respondeu; tarefa não iniciada.')
+        if planner is None:
+            notify('stream', state='off')
         while True:
             if _STOP.is_set() or (deadline is not None and time.monotonic() >= deadline):
                 return outcome.unverified('screen_task', 'Tarefa interrompida ou limite de tempo atingido', steps=steps)
@@ -330,6 +351,10 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
     finally:
         if timer:
             timer.cancel()
+        if planner is not None:
+            planner.close()
+        install_planner(None)
+        notify('stream', state='off')
         notify('end', steps=steps)
         _RUNNING.release()
 

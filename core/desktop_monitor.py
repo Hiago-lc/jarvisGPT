@@ -28,6 +28,8 @@ class DesktopMonitor(QDialog):
         self.detail = QLabel('O Jarvis controla o desktop real. Esta imagem não recebe cliques.')
         self.detail.setWordWrap(True)
         layout.addWidget(self.detail)
+        self.stream_status = QLabel('IA ao vivo: aguardando tarefa')
+        layout.addWidget(self.stream_status)
         row = QHBoxLayout()
         self.stop_button = QPushButton('PARAR')
         self.stop_button.setEnabled(False)

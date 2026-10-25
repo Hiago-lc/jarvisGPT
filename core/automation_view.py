@@ -4,7 +4,8 @@ import threading
 from functools import wraps
 
 _handler = None
-_local = threading.local()
+_view_lock = threading.RLock()
+_view_users = 0
 
 
 def install(handler):
@@ -27,16 +28,21 @@ def notify(action, **payload):
 
 @contextmanager
 def unobstructed():
-    depth = getattr(_local, 'depth', 0)
-    if depth == 0 and not notify('occlude', hidden=True):
-        raise RuntimeError('O painel de acompanhamento não respondeu; nenhuma entrada enviada.')
-    _local.depth = depth + 1
+    # Streaming capture and the input executor can overlap on different threads.
+    # Show the panel only after ALL active users have finished, not after the
+    # first thread exits its context.
+    global _view_users
+    with _view_lock:
+        if _view_users == 0 and not notify('occlude', hidden=True):
+            raise RuntimeError('O painel de acompanhamento não respondeu; nenhuma entrada enviada.')
+        _view_users += 1
     try:
         yield
     finally:
-        _local.depth = depth
-        if depth == 0:
-            notify('occlude', hidden=False)
+        with _view_lock:
+            _view_users -= 1
+            if _view_users == 0:
+                notify('occlude', hidden=False)
 
 
 def without_obstruction(function):

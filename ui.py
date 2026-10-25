@@ -4587,8 +4587,11 @@ class MainWindow(QMainWindow):
                 if payload.get('hidden'):
                     self._monitor_was_visible = self._desktop_monitor.isVisible()
                     self._desktop_monitor.hide()
-                elif getattr(self, '_monitor_was_visible', False):
+                elif getattr(self, '_monitor_was_visible', False) and not self._desktop_monitor.returned:
                     self._desktop_monitor.show()
+            elif action == 'stream' and self._desktop_monitor is not None:
+                labels = {'connecting': 'IA ao vivo: conectando ao Gemini…', 'live': 'IA ao vivo: enviando tela ao Gemini (até 1 quadro/s)', 'fallback': 'IA ao vivo indisponível — usando capturas por etapa', 'off': 'IA ao vivo: desligada'}
+                self._desktop_monitor.stream_status.setText(labels.get(payload.get('state'), 'IA ao vivo: aguardando'))
             elif action == 'step' and self._desktop_monitor is not None:
                 self._desktop_monitor.status.setText(f"Etapa {payload.get('step')}: {payload.get('description', '')[:200]}")
             elif action == 'end' and self._desktop_monitor is not None:

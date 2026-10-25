@@ -425,3 +425,45 @@ do uso manual simultâneo do computador. Se precisar usar o PC, interrompa a tar
 Foram verificados o painel em Qt offscreen e cenários simulados de 70 ações ao
 longo de mais de cinco minutos, cancelamento e ausência de progresso. A captura
 ao vivo e a exclusão da janela ainda precisam ser validadas no Windows real.
+
+### IA acompanhando a tela por Gemini Live
+
+O modo contínuo agora tenta usar uma sessão Gemini Live dedicada à tarefa,
+com até um quadro por segundo do monitor principal. Não é uma gravação enviada
+como arquivo: os quadros são transmitidos pela entrada de vídeo em tempo real,
+sem fila de imagens acumuladas. A sessão permanece aberta entre as etapas e
+é fechada quando a tarefa termina ou é interrompida. Não envia microfone nessa
+sessão auxiliar, nem armazena vídeo em disco.
+
+A sessão auxiliar é necessária porque a sessão principal de voz aguarda o retorno
+da ferramenta de tarefa longa. O modo usa a chave e o modelo Live já configurados,
+e pode consumir cota de vídeo/contexto e uma conexão simultânea adicional. Não
+elimina limites, bloqueios ou indisponibilidade do Gemini. Está ativo por padrão
+quando há chave Gemini; `desktop_live_stream: false` no arquivo de configuração
+desativa a tentativa. O modo exclusivo OpenAI não abre essa sessão Gemini.
+
+No **Desktop ao vivo**, a linha **IA ao vivo** distingue conectando, transmitindo,
+indisponível com alternativa por capturas e desligado. A prévia local continua
+separada: vê-la não comprova que a IA esteja recebendo vídeo. O terminal informa
+`[DesktopLive] state=live fps_max=1` depois do primeiro quadro enviado, ou
+`[DesktopLive] fallback=rest ...` quando passa para capturas por etapa.
+
+O Live acompanha o contexto, mas cada proposta deve incluir o identificador da
+requisição e usar a captura de referência anexada àquela etapa. Propostas antigas,
+não solicitadas ou após interrupção são ignoradas. A sessão visual não controla
+mouse ou teclado diretamente: o executor local valida a janela, o alvo e a
+captura antes da entrada. Controles acessíveis do Windows continuam sendo usados
+quando identificam o alvo; o navegador controlado pelo Playwright mantém os
+métodos por elementos da página. Isso não conecta automaticamente o Playwright
+às abas de um Opera já aberto ou à conta logada nesse navegador.
+
+Se a sessão Live não conectar, não responder com uma proposta válida ou cair,
+o Jarvis tenta a análise REST com a captura de referência, uma alternativa
+que também depende de acesso e cota. A sessão não é reaberta em toda etapa
+após uma falha. Sem os dois métodos disponíveis, informa a falha e não clica
+às cegas. **PARAR** interrompe a tarefa e encerra a transmissão.
+
+Validação: protocolo Live simulado, sessão persistente entre requisições,
+entrada de vídeo suportada pelo SDK instalado, rejeição de propostas antigas,
+cancelamento, encerramento e alternativa REST. A conexão real com a chave do
+usuário e o comportamento no Windows ainda precisam ser validados.

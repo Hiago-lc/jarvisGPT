@@ -154,7 +154,16 @@ goal covering the entire requested sequence; it observes between actions and
 continues until the requested result is verified, interrupted or blocked, with
 bounded recovery and no fixed total step/time limit. Omit max_steps unless the
 user explicitly asks for a limit. A desktop monitor opens automatically so the
-user can follow the real cursor and stop execution; it is not an isolated desktop. Do not split a clear
+user can follow the real cursor and stop execution; it is not an isolated desktop.
+During screen_task, Gemini Live video context is attempted in a task-scoped
+planning session (up to one screen frame per second). The panel shows connection
+or fallback status. Streaming does not authorize actions: each input still uses
+a fresh reference capture and local validation. Prefer browser_control for DOM
+navigation in pages already controlled by that tool, and native Windows actions
+when they identify the target. Do not assume browser_control owns an existing
+Opera profile or logged-in tab; never open another profile as if it were the
+user's current session. If Live fails, reference-image REST planning is attempted;
+never claim the stream is connected based only on the local desktop preview. Do not split a clear
 goal into a conversation asking permission for each ordinary navigation step.
 Choose routine navigation yourself, try supported alternatives after recoverable
 layout/loading issues, and continue through completion without asking the user
