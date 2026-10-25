@@ -341,3 +341,22 @@ Se você já configurou `gemini-flash-lite-latest` com sucesso no diagnóstico,
 basta atualizar e reiniciar o Jarvis; não é necessário repetir a configuração
 por causa desse erro de prazo. O teste de configuração usava 15 segundos,
 por isso podia funcionar enquanto a automação, que limitava a 6 segundos, falhava.
+
+### Navegador já aberto: não minimizar ao procurar uma aba
+
+Antes de ativar ou restaurar um aplicativo, o Jarvis verifica se a janela em
+primeiro plano já corresponde ao pedido. A existência de outras janelas com
+nomes semelhantes não invalida a janela ativa. Assim, `click` com `title=Opera GX`
+pode seguir diretamente para localizar a aba descrita, sem clicar novamente
+no ícone da barra de tarefas. `open_app` também aproveita a janela já ativa.
+
+Se o Opera GX exibir somente `Opera` no título, a identificação alternativa
+confere o executável `opera.exe` dentro da pasta `Opera GX` do processo proprietário
+da janela. Não assume que qualquer instalação do Opera seja o GX. Se o Windows
+negar acesso ao processo, essa identificação alternativa não é confirmada.
+A restauração visual verifica novamente o aplicativo em primeiro plano antes
+de enviar uma ação, evitando clicar na barra quando a janela já apareceu.
+
+Testes de regressão simulam o clique na aba do Gerenciador de Anúncios com o
+Opera já ativo, sem restauração intermediária. A localização real da aba continua
+dependendo da análise visual e precisa ser validada na máquina do usuário.

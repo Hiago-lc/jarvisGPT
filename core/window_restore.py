@@ -2,17 +2,39 @@
 import json
 
 
+def active_window_matches(active, title):
+    """A foreground app remains the target even when other matching windows exist."""
+    if active is None or active.isMinimized:
+        return False
+    query = title.strip().casefold()
+    if not query:
+        return False
+    if query in active.title.strip().casefold():
+        return True
+    # Opera GX can expose only "Opera" in its window caption. Confirm the
+    # installed variant through its executable path, never by dropping "GX".
+    if query == 'opera gx':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            from pathlib import PureWindowsPath
+            import psutil
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(active._hWnd, ctypes.byref(pid))
+            path = PureWindowsPath(psutil.Process(pid.value).exe())
+            return path.name.casefold() == 'opera.exe' and 'opera gx' in [part.casefold() for part in path.parts[:-1]]
+        except Exception:
+            return False
+    return False
+
+
 def foreground_matches(title):
     try:
         import pygetwindow
-        active = pygetwindow.getActiveWindow()
-        if active is None or active.isMinimized:
-            return False
-        query = title.strip().casefold()
-        windows = [w for w in pygetwindow.getWindowsWithTitle(title) if w.title]
-        exact = [w for w in windows if w.title.strip().casefold() == query]
-        matches = exact or windows
-        return len(matches) == 1 and matches[0]._hWnd == active._hWnd
+        return active_window_matches(pygetwindow.getActiveWindow(), title)
     except Exception:
         return False
 

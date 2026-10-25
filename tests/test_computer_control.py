@@ -161,3 +161,19 @@ class MissingPointerTargetTests(unittest.TestCase):
     def test_explicit_corner_move_is_rejected_before_pyautogui(self):
         self.assertIn('status=failed', cc.computer_control({'action': 'move', 'x': 0, 'y': 0}))
         self.gui.moveTo.assert_not_called()
+
+
+class BrowserForegroundRegressionTests(unittest.TestCase):
+    setUp = DesktopTests.setUp
+
+    def test_click_tab_in_active_browser_never_restores_taskbar(self):
+        active = types.SimpleNamespace(title='Gerenciador de Anuncios - Opera GX', isMinimized=False, _hWnd=30)
+        windows = types.SimpleNamespace(getActiveWindow=lambda: active, getWindowsWithTitle=MagicMock())
+        with patch.dict('sys.modules', {'pygetwindow': windows}), patch('core.window_restore.restore_visual') as restore, patch('core.window_activation.activate') as activate, patch.object(cc, '_screen_find', return_value=(500, 30)) as find:
+            result = cc.computer_control({'action': 'click', 'title': 'Opera GX', 'description': 'Aba Gerenciador de Anuncios na barra superior'})
+        restore.assert_not_called()
+        activate.assert_not_called()
+        windows.getWindowsWithTitle.assert_not_called()
+        find.assert_called_once_with('Aba Gerenciador de Anuncios na barra superior')
+        self.gui.click.assert_called_once_with(500, 30, button='left', clicks=1)
+        self.assertIn('status=unverified', result)

@@ -311,6 +311,10 @@ def open_app(parameters=None, response=None, player=None,
     # application the assistant lives inside reports `started` and goes off to
     # launch a second copy of it — seen exactly that way, against a packaged
     # build whose siblings the close guard had just learnt to protect.
+    if _SYSTEM == "Windows":
+        from core.window_restore import foreground_matches
+        if foreground_matches(spoken):
+            return outcome.done("open_app", app=spoken, verified=True, focused=True, already_running=True)
     existing = appidentity.running(spoken, include_self=True)
     if existing:
         best = existing[0]

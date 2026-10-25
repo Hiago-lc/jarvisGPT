@@ -29,6 +29,7 @@ def _observe(goal, history, smart=False, delete_request=None, desktop=False, tas
     frame["bounds"] = (0, 0, *frame["size"]) if desktop else active_bounds(frame["size"])
     frame["desktop"] = desktop
     frame["restore"] = desktop
+    frame["restore_title"] = taskbar_title
     image = crop(image, frame["bounds"], frame["size"])
     image.thumbnail((1920, 1200))
     frame["image"] = image.copy()
@@ -111,6 +112,10 @@ def _execute_step(data, frame, player):
     from core.screen_target import accessible_target, box_center, foreground_id
     if _STOP.is_set() or (frame and foreground_id() != frame['window']):
         return outcome.failed('screen_task', 'A janela mudou ou a tarefa foi interrompida; nenhum comando enviado.')
+    if frame and frame.get('restore_title'):
+        from core.window_restore import foreground_matches
+        if foreground_matches(frame['restore_title']):
+            return outcome.done('focus_window', verified=True, method='already_foreground')
     visual = data['action'] in ('click', 'double_click', 'right_click', 'hover', 'type', 'replace_text', 'clear_field')
     if not visual or not frame:
         # Compatibility path when an observation contains no local frame metadata.

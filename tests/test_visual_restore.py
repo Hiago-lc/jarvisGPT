@@ -6,7 +6,7 @@ from core.window_restore import foreground_matches, restore_visual
 
 
 class VisualRestoreTests(unittest.TestCase):
-    def test_minimized_or_ambiguous_windows_are_not_success(self):
+    def test_active_matching_window_is_valid_even_with_other_windows(self):
         active = types.SimpleNamespace(title='WhatsApp', isMinimized=True, _hWnd=3)
         windows = types.SimpleNamespace(getActiveWindow=lambda: active, getWindowsWithTitle=lambda _: [active])
         with patch.dict('sys.modules', {'pygetwindow': windows}):
@@ -14,7 +14,7 @@ class VisualRestoreTests(unittest.TestCase):
             active.isMinimized = False
             self.assertTrue(foreground_matches('WhatsApp'))
             windows.getWindowsWithTitle = lambda _: [active, types.SimpleNamespace(title='WhatsApp', _hWnd=4)]
-            self.assertFalse(foreground_matches('WhatsApp'))
+            self.assertTrue(foreground_matches('WhatsApp'))
 
     def test_group_preview_requires_fresh_observation_and_foreground_proof(self):
         hover = {'action': 'hover', 'description': 'WhatsApp taskbar icon'}
@@ -66,3 +66,24 @@ class VisualRestoreTests(unittest.TestCase):
         self.assertFalse(observe.call_args_list[0].args[2])
         self.assertTrue(observe.call_args_list[1].args[2])
         execute.assert_not_called()
+
+    def test_no_taskbar_click_if_browser_is_foreground_after_observation(self):
+        from actions import computer_control as control
+        task._STOP.clear()
+        frame = {'window': 30, 'size': (1920, 1080), 'restore_title': 'Opera GX'}
+        with patch('core.screen_target.foreground_id', return_value=30), patch('core.window_restore.foreground_matches', return_value=True), patch.object(control, 'computer_control') as execute:
+            result = task._execute_step({'action': 'click', 'description': 'Opera GX taskbar icon'}, frame, None)
+        execute.assert_not_called()
+        self.assertIn('status=done', result)
+
+    def test_opera_variant_can_be_confirmed_by_executable_path(self):
+        import ctypes
+        from core.window_restore import active_window_matches
+        user = MagicMock()
+        user.GetWindowThreadProcessId.side_effect = lambda hwnd, pointer: setattr(pointer._obj, 'value', 50)
+        active = types.SimpleNamespace(title='Gerenciador de Anuncios - Opera', isMinimized=False, _hWnd=30)
+        with patch.object(ctypes, 'WinDLL', create=True, return_value=user), patch('psutil.Process') as process:
+            process.return_value.exe.return_value = r'C:\Users\User\AppData\Local\Programs\Opera GX\opera.exe'
+            self.assertTrue(active_window_matches(active, 'Opera GX'))
+            process.return_value.exe.return_value = r'C:\Programs\Opera\opera.exe'
+            self.assertFalse(active_window_matches(active, 'Opera GX'))

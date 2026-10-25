@@ -344,6 +344,9 @@ def _focus_window(title: str) -> str:
     if os_name == "windows":
         try:
             import pygetwindow
+            from core.window_restore import foreground_matches
+            if foreground_matches(title):
+                return outcome.done("focus_window", title=title, verified=True, method="already_foreground")
             windows = [w for w in pygetwindow.getWindowsWithTitle(title)
                        if w.title and w.width > 0 and w.height > 0]
             exact = [w for w in windows if w.title.casefold() == title.casefold()]
