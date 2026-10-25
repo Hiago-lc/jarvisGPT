@@ -360,3 +360,30 @@ de enviar uma ação, evitando clicar na barra quando a janela já apareceu.
 Testes de regressão simulam o clique na aba do Gerenciador de Anúncios com o
 Opera já ativo, sem restauração intermediária. A localização real da aba continua
 dependendo da análise visual e precisa ser validada na máquina do usuário.
+
+### Continuidade e recuperação automática
+
+Tarefas visuais agora usam até 16 entradas por padrão (máximo 24) e até cinco
+minutos. A restauração da barra de tarefas mantém o limite menor de seis entradas
+e dois minutos. O assistente é orientado a passar o objetivo completo ao modo
+contínuo, executar as etapas autorizadas e não delegar cliques comuns ao usuário.
+
+Quando um controle estiver oculto ou a interface ainda estiver carregando, o
+planejador pode escolher menus visíveis, passar o mouse, rolar o painel adequado
+ou aguardar. Cada entrada ainda exige uma nova observação. Um bloqueio recuperável
+recebe até duas novas análises com instruções para mudar a abordagem; o orçamento
+global de recuperação é de quatro tentativas por tarefa. Uma falha visual
+transitória recebe uma nova tentativa, sem repetir entradas já enviadas. Erros
+de cota, acesso ou modelo indisponível não recebem repetição automática.
+
+A recuperação recebe o histórico e a razão da falha. Um clique/texto/atalho já
+enviado não é repetido só porque a estimativa da caixa ou confiança mudou.
+Se o mesmo comando reaparecer, o planejador deve verificar o efeito ou escolher
+outro caminho. Ao esgotar as recuperações, informa a falha, sem inventar sucesso.
+
+Ainda pede informação quando faltarem dados indispensáveis, houver alvos que
+não possam ser distinguidos, autenticação/2FA/CAPTCHA ou permissão do sistema.
+Uma ordem como "não enviar" continua válida em todas as etapas. O usuário pode
+interromper a execução e o fail-safe do mouse permanece ativo. As recuperações
+podem consumir chamadas Gemini adicionais. A validação automatizada usa cenários
+simulados; não garante que qualquer interface possa ser concluída sem intervenção.
