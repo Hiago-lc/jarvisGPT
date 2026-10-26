@@ -1788,8 +1788,12 @@ class JarvisLive:
                         )
                         await self._flush_pending_vision()
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
-            traceback.print_exc()
+            from core.live_errors import is_aborted
+            if is_aborted(e):
+                print("[JARVIS] Live connection aborted by service (1008).")
+            else:
+                print(f"[JARVIS] ❌ Recv: {e}")
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):
@@ -2415,6 +2419,7 @@ class JarvisLive:
             try:
                 print("[JARVIS] Connecting...")
                 self.ui.set_state("THINKING")
+                self.ui.set_connection_status("connecting")
                 # Pick the rung to open the conversation on. A model resting
                 # off a quota limit is skipped; the name is published back to
                 # LIVE_MODEL so plugins follow whatever is actually in use.
@@ -2471,6 +2476,7 @@ class JarvisLive:
                     self._interrupted          = False
 
                     print("[JARVIS] Connected.")
+                    self.ui.set_connection_status("connected")
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
@@ -2559,6 +2565,8 @@ class JarvisLive:
                     self._conn_backoff = 0
                     continue
 
+                from core.live_errors import error_text, is_aborted
+
                 # A resumption handle the server will not accept — expired, or
                 # belonging to a session it has since dropped. Without this, the
                 # same dead handle would be replayed on every retry and the
@@ -2566,10 +2574,10 @@ class JarvisLive:
                 # survive a reconnect would be the thing preventing one. Drop it
                 # once and let the next attempt start clean.
                 if _resumed_with and (
-                    "resum" in str(e).lower()
-                    or "handle" in str(e).lower()
-                    or "INVALID_ARGUMENT" in str(e)
-                    or "NOT_FOUND" in str(e)
+                    "resum" in error_text(e).lower()
+                    or "handle" in error_text(e).lower()
+                    or "INVALID_ARGUMENT" in error_text(e)
+                    or "NOT_FOUND" in error_text(e)
                 ):
                     print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
@@ -2577,7 +2585,19 @@ class JarvisLive:
                     self._conn_backoff = 0
                     continue
 
-                err_str = str(e)
+                err_str = error_text(e)
+                self.ui.set_connection_status("reconnecting")
+                if is_aborted(e):
+                    # The service aborted this connection. It does not prove a
+                    # bad key. Do not resume a potentially invalid turn or replay
+                    # state-changing calls whose result may have been lost.
+                    from actions.screen_task import cancel
+                    cancel()
+                    self._resume_handle = None
+                    self._conn_backoff = min(max(getattr(self, '_conn_backoff', 3), 3) * 2, 30)
+                    self.ui.write_log("SYS: O Gemini encerrou a conexão Live (1008). Reconectando sem repetir ações anteriores; a causa exata não foi informada pelo serviço.")
+                    await asyncio.sleep(self._conn_backoff)
+                    continue
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 

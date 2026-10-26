@@ -4235,6 +4235,7 @@ class RemoteKeyOverlay(QWidget):
 
 
 class MainWindow(QMainWindow):
+    _connection_sig = pyqtSignal(str)
     _automation_sig = pyqtSignal(str, object)
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
@@ -4522,6 +4523,9 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
         self._desktop_monitor = None
+        self._stability_indicator = None
+        self._connection_status = "connecting"
+        self._connection_sig.connect(self._set_connection_status)
         self._automation_sig.connect(self._automation_event)
         from core.automation_view import install
         install(self._automation_sig.emit)
@@ -4566,15 +4570,41 @@ class MainWindow(QMainWindow):
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
+    def _restore_main_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _set_connection_status(self, state):
+        self._connection_status = state
+        if self._stability_indicator is not None:
+            self._stability_indicator.set_status(state)
+
+    def changeEvent(self, event):
+        from PyQt6.QtCore import QEvent
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, '_stability_indicator'):
+            if self.isMinimized():
+                if self._stability_indicator is None:
+                    from core.stability_indicator import StabilityIndicator
+                    self._stability_indicator = StabilityIndicator(self._restore_main_window)
+                self._stability_indicator.set_status(self._connection_status)
+                self._stability_indicator.place()
+                self._stability_indicator.show()
+            elif self._stability_indicator is not None:
+                self._stability_indicator.hide()
+
     def _monitor_stop(self):
         from actions.screen_task import cancel
         cancel()
         self._do_interrupt()
 
     def _show_desktop_monitor(self):
+        if self._stability_indicator is not None:
+            self._stability_indicator.hide()
         if self._desktop_monitor is None:
             from core.desktop_monitor import DesktopMonitor
-            self._desktop_monitor = DesktopMonitor(self._monitor_stop, self.show)
+            self._desktop_monitor = DesktopMonitor(self._monitor_stop, self._restore_main_window)
         self._desktop_monitor.show()
         self.hide()
 
@@ -4583,12 +4613,19 @@ class MainWindow(QMainWindow):
             if action == 'begin':
                 self._show_desktop_monitor()
                 self._desktop_monitor.begin(payload.get('goal', ''))
-            elif action == 'occlude' and self._desktop_monitor is not None:
+            elif action == 'occlude':
                 if payload.get('hidden'):
-                    self._monitor_was_visible = self._desktop_monitor.isVisible()
-                    self._desktop_monitor.hide()
-                elif getattr(self, '_monitor_was_visible', False) and not self._desktop_monitor.returned:
-                    self._desktop_monitor.show()
+                    self._indicator_was_visible = self._stability_indicator is not None and self._stability_indicator.isVisible()
+                    if self._stability_indicator is not None:
+                        self._stability_indicator.hide()
+                    self._monitor_was_visible = self._desktop_monitor is not None and self._desktop_monitor.isVisible()
+                    if self._desktop_monitor is not None:
+                        self._desktop_monitor.hide()
+                else:
+                    if self._desktop_monitor is not None and getattr(self, '_monitor_was_visible', False) and not self._desktop_monitor.returned:
+                        self._desktop_monitor.show()
+                    if self._stability_indicator is not None and getattr(self, '_indicator_was_visible', False) and self.isMinimized():
+                        self._stability_indicator.show()
             elif action == 'stream' and self._desktop_monitor is not None:
                 labels = {'connecting': 'IA ao vivo: conectando ao Gemini…', 'live': 'IA ao vivo: enviando tela ao Gemini (até 1 quadro/s)', 'fallback': 'IA ao vivo indisponível — usando capturas por etapa', 'off': 'IA ao vivo: desligada'}
                 self._desktop_monitor.stream_status.setText(labels.get(payload.get('state'), 'IA ao vivo: aguardando'))
@@ -7157,6 +7194,9 @@ class JarvisUI:
 
     def notify_phone_connected(self) -> None:
         self._win.notify_phone_connected()
+
+    def set_connection_status(self, state: str):
+        self._win._connection_sig.emit(state)
 
     def set_state(self, state: str):
         self._win._state_sig.emit(state)

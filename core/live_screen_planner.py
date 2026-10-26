@@ -243,7 +243,8 @@ class LiveScreenPlanner:
                     if future.done():
                         raise
                     continue
-        except Exception:
+        except Exception as error:
+            self.error = type(error).__name__
             self.disable('planning_unavailable')
             raise
 

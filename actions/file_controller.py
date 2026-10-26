@@ -94,13 +94,19 @@ _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
-def _is_safe_path(target: Path) -> bool:
+def _is_safe_path(target: Path, read_only: bool = False) -> bool:
     """Is the given path inside _SAFE_ROOTS? If not, reject the operation."""
     try:
         resolved = target.resolve()
+        roots = list(_SAFE_ROOTS)
+        if read_only:
+            from memory.config_manager import load_api_keys
+            configured = load_api_keys().get('file_read_roots', [])
+            if isinstance(configured, list):
+                roots.extend(Path(value) for value in configured if isinstance(value, str) and Path(value).is_absolute())
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in _SAFE_ROOTS
+            for root in roots
         )
     except Exception:
         return False
@@ -198,7 +204,7 @@ def _safe_trash(target: Path) -> str:
 def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
     try:
         target = _resolve_path(path)
-        if not _is_safe_path(target):
+        if not _is_safe_path(target, read_only=True):
             return f"Access denied: {target}"
         if not target.exists():
             return f"Path not found: {target}"
@@ -397,7 +403,7 @@ def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
-        if not _is_safe_path(target):
+        if not _is_safe_path(target, read_only=True):
             return f"Access denied: {target}"
         if not target.exists():
             return f"File not found: {target.name}"
@@ -454,7 +460,7 @@ def find_files(name: str = "", extension: str = "",
                path: str = "home", max_results: int = 20) -> str:
     try:
         search_path = _resolve_path(path)
-        if not _is_safe_path(search_path):
+        if not _is_safe_path(search_path, read_only=True):
             return f"Access denied: {search_path}"
         if not search_path.exists():
             return f"Search path not found: {path}"
@@ -494,7 +500,7 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
     count = min(count, 50)  # maksimum 50
     try:
         search_path = _resolve_path(path)
-        if not _is_safe_path(search_path):
+        if not _is_safe_path(search_path, read_only=True):
             return f"Access denied: {search_path}"
         if not search_path.exists():
             return f"Path not found: {path}"
@@ -625,7 +631,7 @@ def get_file_info(path: str, name: str = "") -> str:
     try:
         base   = _resolve_path(path)
         target = (base / name) if name else base
-        if not _is_safe_path(target):
+        if not _is_safe_path(target, read_only=True):
             return f"Access denied: {target}"
         if not target.exists():
             return f"Not found: {target.name}"

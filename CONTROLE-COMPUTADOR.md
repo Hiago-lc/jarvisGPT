@@ -467,3 +467,58 @@ Validação: protocolo Live simulado, sessão persistente entre requisições,
 entrada de vídeo suportada pelo SDK instalado, rejeição de propostas antigas,
 cancelamento, encerramento e alternativa REST. A conexão real com a chave do
 usuário e o comportamento no Windows ainda precisam ser validados.
+
+### Correções do log enviado em 26/10/2026
+
+O ZIP atualizado enviado nesta data contém os mesmos arquivos-fonte da versão
+publicada. Configurações, memória, credenciais e arquivos ZIP particulares não
+foram copiados para o repositório.
+
+- `1008 The operation was aborted`: o servidor encerrou a sessão; o log não
+  informa a causa exata. A aplicação agora identifica esse erro mesmo dentro
+  de um `ExceptionGroup`, descarta o identificador de retomada e reconecta com
+  espera crescente, sem repetir automaticamente ações anteriores. Isso melhora
+  a recuperação, mas não impede o serviço de encerrar outra conexão.
+- Erros de cota/modelo dentro de grupos de exceções agora preservam a mensagem
+  original para a seleção de alternativas. O diagnóstico do planejador Live
+  informa o tipo da falha em vez de somente `unknown`.
+- O bloqueio de teclado depois de falhar o foco foi preservado: tentar `type`
+  ou `paste` repetidamente não é uma recuperação válida. Não houve confirmação
+  de digitação no trecho de log enviado.
+- O aviso Qt sobre clipboard, isolado, não comprova falha de colagem. Os retornos
+  de ferramenta precisam ser usados para verificar se a ação ocorreu.
+
+### Drive local: liberar uma pasta de leitura
+
+O caminho `G:\Meu Drive\CLIENTES` era recusado pela restrição local do Jarvis,
+não por um erro demonstrado na API do Google Drive. Na máquina com o Drive já
+montado, execute na pasta do projeto:
+
+```powershell
+py configure_drive_access.py --folder "G:\Meu Drive\CLIENTES"
+```
+
+A pasta deve existir e estar acessível ao Windows. O comando salva uma raiz
+adicional somente para listar, ler, buscar e obter informações. Não concede
+permissão adicional de escrita, exclusão ou acesso ao disco inteiro. Links que
+escapem da pasta não são autorizados por essa regra. Isso não corrige ausência
+de montagem, arquivos indisponíveis offline ou permissões recusadas pelo Windows.
+
+O prompt para implementar a integração OAuth/API está em
+[PROMPT-INTEGRACAO-GOOGLE-DRIVE.md](PROMPT-INTEGRACAO-GOOGLE-DRIVE.md).
+Nesta alteração foi preparado o prompt e o acesso local configurável, não uma
+nova conexão OAuth ao Drive. As credenciais do Google Agenda permanecem separadas.
+
+### Indicador ao minimizar
+
+Ao minimizar a janela principal, aparece um pequeno indicador no canto inferior
+direito do monitor principal. Verde significa conexão estabelecida; amarelo,
+conectando/reconectando. Ele não garante que todos os modelos tenham cota ou que
+as tarefas possam ser concluídas. Clicar no indicador restaura a janela.
+Durante capturas e entradas, ele se oculta para não se tornar um obstáculo.
+Não aparece junto do monitor de tarefas como se a janela principal estivesse
+minimizada: o monitor já tem seu próprio acompanhamento.
+
+Verificados classificação de erros aninhados, autorização local somente leitura,
+bloqueio de escape por link, e minimizar/ocultar/restaurar na interface Qt offscreen.
+A conexão real Gemini e o Drive montado do usuário ainda exigem teste no Windows.
