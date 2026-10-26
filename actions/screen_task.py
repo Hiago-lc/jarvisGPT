@@ -8,9 +8,12 @@ from core import outcome
 
 _STOP = threading.Event()
 _RUNNING = threading.Lock()
+_CANCEL_REASON = "user"
 
 
-def cancel():
+def cancel(reason="user"):
+    global _CANCEL_REASON
+    _CANCEL_REASON = reason
     _STOP.set()
 
 
@@ -203,7 +206,15 @@ def _input_signature(data):
     return result
 
 
+def _interruption_result(steps, deadline):
+    expired = _CANCEL_REASON == 'restore_timeout' or deadline is not None and time.monotonic() >= deadline
+    return outcome.unverified('screen_task',
+        'O prazo de restauração esgotou; janela não confirmada.' if expired else 'Tarefa interrompida',
+        steps=steps, code='restore_timeout' if expired else 'cancelled')
+
+
 def screen_task(parameters, response=None, player=None, session_memory=None):
+    global _CANCEL_REASON
     if parameters.get('action') == 'stop':
         cancel()
         return outcome.done('screen_task', stopped=True)
@@ -219,6 +230,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
     if not _RUNNING.acquire(blocking=False):
         return outcome.failed('screen_task', 'Já existe uma tarefa em execução; interrompa-a antes de iniciar outra.')
     _STOP.clear()
+    _CANCEL_REASON = "user"
     restore_title = parameters.get("_restore_title")
     history = []
     checkpoint = ""
@@ -235,7 +247,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
     planner = LiveScreenPlanner(_STOP) if enabled() else None
     install_planner(planner)
     duration = 120 if restore_title else None
-    timer = threading.Timer(duration, cancel) if duration else None
+    timer = threading.Timer(duration, lambda: cancel("restore_timeout")) if duration else None
     if timer:
         timer.daemon = True
         timer.start()
@@ -249,7 +261,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
             notify('stream', state='off')
         while True:
             if _STOP.is_set() or (deadline is not None and time.monotonic() >= deadline):
-                return outcome.unverified('screen_task', 'Tarefa interrompida ou limite de tempo atingido', steps=steps)
+                return _interruption_result(steps, deadline)
             started = time.monotonic()
             try:
                 extra = {'recovery': recovery[-4:]} if recovery else {}
@@ -276,7 +288,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
             observation_ms = round((time.monotonic() - started) * 1000)
             # Interrupt may arrive during a model request. Never input after that.
             if _STOP.is_set() or (deadline is not None and time.monotonic() >= deadline):
-                return outcome.unverified('screen_task', 'Tarefa interrompida', steps=steps)
+                return _interruption_result(steps, deadline)
             if not isinstance(observation, dict):
                 return outcome.failed('screen_task', 'A análise visual não respondeu no prazo ou não retornou dados válidos. Confira a rede e a cota Gemini; nenhuma ação foi executada nesta etapa.', steps=steps)
             if isinstance(observation.get('checkpoint'), str):
@@ -344,7 +356,7 @@ def screen_task(parameters, response=None, player=None, session_memory=None):
                 recovery.clear()
                 observation_retries = 0
             if _STOP.wait(.15):
-                return outcome.unverified('screen_task', 'Tarefa interrompida', steps=steps)
+                return _interruption_result(steps, deadline)
         return outcome.unverified('screen_task', 'Limite de etapas atingido; resultado ainda não confirmado', steps=steps)
     except Exception as error:
         return outcome.failed('screen_task', str(error), steps=steps, code=getattr(error, 'code', 'execution_error'))

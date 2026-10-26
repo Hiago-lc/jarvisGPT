@@ -289,6 +289,9 @@ def _launch_and_verify(player, spoken: str, launcher_name: str,
 # ─────────────────────────────────────────────────────────────────────────────
 def open_app(parameters=None, response=None, player=None,
              session_memory=None) -> str:
+    from actions.screen_task import _RUNNING, _STOP
+    if not _RUNNING.locked():
+        _STOP.clear()
     spoken = ((parameters or {}).get("app_name") or "").strip()
     if not spoken:
         return outcome.failed("open_app", "no application name was given")
@@ -352,6 +355,12 @@ def open_app(parameters=None, response=None, player=None,
                     already_running=True, focused=True, verified=True,
                 )
         if _SYSTEM == "Windows":
+            from core.app_reopen import reopen_registered
+            from actions.screen_task import _STOP
+            if reopen_registered(spoken, cancelled=_STOP.is_set):
+                return outcome.done("open_app", app=spoken, verified=True, focused=True, method="registered_protocol")
+            if _STOP.is_set():
+                return outcome.unverified("open_app", "Abertura interrompida; resultado não confirmado.")
             from core.window_restore import restore_visual
             return restore_visual(spoken, player=player)
 

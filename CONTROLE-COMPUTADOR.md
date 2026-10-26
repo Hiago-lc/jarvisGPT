@@ -522,3 +522,35 @@ minimizada: o monitor já tem seu próprio acompanhamento.
 Verificados classificação de erros aninhados, autorização local somente leitura,
 bloqueio de escape por link, e minimizar/ocultar/restaurar na interface Qt offscreen.
 A conexão real Gemini e o Drive montado do usuário ainda exigem teste no Windows.
+
+### Spotify, indicador com controles e interface mais leve
+
+O ZIP `jarvs.zip` enviado contém o mesmo código-fonte da versão publicada.
+O log mostra falha de confirmação/planejamento durante a restauração, não um
+clique no Spotify comprovadamente concluído. Agora a identificação do Spotify
+considera o processo `Spotify.exe`, inclusive quando a janela exibe o nome da
+música. Se o aplicativo já estiver em execução, mas a ativação direta falhar,
+o Jarvis tenta o protocolo `spotify:` somente se ele estiver registrado no
+Windows, e confirma a janela em primeiro plano antes de dizer que abriu.
+Se isso não funcionar, a alternativa visual continua disponível. Não elimina
+indisponibilidade do Gemini nem garante ativação em qualquer instalação.
+O esgotamento do prazo da restauração recebe `restore_timeout`, em vez de ser
+apresentado como se o usuário tivesse solicitado interrupção.
+
+O indicador inferior direito agora tem **Parar tarefa** e **Ligar/Desligar
+microfone**. Parar usa o mesmo cancelamento da interface principal; o estado do
+microfone fica sincronizado com ela. Silenciar não encerra uma tarefa: use Parar
+para isso. O indicador continua recolhido durante capturas e entradas.
+
+A interface padrão prioriza a conversa, com fonte maior, texto claro, paleta
+menos saturada e painéis responsivos. O efeito de digitação por caractere foi
+removido. O avatar animado e as métricas deixam de ficar ativos por padrão;
+seus temporizadores ficam parados nesse modo. Nos controles (botão de ajustes
+cotidianos no topo), use **Alternar visual simples / animado** ou **Mostrar /
+ocultar métricas** para recuperá-los. Os recursos de câmera, vídeo, anexos e
+Desktop ao vivo permanecem disponíveis.
+
+Validados: protocolo registrado simulado, identificação do processo com título
+de música, cancelamento e diagnóstico de prazo, sincronização de microfone e
+botão Parar em Qt offscreen. O Spotify real e o áudio do Windows ainda precisam
+ser testados pelo usuário.

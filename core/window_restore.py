@@ -9,11 +9,11 @@ def active_window_matches(active, title):
     query = title.strip().casefold()
     if not query:
         return False
-    if query in active.title.strip().casefold():
+    if query != 'spotify' and query in active.title.strip().casefold():
         return True
     # Opera GX can expose only "Opera" in its window caption. Confirm the
     # installed variant through its executable path, never by dropping "GX".
-    if query == 'opera gx':
+    if query in ('opera gx', 'spotify'):
         try:
             import ctypes
             from ctypes import wintypes
@@ -25,6 +25,8 @@ def active_window_matches(active, title):
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(active._hWnd, ctypes.byref(pid))
             path = PureWindowsPath(psutil.Process(pid.value).exe())
+            if query == 'spotify':
+                return path.name.casefold() == 'spotify.exe'
             return path.name.casefold() == 'opera.exe' and 'opera gx' in [part.casefold() for part in path.parts[:-1]]
         except Exception:
             return False

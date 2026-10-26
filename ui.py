@@ -94,14 +94,14 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#00060a"
-    PANEL     = "#010d14"
-    PANEL2    = "#010f18"
-    BORDER    = "#0d3347"
-    BORDER_B  = "#1a5c7a"
-    BORDER_A  = "#0f4060"
-    PRI       = "#00d4ff"
-    PRI_DIM   = "#007a99"
+    BG        = "#101722"
+    PANEL     = "#17212e"
+    PANEL2    = "#1c2939"
+    BORDER    = "#2d3c50"
+    BORDER_B  = "#456078"
+    BORDER_A  = "#34485e"
+    PRI       = "#7db9ed"
+    PRI_DIM   = "#7199bd"
     PRI_GHO   = "#001f2e"
     ACC       = "#ff6b00"
     ACC2      = "#ffcc00"
@@ -109,11 +109,11 @@ class C:
     GREEN_D   = "#00aa55"
     RED       = "#ff3355"
     MUTED_C   = "#ff3366"
-    TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
-    WHITE     = "#d8f8ff"
-    DARK      = "#000d14"
+    TEXT      = "#e4ecf5"
+    TEXT_DIM  = "#98acc2"
+    TEXT_MED  = "#b2c4d6"
+    WHITE     = "#f3f7fc"
+    DARK      = "#131e2c"
     BAR_BG    = "#011520"
 
 
@@ -1011,7 +1011,7 @@ class LogWidget(QTextEdit):
         # without bound — keeps memory flat and every insert cheap. Oldest
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Segoe UI", 11))
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C.PANEL};
@@ -1068,7 +1068,7 @@ class LogWidget(QTextEdit):
 
     def _step(self):
         if self._pos < len(self._text):
-            ch  = self._text[self._pos]
+            ch  = self._text[self._pos:]
             cur = self.textCursor()
             fmt = cur.charFormat()
             col = {
@@ -1088,7 +1088,7 @@ class LogWidget(QTextEdit):
             cur.insertText(ch, fmt)
             self.setTextCursor(cur)
             self.ensureCursorVisible()
-            self._pos += 1
+            self._pos = len(self._text)
         else:
             self._tmr.stop()
             cur = self.textCursor()
@@ -4308,11 +4308,12 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_header())
 
         body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setContentsMargins(14, 14, 14, 14)
+        body.setSpacing(14)
 
         self._left_panel = self._build_left_panel()
         body.addWidget(self._left_panel, stretch=0)
+        self._left_panel.hide()
 
         # Center column: HUD + resizable content panel via QSplitter
         self.hud = HudCanvas(face_path, _display)
@@ -4476,6 +4477,29 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
         self._hud_cam_stack.addWidget(self._video_cont)
+        welcome = QWidget()
+        welcome_layout = QVBoxLayout(welcome)
+        welcome_layout.setContentsMargins(24, 24, 24, 24)
+        welcome_layout.addStretch()
+        heading = QLabel("Como posso ajudar?")
+        heading.setFont(QFont("Segoe UI", 24, QFont.Weight.DemiBold))
+        heading.setWordWrap(True)
+        heading.setStyleSheet(f"color:{C.WHITE};")
+        welcome_layout.addWidget(heading)
+        description = QLabel("Peça uma tarefa por voz ou escreva na conversa.\nAcompanhe as ações em Desktop ao vivo e interrompa quando precisar.")
+        description.setWordWrap(True)
+        description.setFont(QFont("Segoe UI", 12))
+        description.setStyleSheet(f"color:{C.TEXT_MED};")
+        welcome_layout.addWidget(description)
+        self._status_label = QLabel("Pronto para ajudar")
+        self._status_label.setFont(QFont("Segoe UI", 11))
+        self._status_label.setStyleSheet(f"color:{C.PRI};padding-top:20px;")
+        welcome_layout.addWidget(self._status_label)
+        welcome_layout.addStretch()
+        self._hud_cam_stack.addWidget(welcome)
+        self._hud_cam_stack.setCurrentIndex(3)
+        self.hud._tmr.stop()
+        self._hud_cam_stack.currentChanged.connect(lambda index: self.hud._tmr.start(16) if index == 0 else self.hud._tmr.stop())
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -4493,10 +4517,10 @@ class MainWindow(QMainWindow):
         self._center_split.setStretchFactor(0, 3)
         self._center_split.setStretchFactor(1, 1)
         self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
+        body.addWidget(self._center_split, stretch=2)
 
         self._right_panel = self._build_right_panel()
-        body.addWidget(self._right_panel, stretch=0)
+        body.addWidget(self._right_panel, stretch=3)
 
         root.addLayout(body, stretch=1)
         root.addWidget(self._build_footer())
@@ -4517,7 +4541,7 @@ class MainWindow(QMainWindow):
         # Metric update timer
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
+        self._metric_tmr.setInterval(2000)
         self._update_metrics()
 
         self._log_sig.connect(self._log.append_log)
@@ -4570,6 +4594,15 @@ class MainWindow(QMainWindow):
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
+    def _toggle_metrics(self):
+        visible = self._left_panel.isHidden()
+        self._left_panel.setVisible(visible)
+        if visible:
+            self._metric_tmr.start()
+            self._update_metrics()
+        else:
+            self._metric_tmr.stop()
+
     def _restore_main_window(self):
         self.showNormal()
         self.raise_()
@@ -4587,7 +4620,7 @@ class MainWindow(QMainWindow):
             if self.isMinimized():
                 if self._stability_indicator is None:
                     from core.stability_indicator import StabilityIndicator
-                    self._stability_indicator = StabilityIndicator(self._restore_main_window)
+                    self._stability_indicator = StabilityIndicator(self._restore_main_window, self._monitor_stop, self._toggle_mute, self._muted)
                 self._stability_indicator.set_status(self._connection_status)
                 self._stability_indicator.place()
                 self._stability_indicator.show()
@@ -4656,7 +4689,7 @@ class MainWindow(QMainWindow):
         if start:
             self._hud_cam_stack.setCurrentIndex(1)
         else:
-            self._hud_cam_stack.setCurrentIndex(0)
+            self._hud_cam_stack.setCurrentIndex(3)
             self._cam_live_lbl.clear()
 
     def _on_cam_frame(self, data: bytes) -> None:
@@ -4774,7 +4807,7 @@ class MainWindow(QMainWindow):
                 p.setSource(QUrl())
         self._video_split = False
         self._video_on = False
-        self._hud_cam_stack.setCurrentIndex(0)
+        self._hud_cam_stack.setCurrentIndex(3)
         self._sync_mic_for_video()      # gives the microphone back
 
     def _set_video_muted(self, muted: bool) -> None:
@@ -5476,7 +5509,8 @@ class MainWindow(QMainWindow):
         return w
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
-        w.setFixedWidth(_RIGHT_W)
+        w.setMinimumWidth(390)
+        w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         w.setStyleSheet(f"background: {C.DARK}; border-left: 1px solid {C.BORDER};")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
@@ -5484,11 +5518,11 @@ class MainWindow(QMainWindow):
 
         def _sec(txt):
             l = QLabel(f"▸ {txt}")
-            l.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            l.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        lay.addWidget(_sec("CONVERSA"))
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
 
@@ -5496,13 +5530,13 @@ class MainWindow(QMainWindow):
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_sec("FILE UPLOAD"))
+        lay.addWidget(_sec("ARQUIVOS"))
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
-        self._file_hint = QLabel("No file loaded — drop or click above to upload")
-        self._file_hint.setFont(QFont("Courier New", 7))
+        self._file_hint = QLabel("Arraste um arquivo ou clique acima para anexar")
+        self._file_hint.setFont(QFont("Segoe UI", 9))
         self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._file_hint.setWordWrap(True)
         lay.addWidget(self._file_hint)
@@ -5511,12 +5545,12 @@ class MainWindow(QMainWindow):
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep2)
 
-        lay.addWidget(_sec("COMMAND INPUT"))
+        lay.addWidget(_sec("SUA MENSAGEM"))
         lay.addLayout(self._build_input_row())
 
-        self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
+        self._interrupt_btn = QPushButton("Interromper tarefa  ·  Esc")
         self._interrupt_btn.setFixedHeight(34)
-        self._interrupt_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._interrupt_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._interrupt_btn.setStyleSheet(f"""
             QPushButton {{
@@ -5533,9 +5567,9 @@ class MainWindow(QMainWindow):
         self._interrupt_btn.clicked.connect(self._do_interrupt)
         lay.addWidget(self._interrupt_btn)
 
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn = QPushButton("Desligar microfone")
         self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._mute_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._mute_btn.clicked.connect(self._toggle_mute)
         self._style_mute_btn()
@@ -5690,6 +5724,10 @@ class MainWindow(QMainWindow):
             lay.addWidget(button)
             return button
 
+        visual_btn = _row(QPushButton("Alternar visual simples / animado"), self._BTN_DIM)
+        visual_btn.clicked.connect(lambda: self._hud_cam_stack.setCurrentIndex(3 if self._hud_cam_stack.currentIndex() == 0 else 0))
+        metrics_btn = _row(QPushButton("Mostrar / ocultar métricas"), self._BTN_DIM)
+        metrics_btn.clicked.connect(self._toggle_metrics)
         fs_btn = _row(QPushButton("⛶  FULLSCREEN  [F11]"), self._BTN_DIM)
         fs_btn.clicked.connect(self._toggle_fullscreen)
 
@@ -6947,6 +6985,8 @@ class MainWindow(QMainWindow):
         if muted == self._muted:
             return
         self._muted = muted
+        if self._stability_indicator is not None:
+            self._stability_indicator.set_muted(muted)
         self.hud.muted = muted
         self._style_mute_btn()
         if muted:
@@ -6958,7 +6998,7 @@ class MainWindow(QMainWindow):
 
     def _style_mute_btn(self):
         if self._muted:
-            self._mute_btn.setText("🔇  MICROPHONE MUTED")
+            self._mute_btn.setText("Ligar microfone")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #140006; color: {C.MUTED_C};
@@ -6966,7 +7006,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
-            self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
+            self._mute_btn.setText("Desligar microfone")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #00140a; color: {C.GREEN};
@@ -6984,6 +7024,9 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
     def _apply_state(self, state: str):
+        if hasattr(self, '_status_label'):
+            labels = {'LISTENING':'Ouvindo', 'THINKING':'Preparando a próxima etapa…', 'SPEAKING':'Respondendo', 'SLEEPING':'Em espera', 'MUTED':'Microfone desligado'}
+            self._status_label.setText(labels.get(state, 'Em atividade'))
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
 
