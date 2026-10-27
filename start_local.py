@@ -47,9 +47,19 @@ DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_VOICE = "pt_BR-faber-medium"
 DEFAULT_WHISPER = "small"
 
-# Um modelo de 4B se perde com dezenas de ferramentas no prompt. Menos
-# ferramentas, mais acerto; o painel permite mudar depois.
-LOCAL_TOOL_BUDGET = {"max_tools": "12", "max_tool_chars": "10000"}
+# Um modelo de 4B se perde com dezenas de ferramentas no prompt, e o contexto
+# de uma GPU de 4 GB é curto. Menos ferramentas e um histórico menor cabem com
+# folga; o painel permite mudar depois.
+LOCAL_TOOL_BUDGET = {"max_tools": "10", "max_tool_chars": "8000",
+                     "history_chars": "8000"}
+
+# O Ollama abre modelos com 4096 tokens de contexto por padrão, e só as
+# instruções e ferramentas do Jarvis passam de 7 mil. A API compatível com a
+# OpenAI não aceita mudar isso por pedido, então criamos um modelo derivado com
+# o contexto já gravado nele. 12 mil tokens = instruções + ferramentas +
+# histórico + resposta, e ainda cabe quase todo numa placa de 4 GB.
+DEFAULT_CONTEXT = 12288
+DERIVED_PREFIX = "jarvis-"
 
 PERFIS = ("local", "hibrido")
 
@@ -101,6 +111,40 @@ def verificar(perfil: str, modelo: str) -> list[str]:
     return problemas
 
 
+def nome_derivado(base: str, contexto: int) -> str:
+    """'qwen3:4b-instruct-2507-q4_K_M' -> 'jarvis-qwen3-4b-instruct-2507-q4_k_m-12k'."""
+    limpo = "".join(c if c.isalnum() or c in "-_." else "-" for c in base.lower())
+    return f"{DERIVED_PREFIX}{limpo}-{contexto // 1024}k"
+
+
+def preparar_ollama(base: str, contexto: int = DEFAULT_CONTEXT,
+                    url: str = OLLAMA_URL) -> str:
+    """Garante um modelo com contexto suficiente e devolve o nome a usar.
+
+    Cria (uma vez) um derivado de `base` com `num_ctx = contexto`. Se o Ollama
+    for antigo demais para isso, avisa e devolve o próprio `base`, para que o
+    Jarvis ainda inicie e o aviso diga como resolver.
+    """
+    if base.startswith(DERIVED_PREFIX):
+        return base
+    nome = nome_derivado(base, contexto)
+    if nome in (_ollama_models(url) or []) or f"{nome}:latest" in (_ollama_models(url) or []):
+        return nome
+    try:
+        import httpx
+        r = httpx.post(url + "/api/create", timeout=120.0, json={
+            "model": nome, "from": base,
+            "parameters": {"num_ctx": int(contexto)}, "stream": False})
+        r.raise_for_status()
+        print(f"  • Criado '{nome}' ({contexto} tokens de contexto) a partir de '{base}'.")
+        return nome
+    except Exception as e:
+        print(f"  • Não consegui criar o modelo com contexto maior ({type(e).__name__}). "
+              "Atualize o Ollama ou rode: setx OLLAMA_CONTEXT_LENGTH 12288 "
+              "e reinicie o Ollama.")
+        return base
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Configuração
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +183,7 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
         llm.update(base_url=GROQ_URL, model=modelo, vision=False,
                    max_tools="0", max_tool_chars="0")
         llm.pop("api_key", None)          # a chave só existe em memória
+        llm.pop("history_chars", None)    # o Groq tem contexto de sobra
 
     stt = creds.setdefault("whisper", {})
     if perfil == "local":
@@ -207,6 +252,9 @@ if __name__ == "__main__":
     bloqueantes = [p for p in problemas if "Piper" not in p]
     if bloqueantes:
         sys.exit("Não foi possível iniciar. Resolva os itens acima.")
+    if a.perfil == "local":
+        contexto = int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))
+        modelo = preparar_ollama(modelo, contexto)
     configure(a.perfil, modelo)
     from main import main
     main()

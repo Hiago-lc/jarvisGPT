@@ -27,14 +27,8 @@ python -m pip install faster-whisper piper-tts
 ### Perfil local: Ollama
 
 1. Instale o Ollama em https://ollama.com (use a versão mais recente: o suporte a placas AMD antigas como a RX 580 vem pelo Vulkan).
-2. Aumente o contexto, senão as ferramentas do Jarvis são cortadas do prompt sem aviso. No PowerShell, uma vez:
-
-   ```powershell
-   setx OLLAMA_CONTEXT_LENGTH 8192
-   ```
-
-   Feche o Ollama pela bandeja do Windows e abra de novo.
-3. Baixe o modelo:
+2. O contexto é ajustado sozinho. As instruções e ferramentas do Jarvis passam de 7 mil tokens, e o Ollama abre modelos com 4 mil. Na primeira vez, o `start_local.py` cria um modelo derivado (`jarvis-…-12k`) com 12 mil tokens de contexto. Para mudar o tamanho: `$env:JARVIS_CONTEXT = "16384"`.
+3. Baixe o modelo base:
 
    ```powershell
    ollama pull qwen3:4b-instruct-2507-q4_K_M
@@ -77,4 +71,5 @@ Variáveis opcionais: `JARVIS_LOCAL_MODEL`, `JARVIS_GROQ_MODEL` (padrão `openai
 - `start_local.py`: novo inicializador, com verificação em português.
 - `core/gemini.py`: `gemini_disabled()` reúne os dois interruptores (`JARVIS_NO_GEMINI` e o antigo `JARVIS_OPENAI_ONLY`).
 - `actions/computer_control.py`: localizar um elemento na tela não exige mais a chave Gemini antes de tentar a árvore de acessibilidade.
-- `tests/test_local_setup.py`: 9 testes, incluindo garantir que nenhuma chamada chega ao Gemini e que a chave do Groq nunca é gravada no disco.
+- `providers/llm_openai.py` e `providers/engine_pipeline.py`: o modelo pode limitar o histórico da conversa (`history_chars`), para caber em contextos curtos.
+- `tests/test_local_setup.py`: 15 testes, incluindo garantir que nenhuma chamada chega ao Gemini e que a chave do Groq nunca é gravada no disco.

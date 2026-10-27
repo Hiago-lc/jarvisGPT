@@ -1,8 +1,11 @@
 import json
 import os
+import sys
+import types
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 from memory import config_manager as cm
@@ -38,7 +41,7 @@ class LocalProfileTests(unittest.TestCase):
         llm = runtime['openai_compat']
         self.assertEqual(llm['base_url'], 'http://127.0.0.1:11434/v1')
         self.assertEqual(llm['model'], start_local.DEFAULT_LOCAL_MODEL)
-        self.assertEqual(llm['max_tools'], '12')
+        self.assertEqual(llm['max_tools'], '10')
         self.assertEqual(runtime['whisper']['backend'], 'local')
         self.assertEqual(runtime['whisper']['language'], 'pt')
         self.assertEqual(runtime['piper']['voice'], 'pt_BR-faber-medium')
@@ -96,6 +99,53 @@ class LocalProfileTests(unittest.TestCase):
         with patch.object(start_local, '_ollama_models', return_value=['llama3.2:latest']):
             problems = start_local.verificar('local', 'qwen3:4b')
         self.assertTrue(any('ollama pull qwen3:4b' in p for p in problems))
+
+
+def _fake_httpx(post):
+    """An httpx stand-in, so these tests need no network and no package."""
+    return patch.dict(sys.modules, {'httpx': types.SimpleNamespace(post=post)})
+
+
+class OllamaContextTests(unittest.TestCase):
+    def test_derived_name_is_stable_and_valid(self):
+        name = start_local.nome_derivado('qwen3:4b-instruct-2507-q4_K_M', 12288)
+        self.assertEqual(name, 'jarvis-qwen3-4b-instruct-2507-q4_k_m-12k')
+
+    def test_creates_derived_model_with_larger_context(self):
+        class Resp:
+            def raise_for_status(self):
+                pass
+        with patch.object(start_local, '_ollama_models', return_value=['qwen3:4b']), \
+             _fake_httpx(post := unittest.mock.Mock(return_value=Resp())):
+            name = start_local.preparar_ollama('qwen3:4b', 12288)
+        self.assertEqual(name, 'jarvis-qwen3-4b-12k')
+        body = post.call_args.kwargs['json']
+        self.assertEqual(body['from'], 'qwen3:4b')
+        self.assertEqual(body['parameters']['num_ctx'], 12288)
+
+    def test_reuses_an_existing_derived_model(self):
+        with patch.object(start_local, '_ollama_models', return_value=['jarvis-qwen3-4b-12k:latest']), \
+             _fake_httpx(post := unittest.mock.Mock()):
+            self.assertEqual(start_local.preparar_ollama('qwen3:4b', 12288), 'jarvis-qwen3-4b-12k')
+        post.assert_not_called()
+
+    def test_old_ollama_falls_back_to_the_base_model(self):
+        with patch.object(start_local, '_ollama_models', return_value=['qwen3:4b']), \
+             _fake_httpx(unittest.mock.Mock(side_effect=RuntimeError('404'))):
+            self.assertEqual(start_local.preparar_ollama('qwen3:4b', 12288), 'qwen3:4b')
+
+    def test_local_profile_sets_a_small_history(self):
+        _, _, runtime, _, _ = _run('local', {})
+        self.assertEqual(runtime['openai_compat']['history_chars'], '8000')
+
+    def test_engine_takes_history_budget_from_the_model(self):
+        from providers.engine_pipeline import PipelineEngine
+
+        class FakeLLM:
+            caps = {'tools': True, 'tool_format': 'openai', 'history_chars': 8000}
+        self.assertEqual(PipelineEngine(FakeLLM())._history_chars, 8000)
+        FakeLLM.caps = {'tools': True, 'tool_format': 'openai'}
+        self.assertEqual(PipelineEngine(FakeLLM())._history_chars, 24000)
 
 
 if __name__ == '__main__':
