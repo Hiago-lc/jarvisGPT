@@ -112,10 +112,11 @@ class PipelineEngine:
         self._stt = stt
         self._tts = tts
         self._log = log or (lambda m: None)
-        self._history_chars = history_chars
-
         self.caps = dict(DEFAULT_CAPS)
         llm_caps = getattr(llm, "caps", {}) or {}
+        # The model's own limit wins over the default: it is the one that knows
+        # how small its context window is.
+        self._history_chars = llm_caps.get("history_chars") or history_chars
         self.caps.update({
             "tools": bool(llm_caps.get("tools")),
             "tool_format": llm_caps.get("tool_format"),

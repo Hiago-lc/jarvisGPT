@@ -27,20 +27,23 @@ python -m pip install faster-whisper piper-tts
 ### Perfil local: Ollama
 
 1. Instale o Ollama em https://ollama.com (use a versão mais recente: o suporte a placas AMD antigas como a RX 580 vem pelo Vulkan).
-2. Aumente o contexto, senão as ferramentas do Jarvis são cortadas do prompt sem aviso. No PowerShell, uma vez:
-
-   ```powershell
-   setx OLLAMA_CONTEXT_LENGTH 8192
-   ```
-
-   Feche o Ollama pela bandeja do Windows e abra de novo.
-3. Baixe o modelo:
+2. O contexto é ajustado sozinho. As instruções e ferramentas do Jarvis passam de 7 mil tokens, e o Ollama abre modelos com 4 mil. Na primeira vez, o `start_local.py` cria um modelo derivado (`jarvis-…-12k`) com 12 mil tokens de contexto. Para mudar o tamanho: `$env:JARVIS_CONTEXT = "16384"`.
+3. Baixe o modelo base:
 
    ```powershell
    ollama pull qwen3:4b-instruct-2507-q4_K_M
    ```
 
-4. Confira se a placa está sendo usada: rode `ollama run qwen3:4b-instruct-2507-q4_K_M "oi"` e, em outro terminal, `ollama ps`. A coluna PROCESSOR deve mostrar `GPU`. Se mostrar `100% CPU`, rode `setx OLLAMA_VULKAN 1`, reinicie o Ollama e confira de novo. Na CPU ele funciona, só que mais devagar.
+4. Faça o modelo caber na placa e ficar carregado. Uma vez, no PowerShell:
+
+   ```powershell
+   setx OLLAMA_FLASH_ATTENTION 1
+   setx OLLAMA_KV_CACHE_TYPE q8_0
+   setx OLLAMA_KEEP_ALIVE -1
+   ```
+
+   Feche o Ollama pela bandeja do Windows e abra de novo. As duas primeiras reduzem à metade a memória do contexto (sem elas, numa placa de 4 GB, cerca de 1/3 do modelo cai para a CPU). A terceira impede o Ollama de descarregar o modelo após alguns minutos parado.
+5. Confira se a placa está sendo usada: rode `ollama run qwen3:4b-instruct-2507-q4_K_M "oi"` e, em outro terminal, `ollama ps`. A coluna PROCESSOR deve mostrar `100% GPU` e UNTIL, `Forever`. Se mostrar `100% CPU`, rode `setx OLLAMA_VULKAN 1`, reinicie o Ollama e confira de novo. Na CPU ele funciona, só que mais devagar.
 
 Se o nome do modelo não existir na sua versão do Ollama, `qwen3:4b` também serve (é mais lento para começar a responder, porque "pensa" antes).
 
@@ -77,4 +80,5 @@ Variáveis opcionais: `JARVIS_LOCAL_MODEL`, `JARVIS_GROQ_MODEL` (padrão `openai
 - `start_local.py`: novo inicializador, com verificação em português.
 - `core/gemini.py`: `gemini_disabled()` reúne os dois interruptores (`JARVIS_NO_GEMINI` e o antigo `JARVIS_OPENAI_ONLY`).
 - `actions/computer_control.py`: localizar um elemento na tela não exige mais a chave Gemini antes de tentar a árvore de acessibilidade.
-- `tests/test_local_setup.py`: 9 testes, incluindo garantir que nenhuma chamada chega ao Gemini e que a chave do Groq nunca é gravada no disco.
+- `providers/llm_openai.py` e `providers/engine_pipeline.py`: o modelo pode limitar o histórico da conversa (`history_chars`), para caber em contextos curtos.
+- `tests/test_local_setup.py`: 15 testes, incluindo garantir que nenhuma chamada chega ao Gemini e que a chave do Groq nunca é gravada no disco.

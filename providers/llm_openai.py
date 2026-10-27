@@ -364,6 +364,10 @@ class OpenAICompatLLM:
             "vision": bool(cfg.get("vision", False)),
             "max_tools": max_tools,
             "max_tool_chars": max_chars,
+            # How much conversation the engine may carry, in characters. Empty
+            # keeps the engine's default; a small local model with a short
+            # context window needs less, or the very first turn overflows it.
+            "history_chars": _int_or(cfg.get("history_chars"), None),
         })
 
         # A proxy configured for the whole machine must not be used to reach a
