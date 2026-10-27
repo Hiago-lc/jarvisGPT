@@ -193,5 +193,51 @@ class RespostaLentaTests(unittest.TestCase):
         self.assertEqual(pedidos[0][1], {"model": "jarvis-qwen3-12k", "prompt": "", "keep_alive": -1})
 
 
+class MicrofoneDiagnosticoTests(unittest.TestCase):
+    """Quando a voz não chega, o registro diz por quê."""
+
+    def _motor(self, falado):
+        from providers.engine_pipeline import PipelineEngine
+        registro = []
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai"}
+
+        class STT:
+            async def transcribe(self, pcm, rate):
+                return falado
+        motor = PipelineEngine(LLM(), STT(), None, log=registro.append)
+
+        async def nada(*a, **k):
+            pass
+        motor._emit = nada
+        motor.send_client_content = nada
+        return motor, registro
+
+    def test_speech_start_and_unintelligible_audio_are_logged(self):
+        import asyncio
+        import numpy as np
+        motor, registro = self._motor("")
+        motor.auto_turn = True
+        fala = (np.sin(np.arange(1600) / 3) * 8000).astype(np.int16).tobytes()     # 100 ms alto
+        silencio = np.zeros(1600, dtype=np.int16).tobytes()
+
+        async def tocar():
+            for _ in range(5):
+                await motor.send_realtime_input(audio={"data": fala})
+            for _ in range(10):
+                await motor.send_realtime_input(audio={"data": silencio})
+        with patch("providers.engine_pipeline._pcm_of", side_effect=lambda a: a["data"]):
+            asyncio.run(tocar())
+        self.assertIn("SYS: 🎤 ouvindo você…", registro)
+        self.assertTrue(any("não entendi nenhuma palavra" in r for r in registro), registro)
+
+    def test_window_explains_why_the_mic_is_ignored(self):
+        fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+        for trecho in ("o Jarvis está dormindo", "o push-to-talk está ligado",
+                       "o microfone está desligado no Jarvis", "não captou nenhum som em 20 s"):
+            self.assertIn(trecho, fonte)
+
+
 if __name__ == "__main__":
     unittest.main()

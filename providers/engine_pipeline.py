@@ -286,6 +286,8 @@ class PipelineEngine:
             self._vad_speech_ms += ms
             self._vad_quiet_ms = 0.0
             if self._vad_speech_ms >= _VAD_MIN_SPEECH_MS:
+                if not self._vad_started:
+                    self._log("SYS: 🎤 ouvindo você…")
                 self._vad_started = True
             return
 
@@ -773,6 +775,9 @@ class PipelineEngine:
             self._report("speech recognition", self._stt, e)
             return ""
         self._timing["stt"] = time.monotonic() - t0
+        if not text:
+            self._log(f"SYS: ouvi {self._timing['heard_s']:.1f} s de áudio, mas não entendi "
+                      "nenhuma palavra. Fale mais perto do microfone.")
         if text:
             # THIS is what the user said, and the only thing that should reach
             # the activity log as "You:". Emitted here rather than in

@@ -1522,8 +1522,22 @@ class JarvisLive:
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
+        # Diagnóstico: o microfone descartava a fala em silêncio quando estava
+        # mudo, dormindo ou no push-to-talk, e a pessoa só via "não responde".
+        # Agora, quando alguém fala alto e o áudio é barrado, o motivo vai para
+        # o registro (no máximo a cada 30 s); e um microfone que não capta nada
+        # nos primeiros 20 s também é avisado.
+        diag = {"motivo": "", "pico": 0.0, "desde": time.monotonic(),
+                "avisado": 0.0, "mudo_avisado": False}
+
+        def _barrado(motivo, nivel):
+            if nivel >= 0.2:
+                diag["motivo"] = motivo
 
         def callback(indata, frames, time_info, status):
+            nivel = _pcm_level(indata)
+            if nivel > diag["pico"]:
+                diag["pico"] = nivel
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JARVIS can't respond to speech not addressed to it and
@@ -1535,6 +1549,8 @@ class JarvisLive:
                 det = self._wake_detector
                 if det is not None:
                     det.feed(indata)
+                _barrado("o Jarvis está dormindo: diga a palavra de ativação ou toque em WAKE NOW "
+                         "(ou desligue a palavra de ativação no menu 🎛)", nivel)
                 return
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
@@ -1581,7 +1597,12 @@ class JarvisLive:
             # opens it, which is the whole point: nothing leaves the machine
             # unless you are holding the key.
             if self._ptt_enabled and not self._ptt_held:
+                _barrado("o push-to-talk está ligado: segure o atalho enquanto fala "
+                         "(ou desligue o push-to-talk no menu 🎛)", nivel)
                 return
+            if self.ui.muted:
+                _barrado("o microfone está desligado no Jarvis: aperte F4 ou o botão "
+                         "Ligar microfone", nivel)
             
             if not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
@@ -1633,8 +1654,20 @@ class JarvisLive:
 
             with _mic_stream:
                 print("[JARVIS] 🎤 Mic stream open")
+                _nome_mic = _mic_name or "padrão do Windows"
                 while True:
                     await asyncio.sleep(0.1)
+                    agora = time.monotonic()
+                    if diag["motivo"] and agora - diag["avisado"] > 30:
+                        self.ui.write_log(f"SYS: ouvi você, mas não estou escutando: {diag['motivo']}.")
+                        diag["avisado"], diag["motivo"] = agora, ""
+                    if (not diag["mudo_avisado"] and agora - diag["desde"] > 20
+                            and diag["pico"] == 0.0 and not self.ui.muted):
+                        diag["mudo_avisado"] = True
+                        self.ui.write_log(
+                            f"SYS: o microfone '{_nome_mic}' não captou nenhum som em 20 s. "
+                            "Confira se é o microfone certo (⚙ → AUDIO DEVICES) e se o Windows "
+                            "deixa os apps usarem o microfone.")
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
