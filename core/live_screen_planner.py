@@ -25,9 +25,9 @@ def install(planner):
 
 
 def enabled():
-    if os.environ.get('JARVIS_OPENAI_ONLY') == '1':
-        return False
     from core import gemini
+    if gemini.gemini_disabled():
+        return False
     try:
         settings = json.loads(gemini._KEY_FILE.read_text(encoding='utf-8'))
         return settings.get('desktop_live_stream', True) is not False and bool(gemini.api_key())
