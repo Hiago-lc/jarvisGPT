@@ -228,7 +228,8 @@ def _validate(module, filename: str) -> PluginRecord:
 # disk, because the case that matters most is the folder being ABSENT: a plugin
 # importing core.undo on a build with no core/ at all must still be told to
 # update, not to install something called "core".
-_FIRST_PARTY = {"core", "memory", "actions", "plugins", "dashboard", "config"}
+_FIRST_PARTY = {"core", "memory", "actions", "plugins", "dashboard", "config",
+                "haizen"}
 
 
 def _is_first_party(top: str, plugins_dir: Path) -> bool:
