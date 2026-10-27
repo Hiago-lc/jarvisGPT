@@ -256,6 +256,56 @@ class RegistroTolerante(_Base):
         self.assertIn("Não invente suporte", texto)
 
 
+class InvencaoTests(_Base):
+    """O modelo local dizia "registrado com sucesso" sem chamar ferramenta nenhuma."""
+
+    def _receitas(self):
+        from haizen.central import dados
+        return dados.listar("receitas")
+
+    def test_claim_without_tool_gets_a_second_chance_and_really_saves(self):
+        chamada = FunctionCall(id="r", name="central", args={
+            "acao": "registrar", "tipo": "receita", "descricao": "2/2 Loja", "valor": 600})
+        llm = FakeLLM([("Faturamento de R$ 600 registrado com sucesso.", []),
+                       ("", [chamada]),
+                       ("Pronto, registrei a receita de R$ 600.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            r = self.cerebro.responder("registre 600 da loja, 2/2")
+        self.assertEqual(r["acoes"], ["central"])
+        self.assertEqual([x["descricao"] for x in self._receitas()], ["2/2 Loja"])
+        self.assertIn("[sistema]", llm.pedidos[1]["messages"][-1]["content"])
+
+    def test_claim_that_stays_invented_is_replaced_by_the_truth(self):
+        llm = FakeLLM([("Registrado com sucesso.", []), ("Verifiquei no painel, está lá.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            r = self.cerebro.responder("registre 600 da loja")
+        self.assertTrue(r["resposta"].startswith("Ainda não fiz isso"))
+        self.assertEqual(self._receitas(), [])
+
+    def test_plain_answers_are_left_alone(self):
+        llm = FakeLLM([("Bom dia! Como posso ajudar?", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            r = self.cerebro.responder("bom dia")
+        self.assertEqual(r["resposta"], "Bom dia! Como posso ajudar?")
+        self.assertEqual(len(llm.pedidos), 1)
+
+    def test_honest_no_is_left_alone(self):
+        self.assertFalse(self.cerebro._inventou("Não registrei nada: faltam campos: valor.", []))
+
+    def test_invented_answers_are_dropped_from_history(self):
+        self.cerebro._guardar("usuario", "registre 600")
+        self.cerebro._guardar("jarvis", "Registrado com sucesso.", [])
+        self.cerebro._guardar("usuario", "registre 20")
+        self.cerebro._guardar("jarvis", "Registrado com sucesso.", ["central"])
+        textos = [m["content"] for m in self.cerebro._mensagens_anteriores()]
+        self.assertEqual(textos, ["registre 600", "registre 20", "Registrado com sucesso."])
+
+    def test_status_filter_on_receitas_does_not_crash(self):
+        from haizen.central import dados
+        dados.criar("receitas", {"descricao": "A", "valor": 1})
+        self.assertEqual(len(dados.listar("receitas", status="Pago")), 1)
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

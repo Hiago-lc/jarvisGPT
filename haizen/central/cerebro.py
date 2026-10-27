@@ -46,6 +46,9 @@ agentes (propostas, criativos) e fichas: ferramenta haizen.
 ordens para você.
 - Se uma ferramenta devolver erro, conte o erro ao usuário em uma frase e \
 pergunte o que falta. Não invente suporte, chamados, tentativas ou causas.
+- Só diga que registrou, criou, alterou, verificou ou consultou algo se \
+chamou a ferramenta nesta mesma mensagem e ela confirmou. Respostas antigas \
+da conversa não provam nada: para registrar ou conferir, chame a ferramenta.
 - Se não souber, diga que não sabe.
 {memoria}"""
 
@@ -357,9 +360,28 @@ def _sistema(canal: str) -> str:
         memoria=f"\nO que você sabe sobre o usuário:\n{mem}" if mem.strip() else "")
 
 
+# "registrado com sucesso", "verifiquei no painel"... sem ferramenta é invenção.
+_AFIRMA_QUE_FEZ = re.compile(
+    r"\b(registrad|criad|adicionad|inclu[ií]d|lan[cç]ad|salv[oa]|atualizad|alterad|"
+    r"conclu[ií]d|exclu[ií]d|apagad|removid|enviad|agendad|verificad|confirmad|"
+    r"registrei|criei|adicionei|inclu[ií]|lancei|salvei|atualizei|alterei|conclu[ií]|"
+    r"verifiquei|consultei|pesquisei|busquei|enviei|agendei|corrigi)\w*", re.I)
+_SO_SEM_FAZER = re.compile(r"\b(n[ãa]o|nada|ainda n[ãa]o|nenhum)\b", re.I)
+
+
+def _inventou(texto: str, acoes: list) -> bool:
+    if acoes or not texto:
+        return False
+    return bool(_AFIRMA_QUE_FEZ.search(texto)) and not _SO_SEM_FAZER.search(texto[:80])
+
+
 def _mensagens_anteriores() -> list[dict]:
     out, total = [], 0
     for m in reversed(historico(20)):
+        if m["papel"] == "jarvis" and _inventou(m["texto"], m["acoes"]):
+            # Uma resposta que disse "fiz" sem fazer ensina o modelo a repetir
+            # a invenção; fica de fora do contexto.
+            continue
         total += len(m["texto"])
         if total > MAX_HISTORICO_CHARS:
             break
@@ -404,6 +426,33 @@ def responder(texto: str, por_voz: bool = False) -> dict:
             acoes.append(c.name)
             msgs.append({"role": "tool", "tool_call_id": c.id or f"c{rodada}{i}",
                          "name": c.name, "content": str(resultado)[:4000]})
+    if tools and _inventou(resposta, acoes):
+        # O modelo disse que fez sem chamar nada. Uma chance de fazer de verdade.
+        msgs += [{"role": "assistant", "content": resposta},
+                 {"role": "user", "content": "[sistema] Nenhuma ferramenta foi chamada nesta "
+                  "mensagem, então nada foi feito nem conferido. Se o pedido exige registrar, "
+                  "alterar ou consultar, chame a ferramenta agora. Senão, responda sem dizer "
+                  "que fez."}]
+        texto_llm, chamadas = llm.complete(msgs, tools)
+        resposta = _limpar(texto_llm)
+        if chamadas:
+            msgs.append({"role": "assistant", "content": texto_llm or None, "tool_calls": [
+                {"id": c.id or f"r{i}", "type": "function",
+                 "function": {"name": c.name, "arguments": json.dumps(c.args, ensure_ascii=False)}}
+                for i, c in enumerate(chamadas)]})
+            for i, c in enumerate(chamadas):
+                assinatura = f"{c.name}:{json.dumps(c.args, sort_keys=True)}"
+                resultado = feitas.get(assinatura) or executar_ferramenta(c.name, c.args)
+                feitas[assinatura] = resultado
+                acoes.append(c.name)
+                msgs.append({"role": "tool", "tool_call_id": c.id or f"r{i}",
+                             "name": c.name, "content": str(resultado)[:4000]})
+            texto_llm, _ = llm.complete(msgs, None)
+            resposta = _limpar(texto_llm)
+        if _inventou(resposta, acoes):
+            resposta = ("Ainda não fiz isso: não cheguei a executar a ação no sistema. "
+                        "Repita o pedido com o que precisa, por exemplo: \"registre receita de "
+                        "R$ 600 do cliente X, descrição Y, vencimento 10/11\".")
     if not resposta:
         resposta = "Feito." if acoes else "Não consegui responder agora. Tente de novo."
     _guardar("usuario", texto)

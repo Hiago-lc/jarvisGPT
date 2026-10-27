@@ -265,6 +265,11 @@ def apagar(entidade: str, rid: int) -> None:
         con.execute(f"DELETE FROM {entidade} WHERE id=?", (int(rid),))
 
 
+def _colunas(entidade: str) -> set[str]:
+    with store.conexao() as con:
+        return {r[1] for r in con.execute(f"PRAGMA table_info({entidade})")}
+
+
 def listar(entidade: str, **filtros) -> list[dict]:
     ENTIDADES[entidade]
     onde, args = [], []
@@ -280,7 +285,8 @@ def listar(entidade: str, **filtros) -> list[dict]:
                    "despesas": "COALESCE(NULLIF(e.data_pagamento,''), e.vencimento)"}.get(entidade)
             if col: onde.append(f"{col} <= ?"); args.append(v)
         elif k in ("cliente_id", "status", "etapa", "tarefa_id", "categoria"):
-            onde.append(f"e.{k} = ?"); args.append(v)
+            if k in _colunas(entidade):   # receitas não têm status, por exemplo
+                onde.append(f"e.{k} = ?"); args.append(v)
     junta = ""
     extra = ""
     if entidade in ("receitas", "tarefas", "oportunidades", "marcas"):
