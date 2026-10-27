@@ -326,5 +326,20 @@ class ClaudeLookupTests(unittest.TestCase):
             self.assertIsNone(executor.claude_disponivel())
 
 
+class PastasConfigTests(unittest.TestCase):
+    def test_finds_the_claude_data_folder(self):
+        from haizen import instalar_mcp
+        with tempfile.TemporaryDirectory() as d:
+            dados = Path(d) / 'Local' / 'Claude-Data' / 'claude_abc'
+            dados.mkdir(parents=True)
+            (dados / 'claude_desktop_config.json').write_text('{}')
+            with patch.object(sys, 'platform', 'win32'), \
+                 patch.dict(os.environ, {'APPDATA': str(Path(d) / 'Roaming'),
+                                         'LOCALAPPDATA': str(Path(d) / 'Local')}):
+                pastas = instalar_mcp.pastas_config()
+        self.assertIn(dados, pastas)
+        self.assertIn(Path(d) / 'Roaming' / 'Claude', pastas)
+
+
 if __name__ == '__main__':
     unittest.main()

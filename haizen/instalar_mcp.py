@@ -37,6 +37,11 @@ def pastas_config() -> list[Path]:
             achadas.append(Path(appdata) / "Claude")
         local = os.environ.get("LOCALAPPDATA")
         if local:
+            # Versões recentes do app guardam a configuração por instalação em
+            # %LOCALAPPDATA%\Claude-Data\<id>, e é essa que a tela
+            # Configurações > Desenvolvedor mostra.
+            achadas += sorted(p.parent for p in
+                              Path(local, "Claude-Data").glob("*/claude_desktop_config.json"))
             achadas += sorted(Path(local, "Packages").glob("*Claude*/LocalCache/Roaming/Claude"))
         return achadas
     if sys.platform == "darwin":
