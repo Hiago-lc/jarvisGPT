@@ -27,16 +27,18 @@ SERVIDOR = Path(__file__).resolve().parent / "mcp_server.py"
 def pastas_config() -> list[Path]:
     """Onde o app do Claude guarda a configuração neste sistema."""
     if sys.platform == "win32":
+        # Sempre %APPDATA%\Claude, mesmo que a pasta ainda não exista: é onde
+        # as versões atuais do app leem, inclusive a da Microsoft Store. A
+        # cópia virtualizada da Store (LocalCache) também recebe a entrada,
+        # porque versões antigas da Store leem dali. Gravar nas duas é inofensivo.
         achadas = []
         appdata = os.environ.get("APPDATA")
         if appdata:
             achadas.append(Path(appdata) / "Claude")
         local = os.environ.get("LOCALAPPDATA")
         if local:
-            # Instalação pela Microsoft Store guarda em outro lugar.
             achadas += sorted(Path(local, "Packages").glob("*Claude*/LocalCache/Roaming/Claude"))
-        existentes = [p for p in achadas if p.is_dir()]
-        return existentes or achadas[:1]
+        return achadas
     if sys.platform == "darwin":
         return [Path.home() / "Library" / "Application Support" / "Claude"]
     return [Path.home() / ".config" / "Claude"]
@@ -87,7 +89,9 @@ def main(argv=None) -> int:
         print(f"Registrado em {registrar(pasta)}")
     if a.claude_code:
         print(registrar_claude_code())
-    print("Feche o app do Claude pela bandeja do Windows e abra de novo.")
+    print("Feche o app do Claude pela bandeja do Windows (Sair) e abra de novo.")
+    print("Se em Configurações > Desenvolvedor ainda aparecer 'Nenhum servidor', clique em")
+    print("'Editar configuração' e me diga em que pasta o arquivo abriu.")
     return 0
 
 
