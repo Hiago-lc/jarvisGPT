@@ -34,7 +34,16 @@ python -m pip install faster-whisper piper-tts
    ollama pull qwen3:4b-instruct-2507-q4_K_M
    ```
 
-4. Confira se a placa está sendo usada: rode `ollama run qwen3:4b-instruct-2507-q4_K_M "oi"` e, em outro terminal, `ollama ps`. A coluna PROCESSOR deve mostrar `GPU`. Se mostrar `100% CPU`, rode `setx OLLAMA_VULKAN 1`, reinicie o Ollama e confira de novo. Na CPU ele funciona, só que mais devagar.
+4. Faça o modelo caber na placa e ficar carregado. Uma vez, no PowerShell:
+
+   ```powershell
+   setx OLLAMA_FLASH_ATTENTION 1
+   setx OLLAMA_KV_CACHE_TYPE q8_0
+   setx OLLAMA_KEEP_ALIVE -1
+   ```
+
+   Feche o Ollama pela bandeja do Windows e abra de novo. As duas primeiras reduzem à metade a memória do contexto (sem elas, numa placa de 4 GB, cerca de 1/3 do modelo cai para a CPU). A terceira impede o Ollama de descarregar o modelo após alguns minutos parado.
+5. Confira se a placa está sendo usada: rode `ollama run qwen3:4b-instruct-2507-q4_K_M "oi"` e, em outro terminal, `ollama ps`. A coluna PROCESSOR deve mostrar `100% GPU` e UNTIL, `Forever`. Se mostrar `100% CPU`, rode `setx OLLAMA_VULKAN 1`, reinicie o Ollama e confira de novo. Na CPU ele funciona, só que mais devagar.
 
 Se o nome do modelo não existir na sua versão do Ollama, `qwen3:4b` também serve (é mais lento para começar a responder, porque "pensa" antes).
 
