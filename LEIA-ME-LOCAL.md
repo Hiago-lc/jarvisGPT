@@ -69,6 +69,18 @@ Na primeira fala, o Piper baixa a voz `pt_BR-faber-medium` (cerca de 60 MB). Par
 
 Variáveis opcionais: `JARVIS_LOCAL_MODEL`, `JARVIS_GROQ_MODEL` (padrão `openai/gpt-oss-120b`), `JARVIS_PIPER_VOICE`, `JARVIS_WHISPER_MODEL` (padrão `small`; use `base` se a transcrição estiver lenta).
 
+## Iniciar junto com o Windows
+
+```powershell
+py start_local.py --perfil local --iniciar-com-windows
+```
+
+Ao ligar o PC, abre só a janela do Jarvis, com voz e controle do computador. Ela espera o Ollama subir (até 3 minutos). A central da HAIZEN (painel, financeiro e acesso pelo celular em `http://127.0.0.1:8765`) roda dentro dela, sem outro processo. Esse comando substitui o atalho do `jarvis_web.py`. Para desfazer: `py start_local.py --nao-iniciar-com-windows`.
+
+Sem console, o que acontece fica em `%LOCALAPPDATA%\JarvisGPT\jarvis_janela.log`.
+
+O Whisper recebe uma lista de palavras esperadas (nomes de apps, HAIZEN e os clientes ativos da central), para errar menos nomes como "WhatsApp Business". Os nomes dos clientes ficam só na memória, nunca no arquivo de configuração.
+
 ## O que muda em relação ao Gemini
 
 - A conversa é ouvir → pensar → falar em sequência, então há uma pausa antes da resposta, maior no perfil local.

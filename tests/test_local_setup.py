@@ -30,6 +30,7 @@ def _run(perfil, env, data=None):
             finally:
                 cm.load_api_keys = original_loader
                 os.environ.pop('JARVIS_NO_GEMINI', None)
+                os.environ.pop('JARVIS_PROVIDER_MODE', None)
 
 
 class LocalProfileTests(unittest.TestCase):

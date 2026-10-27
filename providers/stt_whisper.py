@@ -86,6 +86,10 @@ class WhisperSTT:
         self.base_url = (cfg.get("base_url") or "").strip()
         self.api_key = (cfg.get("api_key") or "").strip()
         self.download_root = (cfg.get("download_root") or "").strip() or None
+        # Palavras que a pessoa usa e o modelo pequeno erra ("SAP Business" no
+        # lugar de "WhatsApp Business"): nomes de apps, da empresa, de clientes.
+        # Vai como contexto inicial do Whisper, que passa a preferir essas grafias.
+        self.initial_prompt = (cfg.get("initial_prompt") or "").strip() or None
         self._model = None
         self._load_lock = asyncio.Lock()
         # Set by each recognition: the language Whisper heard, as a code like
@@ -146,6 +150,7 @@ class WhisperSTT:
                                   # fills with an invented sentence
             condition_on_previous_text=False,   # stops one bad transcript from
                                                 # steering every one after it
+            initial_prompt=self.initial_prompt,
         )
         # The work happens HERE — `segments` is a generator.
         text = " ".join(s.text.strip() for s in segments).strip()

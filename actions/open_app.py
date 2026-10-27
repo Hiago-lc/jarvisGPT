@@ -125,6 +125,17 @@ def _launch_windows(app_name: str) -> bool:
         except Exception as exc:
             print(f"[open_app] startfile failed for {app_name!r}: {exc}")
 
+    # Apps da Store e atalhos do menu Iniciar, pelo AppID: mais certeiro que
+    # digitar na busca do Windows.
+    try:
+        from core.app_reopen import escolher_start_app, start_apps
+        app = escolher_start_app(app_name, start_apps())
+        if app is not None:
+            subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app["AppID"]])
+            return True
+    except Exception as exc:
+        print(f"[open_app] start menu app failed for {app_name!r}: {exc}")
+
     return _desktop_search(app_name)
 
 
@@ -361,6 +372,11 @@ def open_app(parameters=None, response=None, player=None,
                 return outcome.done("open_app", app=spoken, verified=True, focused=True, method="registered_protocol")
             if _STOP.is_set():
                 return outcome.unverified("open_app", "Abertura interrompida; resultado não confirmado.")
+            # Apps da Store (WhatsApp, WhatsApp Business): o Windows abre pelo
+            # menu Iniciar e mostra a janela, sem precisar ver a tela.
+            from core.app_reopen import open_start_app
+            if open_start_app(spoken, cancelled=_STOP.is_set):
+                return outcome.done("open_app", app=spoken, verified=True, focused=True, method="start_menu_app")
             from core.window_restore import restore_visual
             return restore_visual(spoken, player=player)
 

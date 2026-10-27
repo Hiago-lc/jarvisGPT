@@ -268,22 +268,87 @@ def configure(perfil: str = "local", modelo: str = "") -> None:
 
     data = montar_config(cm.load_api_keys(), perfil, modelo)
     cm.ensure_config_dir()
-    cm.CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Gravação atômica: outro processo lendo ao mesmo tempo nunca vê o arquivo
+    # pela metade. Foi isso que, com a web e a janela subindo juntas, fez a
+    # janela achar a configuração vazia e cair no Gemini Live.
+    from core.atomic_storage import write_json
+    write_json(cm.CONFIG_FILE, data)
 
     # Nenhuma chamada ao Gemini, nem como reserva.
     os.environ["JARVIS_NO_GEMINI"] = "1"
+    os.environ["JARVIS_PROVIDER_MODE"] = "pipeline"
 
-    if chave:
-        original = cm.load_api_keys
+    original = cm.load_api_keys
+    vocabulario = vocabulario_whisper()
 
-        def runtime_config():
-            current = original()
-            block = current.setdefault("providers", {}).setdefault("creds", {})
-            for pid in destinos:
-                block.setdefault(pid, {})["api_key"] = chave
-            return current
+    def runtime_config():
+        current = original()
+        block = current.setdefault("providers", {})
+        block["mode"] = "pipeline"           # mesmo se o arquivo for lido vazio
+        creds = block.setdefault("creds", {})
+        for pid in destinos:
+            creds.setdefault(pid, {})["api_key"] = chave
+        if vocabulario:
+            creds.setdefault("whisper", {})["initial_prompt"] = vocabulario
+        return current
 
-        cm.load_api_keys = runtime_config
+    cm.load_api_keys = runtime_config
+
+
+# Grafias que o Whisper pequeno erra no dia a dia. Os nomes dos clientes da
+# central entram na hora (só em memória, nunca no arquivo de configuração).
+VOCABULARIO = ("Jarvis, HAIZEN, WhatsApp, WhatsApp Business, Google Agenda, Google Chrome, "
+               "Spotify, YouTube, Instagram, Canva, Photoshop, Illustrator, Premiere, "
+               "Visual Studio Code, Explorador de Arquivos, Downloads, Documentos, "
+               "receita, despesa, faturamento, tarefa, proposta, e-commerce, tráfego pago")
+
+
+def vocabulario_whisper(limite: int = 60) -> str:
+    nomes = []
+    try:
+        from haizen import store
+        nomes = [c["nome"] for c in store.listar_clientes() if c.get("status", "Ativo") == "Ativo"][:limite]
+    except Exception:  # noqa: BLE001 - sem central, só o vocabulário fixo
+        pass
+    return VOCABULARIO + (". Clientes: " + ", ".join(nomes) if nomes else "") + "."
+
+
+# ── iniciar com o Windows (só a janela) ─────────────────────────────────────
+NOME_ATALHO = "Jarvis HAIZEN.cmd"
+
+
+def _pasta_inicializar() -> Path:
+    return (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu"
+            / "Programs" / "Startup")
+
+
+def iniciar_com_windows(perfil: str, ligar: bool) -> str:
+    if sys.platform != "win32":
+        return "Início automático só está pronto para o Windows."
+    atalho = _pasta_inicializar() / NOME_ATALHO
+    if not ligar:
+        atalho.unlink(missing_ok=True)
+        return "O Jarvis não inicia mais sozinho com o Windows."
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    exe = pythonw if pythonw.is_file() else Path(sys.executable)
+    raiz = Path(__file__).resolve().parent
+    atalho.write_text("\r\n".join([
+        "@echo off", f'cd /d "{raiz}"',
+        f'start "" "{exe}" "{raiz / "start_local.py"}" --perfil {perfil} --aguardar', ""]),
+        encoding="utf-8")
+    return ("Pronto: ao ligar o PC, abre o Jarvis (a janela com voz), com a central da HAIZEN "
+            f"dentro dele. ({atalho})")
+
+
+def ligar_central() -> None:
+    """A central (painel, financeiro, celular) roda dentro da janela, sem
+    outro processo. Se outra cópia já ocupa a porta, usa aquela."""
+    try:
+        from haizen.central import servidor
+        url = servidor.iniciar(abrir_navegador=False)
+        print(f"[HAIZEN] Central em {url}")
+    except Exception as e:  # noqa: BLE001 - sem central, o Jarvis funciona igual
+        print(f"[HAIZEN] Central não iniciou: {e}")
 
 
 def _args(argv=None):
@@ -294,6 +359,11 @@ def _args(argv=None):
                    help="só confere a instalação e sai")
     p.add_argument("--aguardar", action="store_true",
                    help="espera o Ollama subir (usado ao iniciar com o Windows)")
+    p.add_argument("--iniciar-com-windows", action="store_true",
+                   help="abre esta janela sozinha quando o PC liga")
+    p.add_argument("--nao-iniciar-com-windows", action="store_true")
+    p.add_argument("--sem-central", action="store_true",
+                   help="não abre a central da HAIZEN junto")
     return p.parse_args(argv)
 
 
@@ -303,6 +373,9 @@ if __name__ == "__main__":
         _log.parent.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = open(_log, "a", encoding="utf-8", buffering=1)
     a = _args()
+    if a.iniciar_com_windows or a.nao_iniciar_com_windows:
+        print(iniciar_com_windows(a.perfil, a.iniciar_com_windows))
+        sys.exit(0)
     modelo = a.modelo or modelo_padrao(a.perfil)
     problemas = verificar_aguardando(a.perfil, modelo, 180 if a.aguardar else 0)
     for p in problemas:
@@ -317,5 +390,7 @@ if __name__ == "__main__":
         contexto = int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))
         modelo = preparar_ollama(modelo, contexto)
     configure(a.perfil, modelo)
+    if not a.sem_central:
+        ligar_central()
     from main import main
     main()
