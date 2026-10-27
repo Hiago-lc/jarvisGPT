@@ -239,5 +239,24 @@ class MicrofoneDiagnosticoTests(unittest.TestCase):
             self.assertIn(trecho, fonte)
 
 
+class PromptLocalTests(unittest.TestCase):
+    def test_local_prompt_is_short_and_portuguese(self):
+        raiz = Path(__file__).resolve().parent.parent
+        local = (raiz / "core/prompt_local.txt").read_text(encoding="utf-8")
+        gemini = (raiz / "core/prompt.txt").read_text(encoding="utf-8")
+        self.assertLess(len(local), len(gemini) / 4)
+        self.assertIn("português do Brasil", local)
+        self.assertIn("Nunca diga \"sir\"", local)
+        for marcador in ("{assistant_name}", "{limits}"):
+            self.assertIn(marcador, local)
+        fonte = (raiz / "main.py").read_text(encoding="utf-8")
+        self.assertIn('PROMPT_LOCAL_PATH = BASE_DIR / "core" / "prompt_local.txt"', fonte)
+        self.assertIn("mem_str = mem_str[:1500]", fonte)
+
+    def test_stale_mute_reason_is_dropped(self):
+        fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+        self.assertIn('if diag["motivo"] and agora - diag["quando"] > 2:', fonte)
+
+
 if __name__ == "__main__":
     unittest.main()

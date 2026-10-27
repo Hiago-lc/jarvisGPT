@@ -100,6 +100,10 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+# O modelo local lê o pedido inteiro antes da primeira palavra: o prompt do
+# Gemini (16 mil caracteres, em inglês) custava mais de um minuto numa placa
+# modesta e puxava respostas em inglês. Este é curto e em português.
+PROMPT_LOCAL_PATH = BASE_DIR / "core" / "prompt_local.txt"
 # The conversation's model. A NAME, not a decision: the ladder lives in
 # core/gemini.py and this is only whichever rung is currently in use, kept here
 # as a module attribute because plugins read it (chat_takeover asks main for it
@@ -1137,6 +1141,14 @@ class JarvisLive:
         except Exception:
             self.ui.write_log("SYS: O histórico recente não pôde ser carregado.")
         sys_prompt = _load_system_prompt()
+        _local = self._engine_caps is not None
+        if _local:
+            try:
+                sys_prompt = PROMPT_LOCAL_PATH.read_text(encoding="utf-8")
+            except Exception:
+                pass
+            # A memória inteira também pesa: no modelo local vai só o começo.
+            mem_str = mem_str[:1500]
 
         now      = datetime.now()
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
@@ -1145,6 +1157,10 @@ class JarvisLive:
             f"Right now it is: {time_str}\n"
             f"Use this to calculate exact times for reminders.\n\n"
         )
+        if _local:
+            _dias = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+            time_ctx = (f"Agora: {_dias[now.weekday()]}, {now.strftime('%d/%m/%Y %H:%M')} "
+                        "(use para calcular horários de lembretes).\n\n")
 
         # Identity injection — overrides any hardcoded name in prompt.txt
         # Address form is a property of the language being spoken, so it is
@@ -1164,6 +1180,8 @@ class JarvisLive:
             f"Always refer to yourself as {self._asst_name}.\n"
             f"{_addr}\n\n"
         )
+        if _local:
+            identity_ctx = (f"O usuário se chama {_user_name}.\n\n" if _user_name else "")
 
         # Everything the model is told about *itself* is derived here, not
         # written into prompt.txt: the name comes from config, the platform from
@@ -1527,12 +1545,12 @@ class JarvisLive:
         # Agora, quando alguém fala alto e o áudio é barrado, o motivo vai para
         # o registro (no máximo a cada 30 s); e um microfone que não capta nada
         # nos primeiros 20 s também é avisado.
-        diag = {"motivo": "", "pico": 0.0, "desde": time.monotonic(),
+        diag = {"motivo": "", "quando": 0.0, "pico": 0.0, "desde": time.monotonic(),
                 "avisado": 0.0, "mudo_avisado": False}
 
         def _barrado(motivo, nivel):
             if nivel >= 0.2:
-                diag["motivo"] = motivo
+                diag["motivo"], diag["quando"] = motivo, time.monotonic()
 
         def callback(indata, frames, time_info, status):
             nivel = _pcm_level(indata)
@@ -1658,6 +1676,8 @@ class JarvisLive:
                 while True:
                     await asyncio.sleep(0.1)
                     agora = time.monotonic()
+                    if diag["motivo"] and agora - diag["quando"] > 2:
+                        diag["motivo"] = ""        # já foi resolvido (ex.: ligou o microfone)
                     if diag["motivo"] and agora - diag["avisado"] > 30:
                         self.ui.write_log(f"SYS: ouvi você, mas não estou escutando: {diag['motivo']}.")
                         diag["avisado"], diag["motivo"] = agora, ""
