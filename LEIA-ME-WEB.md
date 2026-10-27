@@ -24,6 +24,14 @@ Para o perfil `hibrido` iniciar sozinho, a chave do Groq precisa estar salva no 
 py jarvis_web.py --perfil hibrido --iniciar-com-windows
 ```
 
+Para abrir também a janela de voz (o Jarvis que conversa e mexe no PC):
+
+```powershell
+py jarvis_web.py --perfil local --iniciar-com-windows --com-janela
+```
+
+Ao ligar o PC, os dois esperam o Ollama subir (até 3 minutos). A janela de voz abre uns 20 segundos depois da central. Com os dois abertos, o uso de memória aumenta, porque cada um carrega o próprio Whisper e o Piper. Sem console, a janela registra o que acontece em `%LOCALAPPDATA%\JarvisGPT\jarvis_janela.log`.
+
 Para desfazer: `py jarvis_web.py --nao-iniciar-com-windows`. Sem janela, as mensagens do Jarvis vão para `%LOCALAPPDATA%\JarvisGPT\jarvis_web.log`.
 
 ## No celular (Tailscale)

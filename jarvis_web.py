@@ -90,7 +90,7 @@ def _pasta_inicializar() -> Path:
             / "Programs" / "Startup")
 
 
-def iniciar_com_windows(perfil: str, ligar: bool) -> str:
+def iniciar_com_windows(perfil: str, ligar: bool, com_janela: bool = False) -> str:
     if sys.platform != "win32":
         return "Início automático só está pronto para o Windows."
     atalho = _pasta_inicializar() / NOME_ATALHO
@@ -99,12 +99,15 @@ def iniciar_com_windows(perfil: str, ligar: bool) -> str:
         return "O Jarvis não inicia mais sozinho com o Windows."
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.is_file() else Path(sys.executable)
-    atalho.write_text(
-        "@echo off\r\n"
-        f'cd /d "{RAIZ}"\r\n'
-        f'start "" "{exe}" "{RAIZ / "jarvis_web.py"}" --perfil {perfil} --sem-navegador\r\n',
-        encoding="utf-8")
-    return f"Pronto: o Jarvis vai iniciar sozinho quando você ligar o PC ({atalho})."
+    linhas = ["@echo off", f'cd /d "{RAIZ}"',
+              f'start "" "{exe}" "{RAIZ / "jarvis_web.py"}" --perfil {perfil} --sem-navegador']
+    if com_janela:
+        # A janela de voz sobe um pouco depois, para não disputar o Ollama.
+        linhas += ["timeout /t 20 /nobreak >nul",
+                   f'start "" "{exe}" "{RAIZ / "start_local.py"}" --perfil {perfil} --aguardar']
+    atalho.write_text("\r\n".join(linhas) + "\r\n", encoding="utf-8")
+    extra = " A janela de voz abre junto." if com_janela else ""
+    return f"Pronto: o Jarvis vai iniciar sozinho quando você ligar o PC.{extra} ({atalho})"
 
 
 # ── principal ───────────────────────────────────────────────────────────────
@@ -116,14 +119,19 @@ def main(argv=None) -> int:
     ap.add_argument("--tailscale", action="store_true", help="liberar o acesso pelo celular")
     ap.add_argument("--iniciar-com-windows", action="store_true")
     ap.add_argument("--nao-iniciar-com-windows", action="store_true")
+    ap.add_argument("--com-janela", action="store_true",
+                    help="com --iniciar-com-windows: abre também a janela de voz")
     a = ap.parse_args(argv)
 
     if a.iniciar_com_windows or a.nao_iniciar_com_windows:
-        print(iniciar_com_windows(a.perfil, a.iniciar_com_windows))
+        print(iniciar_com_windows(a.perfil, a.iniciar_com_windows, a.com_janela))
         return 0
 
     modelo = a.modelo or start_local.modelo_padrao(a.perfil)
-    problemas = [p for p in start_local.verificar(a.perfil, modelo) if "Piper" not in p]
+    # Ao ligar o PC (--sem-navegador), o Ollama pode ainda estar subindo.
+    espera = 180 if a.sem_navegador else 0
+    problemas = [p for p in start_local.verificar_aguardando(a.perfil, modelo, espera)
+                 if "Piper" not in p]
     for p in problemas:
         print("  •", p)
     if problemas:

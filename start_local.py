@@ -28,11 +28,13 @@ Variáveis opcionais:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import copy
 import json
 import os
 import platform
 import sys
+import time
 from importlib.util import find_spec
 
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -86,6 +88,18 @@ def _ollama_models(base: str = OLLAMA_URL) -> list[str] | None:
         return [m.get("name", "") for m in r.json().get("models", [])]
     except Exception:
         return None
+
+
+def verificar_aguardando(perfil: str, modelo: str, segundos: float = 0,
+                         passo: float = 5) -> list[str]:
+    """Como verificar(), mas espera o Ollama subir (logo depois de ligar o PC
+    ele ainda não está pronto)."""
+    limite = time.monotonic() + segundos
+    while True:
+        problemas = verificar(perfil, modelo)
+        if not any("Ollama" in p for p in problemas) or time.monotonic() >= limite:
+            return problemas
+        time.sleep(passo)
 
 
 def verificar(perfil: str, modelo: str) -> list[str]:
@@ -278,13 +292,19 @@ def _args(argv=None):
     p.add_argument("--modelo", default="", help="sobrescreve o modelo do perfil")
     p.add_argument("--verificar", action="store_true",
                    help="só confere a instalação e sai")
+    p.add_argument("--aguardar", action="store_true",
+                   help="espera o Ollama subir (usado ao iniciar com o Windows)")
     return p.parse_args(argv)
 
 
 if __name__ == "__main__":
+    if sys.stdout is None or sys.stderr is None:   # pythonw: sem janela de console
+        _log = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "JarvisGPT" / "jarvis_janela.log"
+        _log.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(_log, "a", encoding="utf-8", buffering=1)
     a = _args()
     modelo = a.modelo or modelo_padrao(a.perfil)
-    problemas = verificar(a.perfil, modelo)
+    problemas = verificar_aguardando(a.perfil, modelo, 180 if a.aguardar else 0)
     for p in problemas:
         print("  •", p)
     if a.verificar:

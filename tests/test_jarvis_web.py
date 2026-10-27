@@ -337,5 +337,39 @@ class TailscaleTests(unittest.TestCase):
             self.assertIn("Ative o Serve", jarvis_web.ligar_tailscale())
 
 
+class InicioComWindowsTests(unittest.TestCase):
+    def _gerar(self, **kw):
+        import jarvis_web
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(jarvis_web.sys, "platform", "win32"), \
+             patch.object(jarvis_web, "_pasta_inicializar", return_value=Path(d)):
+            msg = jarvis_web.iniciar_com_windows("local", True, **kw)
+            return msg, (Path(d) / jarvis_web.NOME_ATALHO).read_text(encoding="utf-8")
+
+    def test_web_only_by_default(self):
+        _, cmd = self._gerar()
+        self.assertIn("jarvis_web.py", cmd)
+        self.assertNotIn("start_local.py", cmd)
+
+    def test_voice_window_too(self):
+        msg, cmd = self._gerar(com_janela=True)
+        self.assertIn('start_local.py" --perfil local --aguardar', cmd)
+        self.assertLess(cmd.index("jarvis_web.py"), cmd.index("start_local.py"))
+        self.assertIn("janela de voz", msg)
+
+    def test_waits_for_ollama_to_come_up(self):
+        import start_local
+        respostas = [["Ollama não está rodando"], ["Ollama não está rodando"], []]
+        with patch.object(start_local, "verificar", side_effect=lambda *_: respostas.pop(0)):
+            self.assertEqual(start_local.verificar_aguardando("local", "m", 60, passo=0), [])
+        self.assertEqual(respostas, [])
+
+    def test_gives_up_after_the_limit(self):
+        import start_local
+        with patch.object(start_local, "verificar", return_value=["Ollama não está rodando"]):
+            self.assertEqual(start_local.verificar_aguardando("local", "m", 0, passo=0),
+                             ["Ollama não está rodando"])
+
+
 if __name__ == "__main__":
     unittest.main()
