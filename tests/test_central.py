@@ -285,5 +285,77 @@ class VozTests(_Base):
         self.assertIn('R$ 1.000,00', resp)
 
 
+class TrocaDeVersaoTests(unittest.TestCase):
+    """Uma cópia antiga escondida na porta não pode prender o navegador no código velho."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.porta = 19000 + os.getpid() % 900
+        self.env = {**os.environ, "HAIZEN_DB": str(Path(self.tmp.name) / "h.db"),
+                    "HAIZEN_CENTRAL_PORTA": str(self.porta)}
+
+    def tearDown(self):
+        from haizen.central import servidor
+        servidor.parar()
+        self.tmp.cleanup()
+
+    def _antiga(self):
+        import subprocess
+        import sys
+        import time
+        codigo = ("from haizen.central import servidor; import time; "
+                  "servidor.iniciar(abrir_navegador=False); time.sleep(60)")
+        proc = subprocess.Popen([sys.executable, "-c", codigo], env=self.env,
+                                cwd=str(Path(__file__).resolve().parent.parent))
+        for _ in range(50):
+            try:
+                c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=1)
+                c.request("GET", "/")
+                c.close()
+                return proc
+            except OSError:
+                time.sleep(0.1)
+        proc.kill()
+        self.fail("a cópia antiga não subiu")
+
+    def test_new_copy_takes_over_the_port(self):
+        from haizen.central import servidor
+        antiga = self._antiga()
+        try:
+            with patch.object(servidor, "PORTA", self.porta):
+                servidor.iniciar(abrir_navegador=False, assumir=True, espera=15)
+                antiga.wait(timeout=10)                 # a antiga fechou sozinha
+                c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=5)
+                c.request("GET", "/api/sistema/versao", headers={"X-Central": "1"})
+                self.assertEqual(json.loads(c.getresponse().read())["pid"], os.getpid())
+        finally:
+            if antiga.poll() is None:
+                antiga.kill()
+
+    def test_quit_only_from_this_pc(self):
+        from haizen.central import servidor
+        with patch.object(servidor, "PORTA", self.porta), \
+             patch.object(servidor.os, "_exit") as sair:
+            servidor.iniciar(abrir_navegador=False)
+            c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=5)
+            c.request("POST", "/api/sistema/sair", body=b"{}",
+                      headers={"X-Central": "1", "Host": "meu-pc.tail123.ts.net"})
+            self.assertEqual(c.getresponse().status, 400)
+            sair.assert_not_called()
+
+    def test_version_check(self):
+        from haizen.central import servidor
+        with patch.object(servidor, "VERSAO_INICIAL", servidor.versao_no_disco()):
+            self.assertFalse(servidor.desatualizado())
+        with patch.object(servidor, "VERSAO_INICIAL", servidor.versao_no_disco() - 3600):
+            self.assertTrue(servidor.desatualizado())
+
+    def test_restart_needs_the_launcher(self):
+        from haizen.central import servidor
+        with patch.object(servidor, "COMANDO_REINICIO", None):
+            with self.assertRaises(ValueError):
+                servidor.reiniciar()
+
+
 if __name__ == '__main__':
     unittest.main()

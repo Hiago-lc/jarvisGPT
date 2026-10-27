@@ -1011,6 +1011,36 @@ ROTAS.jarvis = async () => {
   }, 4000);
 };
 
+// ── versão nova no disco: avisar e reiniciar ────────────────────────────────
+async function conferirVersao() {
+  try {
+    const v = await api("GET", "sistema/versao");
+    $("#versao").hidden = !(v.desatualizado && v.pode_reiniciar);
+    conferirVersao.pid = conferirVersao.pid || v.pid;
+  } catch (_) { /* central reiniciando ou fora do ar */ }
+}
+
+$("#versao-reiniciar").addEventListener("click", async () => {
+  const botao = $("#versao-reiniciar");
+  botao.disabled = true;
+  botao.textContent = "Reiniciando…";
+  try { await api("POST", "sistema/reiniciar"); } catch (e) { avisar(e.message); botao.disabled = false; botao.textContent = "Reiniciar agora"; return; }
+  const antigo = conferirVersao.pid;
+  for (let i = 0; i < 120; i++) {               // até 4 minutos (o modelo local demora a subir)
+    await new Promise((ok) => setTimeout(ok, 2000));
+    try {
+      const v = await api("GET", "sistema/versao");
+      if (v.pid !== antigo) { location.reload(); return; }
+    } catch (_) { /* ainda subindo */ }
+  }
+  botao.disabled = false;
+  botao.textContent = "Reiniciar agora";
+  avisar("O Jarvis não voltou sozinho. Abra de novo pelo atalho ou com py jarvis_web.py.");
+});
+
+conferirVersao();
+setInterval(conferirVersao, 60000);
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => { /* sem app instalável, a página funciona igual */ });
 }

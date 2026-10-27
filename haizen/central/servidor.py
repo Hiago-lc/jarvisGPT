@@ -35,6 +35,57 @@ _TIPOS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8"
           ".webmanifest": "application/manifest+json"}
 
 
+# ── versão do código que está rodando ───────────────────────────────────────
+# Uma cópia do Jarvis que iniciou com o Windows fica rodando escondida com o
+# código daquele momento. Comparando as datas dos arquivos, a página avisa que
+# há uma versão nova no disco e oferece reiniciar.
+RAIZ = Path(__file__).resolve().parents[2]
+_PASTAS_CODIGO = ("haizen", "actions", "plugins", "core", "providers", "memory")
+
+
+def versao_no_disco() -> float:
+    ultima = 0.0
+    for pasta in _PASTAS_CODIGO:
+        for arq in (RAIZ / pasta).rglob("*"):
+            if arq.suffix in (".py", ".js", ".css", ".html") and "__pycache__" not in arq.parts:
+                try:
+                    ultima = max(ultima, arq.stat().st_mtime)
+                except OSError:
+                    pass
+    for arq in ("jarvis_web.py", "start_local.py"):
+        try:
+            ultima = max(ultima, (RAIZ / arq).stat().st_mtime)
+        except OSError:
+            pass
+    return ultima
+
+
+VERSAO_INICIAL = versao_no_disco()
+# Definido por jarvis_web.py: como iniciar de novo. Sem ele (central aberta
+# pela janela antiga), a página não oferece reiniciar.
+COMANDO_REINICIO: list[str] | None = None
+
+
+def desatualizado() -> bool:
+    return versao_no_disco() > VERSAO_INICIAL + 1
+
+
+def reiniciar() -> None:
+    """Abre uma cópia nova (que espera a porta liberar) e encerra esta."""
+    import subprocess
+    import time
+    if not COMANDO_REINICIO:
+        raise ValueError("Esta central não foi aberta pelo jarvis_web.py; feche e abra de novo.")
+
+    def _trocar():
+        time.sleep(0.5)                       # deixa a resposta chegar à página
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.executable.lower().endswith("pythonw.exe") else 0
+        subprocess.Popen(COMANDO_REINICIO, cwd=str(RAIZ), creationflags=flags)
+        parar()
+        os._exit(0)
+    threading.Thread(target=_trocar, daemon=True).start()
+
+
 def _trabalho(t: dict, com_entrega: bool = False) -> dict:
     out = dict(t)
     cli = store.cliente_por_id(t["cliente_id"])
@@ -153,6 +204,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._trabalhos(metodo, partes[1:], q)
         if partes and partes[0] == "jarvis":
             return self._jarvis(metodo, partes[1:], q)
+        if partes and partes[0] == "sistema":
+            return self._sistema(metodo, partes[1:])
 
         if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "ficha":
             return dados.ficha_cliente(int(partes[1]))
@@ -207,6 +260,23 @@ class _Handler(BaseHTTPRequestHandler):
                 novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
                 worker.iniciar()
                 return _trabalho(novo)
+        return _NAO_ACHOU
+
+    def _sistema(self, metodo, partes):
+        rota = partes[0] if partes else ""
+        if rota == "versao" and metodo == "GET":
+            return {"desatualizado": desatualizado(), "pode_reiniciar": bool(COMANDO_REINICIO),
+                    "pid": os.getpid()}
+        if rota == "reiniciar" and metodo == "POST":
+            reiniciar()
+            return {"ok": True}
+        if rota == "sair" and metodo == "POST":
+            # Só de dentro do PC: é assim que uma cópia nova pede a vez.
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            if host not in _HOSTS:
+                raise ValueError("só pelo próprio PC")
+            threading.Thread(target=lambda: (parar(), os._exit(0)), daemon=True).start()
+            return {"ok": True}
         return _NAO_ACHOU
 
     def _jarvis(self, metodo, partes, q):
@@ -269,16 +339,43 @@ def url() -> str:
     return f"http://127.0.0.1:{PORTA}/"
 
 
-def iniciar(abrir_navegador: bool = True) -> str:
-    """Sobe o servidor em segundo plano (uma vez) e devolve o endereço."""
+def _pedir_para_sair() -> bool:
+    """Pede à cópia que está na porta para fechar. True se ela aceitou."""
+    import http.client
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", PORTA, timeout=3)
+        c.request("POST", "/api/sistema/sair", body=b"{}",
+                  headers={"X-Central": "1", "Host": f"127.0.0.1:{PORTA}",
+                           "Content-Type": "application/json"})
+        return c.getresponse().status == 200
+    except OSError:
+        return False
+
+
+def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float = 20) -> str:
+    """Sobe o servidor em segundo plano (uma vez) e devolve o endereço.
+
+    assumir=True (jarvis_web.py): se uma cópia antiga ocupa a porta, pede para
+    ela fechar e assume o lugar, para o navegador nunca falar com código velho.
+    """
+    import time
     global _servidor
     with _lock:
-        if _servidor is None:
+        pediu = False
+        limite = time.monotonic() + (espera if assumir else 0)
+        while _servidor is None:
             try:
                 _servidor = ThreadingHTTPServer(("127.0.0.1", PORTA), _Handler)
             except OSError:
-                # Porta ocupada: provavelmente outra cópia da central já está aberta.
-                _servidor = None
+                if not assumir or time.monotonic() > limite:
+                    if assumir:
+                        raise RuntimeError(
+                            f"A porta {PORTA} continua ocupada por outro programa. Feche os "
+                            "processos python.exe/pythonw.exe no Gerenciador de Tarefas e tente de novo.")
+                    break        # janela antiga: usa a central que já está aberta
+                if not pediu:
+                    pediu = _pedir_para_sair()
+                time.sleep(0.5)
             else:
                 threading.Thread(target=_servidor.serve_forever, name="central-haizen",
                                  daemon=True).start()

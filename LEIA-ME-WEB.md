@@ -34,6 +34,12 @@ Ao ligar o PC, os dois esperam o Ollama subir (até 3 minutos). A janela de voz 
 
 Para desfazer: `py jarvis_web.py --nao-iniciar-com-windows`. Sem janela, as mensagens do Jarvis vão para `%LOCALAPPDATA%\JarvisGPT\jarvis_web.log`.
 
+## Atualizações
+
+Quando uma versão nova do Jarvis é instalada no PC, a central mostra uma faixa verde com o botão **Reiniciar agora**. Clique nela: o Jarvis fecha a cópia antiga, abre a nova e recarrega a página sozinho. O modelo local pode levar até um minuto para voltar.
+
+Se você abrir `py jarvis_web.py` com outra cópia rodando escondida (a que inicia com o Windows), a nova pede para a antiga fechar e assume o lugar.
+
 ## No celular (Tailscale)
 
 1. Instale o **Tailscale** no PC e no celular (https://tailscale.com/download) e entre com a **mesma conta** nos dois. É gratuito para uso pessoal.

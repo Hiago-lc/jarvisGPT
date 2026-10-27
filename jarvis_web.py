@@ -147,7 +147,15 @@ def main(argv=None) -> int:
     from haizen import store
 
     cerebro.ligar_confirmacoes()
-    url = servidor.iniciar(abrir_navegador=False)
+    servidor.COMANDO_REINICIO = [sys.executable, str(RAIZ / "jarvis_web.py"),
+                                 *[x for x in (argv if argv is not None else sys.argv[1:])
+                                   if x != "--tailscale"],
+                                 *([] if a.sem_navegador else ["--sem-navegador"])]
+    try:
+        url = servidor.iniciar(abrir_navegador=False, assumir=True)
+    except RuntimeError as e:
+        print(e)
+        return 1
     print(f"Jarvis web em {url}")
     if a.tailscale:
         print(ligar_tailscale())
