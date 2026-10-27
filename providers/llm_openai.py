@@ -400,7 +400,7 @@ class OpenAICompatLLM:
         return h
 
     def _body(self, messages: list[dict], tools: list[dict] | None,
-              stream: bool, temperature: float | None) -> dict:
+              stream: bool, temperature: float | None, max_tokens: int | None = None) -> dict:
         body: dict[str, Any] = {"model": self.model, "messages": messages,
                                 "stream": stream}
         if tools and self.caps["tools"]:
@@ -410,12 +410,15 @@ class OpenAICompatLLM:
             body["temperature"] = temperature
         if self.reasoning_effort:
             body["reasoning_effort"] = self.reasoning_effort
+        if max_tokens:
+            body["max_tokens"] = max_tokens
         return body
 
     # -- one-shot, synchronous: this is what core/gemini.py's ladder uses ----
     def complete(self, messages: list[dict], tools: list[dict] | None = None,
                  *, timeout: float | None = None,
-                 temperature: float | None = None) -> tuple[str, list[FunctionCall]]:
+                 temperature: float | None = None,
+                 max_tokens: int | None = None) -> tuple[str, list[FunctionCall]]:
         """Text and any tool calls. Raises on failure so the ladder can read the
         error, classify it and rest this rung exactly as it rests a Gemini one."""
         try:
@@ -423,7 +426,7 @@ class OpenAICompatLLM:
                                     trust_env=self._trust_env) as cl:
                 r = cl.post(f"{self.base}/chat/completions",
                             headers=self._headers(),
-                            json=self._body(messages, tools, False, temperature))
+                            json=self._body(messages, tools, False, temperature, max_tokens))
                 if r.status_code >= 400:
                     raise RuntimeError(f"{r.status_code} {_terse(r.text)}")
                 data = r.json()

@@ -349,3 +349,9 @@ body.embutido .trilho nav a[data-rota="jarvis"] { display: none; }
   .jarvis.nativo .jarvis-corpo { flex: none; }
   .jarvis.nativo .compositor { position: sticky; bottom: 10px; }
 }
+
+dialog.confirmar { border: 0; border-radius: 12px; padding: 20px 22px; max-width: 420px; box-shadow: 0 20px 50px rgba(11, 29, 35, .25); }
+dialog.confirmar p { margin: 0 0 16px; }
+dialog.confirmar .dialogo-acoes { display: flex; justify-content: flex-end; gap: 8px; }
+dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
+.pedido-curto { color: var(--cinza); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

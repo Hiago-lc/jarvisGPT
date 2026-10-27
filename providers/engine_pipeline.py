@@ -434,8 +434,34 @@ class PipelineEngine:
             warm = getattr(part, "warmup", None)
             if warm is not None:
                 jobs.append(warm(self._log))
+        jobs.append(self._prefill())
         if jobs:
             await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def _prefill(self) -> None:
+        """Have a LOCAL model read the instructions and tools once, now.
+
+        The first reply was slow because the model had to read the whole system
+        prompt and every tool declaration before its first word. Ollama keeps
+        what it read: a one-token request here leaves that work cached, and the
+        first real question only pays for what is new. Never on a cloud model,
+        where it would spend the user's quota for nothing.
+        """
+        base = str(getattr(self._llm, "base", "") or "")
+        complete = getattr(self._llm, "complete", None)
+        if not complete or not self._system or not ("127.0.0.1" in base or "localhost" in base):
+            return
+        t0 = time.monotonic()
+        try:
+            await asyncio.to_thread(
+                complete, [{"role": "system", "content": self._system},
+                           {"role": "user", "content": "oi"}],
+                self._tools, timeout=300, max_tokens=1)
+            self._log(f"SYS: modelo pronto para a primeira pergunta ({time.monotonic() - t0:.0f}s).")
+        except TypeError:
+            pass        # um provedor sem max_tokens: sem aquecimento, como antes
+        except Exception as e:  # noqa: BLE001
+            print(f"[Pipeline] aquecimento do modelo falhou: {type(e).__name__}: {e}")
 
     # ── interruption ─────────────────────────────────────────────────────────
     def interrupt(self) -> None:

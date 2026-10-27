@@ -543,5 +543,78 @@ class GeminiSobrecargaTests(unittest.TestCase):
         self.assertEqual(cfg["fallback_models"], start_local.GEMINI_RESERVAS)
 
 
+class ExcluirTrabalhoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.entregas = Path(self.tmp.name) / "entregas"
+        self.env = patch.dict(os.environ, {"HAIZEN_DB": str(Path(self.tmp.name) / "h.db"),
+                                           "HAIZEN_ENTREGAS_DIR": str(self.entregas)})
+        self.env.start()
+        from haizen import store
+        self.store = store
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def test_delete_removes_job_and_its_delivery_file(self):
+        t = self.store.criar_trabalho("comercial", "proposta", "local")
+        arq = self.store.gravar_entrega(t["id"], "texto da proposta")
+        self.assertTrue(arq.is_file())
+        r = self.store.apagar_trabalho(t["id"])
+        self.assertIsNone(self.store.trabalho(t["id"]))
+        self.assertFalse(arq.exists())
+        self.assertEqual(r["arquivo_apagado"], str(arq))
+
+    def test_running_job_is_not_deleted(self):
+        t = self.store.criar_trabalho("comercial", "proposta", "local")
+        self.store.atualizar(t["id"], status="executando")
+        with self.assertRaises(ValueError):
+            self.store.apagar_trabalho(t["id"])
+        self.assertIsNotNone(self.store.trabalho(t["id"]))
+
+    def test_file_outside_the_deliveries_folder_is_kept(self):
+        fora = Path(self.tmp.name) / "importante.md"
+        fora.write_text("não apagar")
+        t = self.store.criar_trabalho("comercial", "proposta", "local")
+        self.store.atualizar(t["id"], arquivo=str(fora), status="aprovado")
+        self.store.apagar_trabalho(t["id"])
+        self.assertTrue(fora.exists())
+
+    def test_page_has_the_delete_button(self):
+        js = (Path(__file__).resolve().parent.parent / "haizen/central/static/app.js").read_text(encoding="utf-8")
+        self.assertIn('api("DELETE", `trabalhos/${t.id}`)', js)
+
+
+class AquecimentoTests(unittest.TestCase):
+    def _motor(self, base):
+        import asyncio
+        from providers.engine_pipeline import PipelineEngine
+        chamadas = []
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai"}
+
+            def __init__(self):
+                self.base = base
+
+            def complete(self, msgs, tools, **kw):
+                chamadas.append((msgs, kw))
+                return "", []
+        motor = PipelineEngine(LLM(), None, None, log=lambda m: None)
+        motor._system = "instruções"
+        asyncio.run(motor._prefill())
+        return chamadas
+
+    def test_local_model_reads_the_prompt_at_startup(self):
+        chamadas = self._motor("http://127.0.0.1:11434/v1")
+        self.assertEqual(len(chamadas), 1)
+        self.assertEqual(chamadas[0][0][0], {"role": "system", "content": "instruções"})
+        self.assertEqual(chamadas[0][1]["max_tokens"], 1)
+
+    def test_cloud_model_is_not_charged_for_it(self):
+        self.assertEqual(self._motor("https://generativelanguage.googleapis.com/v1beta/openai"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

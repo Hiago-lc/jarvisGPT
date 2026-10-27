@@ -108,6 +108,17 @@ function dialogo({ titulo, corpo, acoes, aoAbrir }) {
 }
 $("[data-fechar]").addEventListener("click", () => $("#dialogo").close());
 
+// Confirmação que não fecha o diálogo de quem pediu: um segundo <dialog>.
+const confirmarExclusao = (texto) => new Promise((ok) => {
+  const d = document.createElement("dialog");
+  d.className = "confirmar";
+  d.innerHTML = `<p>${esc(texto)}</p><div class="dialogo-acoes"><button class="botao" value="nao">Cancelar</button><button class="botao perigo" value="sim">Excluir</button></div>`;
+  document.body.appendChild(d);
+  d.addEventListener("click", (e) => { const v = e.target.closest("button")?.value; if (v) { d.close(); ok(v === "sim"); } });
+  d.addEventListener("close", () => { d.remove(); ok(false); });
+  d.showModal();
+});
+
 const confirmar = (texto) => new Promise((ok) => {
   dialogo({
     titulo: "Confirmar", corpo: `<p>${esc(texto)}</p>`,
@@ -665,6 +676,10 @@ const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardand
 async function abrirTrabalho(id, recarregar) {
   const t = await api("GET", `trabalhos/${id}`);
   const pode = t.status === "aguardando_aprovacao";
+  const excluir = t.status === "executando" ? [] : [{ texto: "Excluir", classe: "perigo esquerda", acao: async () => {
+    if (!(await confirmarExclusao(`Excluir o trabalho ${t.id}${t.arquivo ? " e o arquivo da entrega" : ""}? Não dá para desfazer.`))) return false;
+    await api("DELETE", `trabalhos/${t.id}`); avisar("Trabalho excluído"); recarregar();
+  } }];
   dialogo({
     titulo: `Trabalho ${t.id}, ${t.agente}`,
     corpo: `<p class="sub" style="margin-top:0">${esc(t.cliente_nome || "Sem cliente")}, <span class="status-${t.status}">${esc(STATUS_TRAB[t.status] || t.status)}</span>, feito por ${t.executor === "claude" ? "Claude Code" : "modelo local"}</p>
@@ -673,13 +688,14 @@ async function abrirTrabalho(id, recarregar) {
       ${t.entrega ? `<div class="entrega">${esc(t.entrega)}</div>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
       ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}</div>` : ""}`,
     acoes: pode ? [
-      { texto: "Pedir nova versão", classe: "esquerda", acao: async (v) => {
+      ...excluir,
+      { texto: "Pedir nova versão", acao: async (v) => {
         if (!v.ajuste.trim()) throw new Error("Escreva o que deve mudar na nova versão.");
         await api("POST", `trabalhos/${t.id}/refazer`, { ajuste: v.ajuste }); avisar("Nova versão na fila"); recarregar();
       } },
       { texto: "Fechar", acao: () => {} },
       { texto: "Aprovar", classe: "primario", acao: async () => { await api("POST", `trabalhos/${t.id}/aprovar`, {}); avisar("Entrega aprovada"); recarregar(); } },
-    ] : [{ texto: "Fechar", acao: () => {} }],
+    ] : [...excluir, { texto: "Fechar", acao: () => {} }],
   });
 }
 
@@ -687,6 +703,7 @@ ROTAS.agentes = async (param) => {
   const [lista, ags] = await Promise.all([api("GET", "trabalhos?limite=60"), api("GET", "agentes")]);
   const linhas = lista.map((t) => `<tr data-trab="${t.id}" style="cursor:pointer">
     <td>${t.id}</td><td>${esc(t.agente)}</td><td>${esc(t.cliente_nome || "—")}</td>
+    <td class="pedido-curto" title="${esc(t.pedido)}">${esc(t.pedido.length > 60 ? `${t.pedido.slice(0, 60)}…` : t.pedido)}</td>
     <td class="status-${t.status}">${esc(STATUS_TRAB[t.status] || t.status)}</td>
     <td>${new Date(t.criado_em * 1000).toLocaleDateString("pt-BR")}</td>
     <td>${t.executor === "claude" ? "Claude Code" : "Modelo local"}</td></tr>`).join("");
@@ -702,7 +719,7 @@ ROTAS.agentes = async (param) => {
         </form>
         <p class="sub" style="font-size:13px">${esc(ags.map((a) => `${a.titulo}: ${a.descricao}`).join(" "))}</p></section>
       <section class="bloco"><h2>Trabalhos</h2>
-        ${lista.length ? `<div class="tabela-caixa" style="border:0"><table><thead><tr><th>Nº</th><th>Agente</th><th>Cliente</th><th>Situação</th><th>Pedido em</th><th>Feito por</th></tr></thead><tbody>${linhas}</tbody></table></div>`
+        ${lista.length ? `<div class="tabela-caixa" style="border:0"><table><thead><tr><th>Nº</th><th>Agente</th><th>Cliente</th><th>Pedido</th><th>Situação</th><th>Pedido em</th><th>Feito por</th></tr></thead><tbody>${linhas}</tbody></table></div>`
           : '<p class="vazio">Nenhum trabalho ainda. Peça o primeiro ao lado ou pela voz ao Jarvis.</p>'}</section>
     </div>`;
   const recarregar = () => ROTAS.agentes();

@@ -330,6 +330,28 @@ def recuperar_interrompidos() -> int:
         return cur.rowcount
 
 
+def apagar_trabalho(tid: int) -> dict:
+    """Exclui o trabalho e o arquivo da entrega (só se estiver na pasta de
+    entregas: um caminho de fora nunca é apagado por aqui)."""
+    t = trabalho(tid)
+    if t is None:
+        raise KeyError("trabalho não encontrado")
+    if t["status"] == "executando":
+        raise ValueError("este trabalho está sendo feito agora; espere terminar para excluir")
+    with conexao() as con:
+        con.execute("DELETE FROM trabalhos WHERE id=?", (tid,))
+    apagado = ""
+    if t.get("arquivo"):
+        arq = Path(t["arquivo"])
+        try:
+            if arq.is_file() and pasta_entregas().resolve() in arq.resolve().parents:
+                arq.unlink()
+                apagado = str(arq)
+        except OSError:
+            pass
+    return {"id": tid, "arquivo_apagado": apagado}
+
+
 def gravar_entrega(tid: int, conteudo: str) -> Path:
     t = trabalho(tid)
     if t is None:

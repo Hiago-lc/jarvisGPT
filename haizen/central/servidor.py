@@ -256,6 +256,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if t is None:
                     raise KeyError("trabalho não encontrado")
                 return _trabalho(t, com_entrega=True)
+            if len(partes) == 1 and metodo == "DELETE":
+                return store.apagar_trabalho(tid)
             if len(partes) == 2 and partes[1] == "aprovar" and metodo == "POST":
                 return _trabalho(servicos.aprovar(tid, self._corpo().get("observacao", "")))
             if len(partes) == 2 and partes[1] == "refazer" and metodo == "POST":
