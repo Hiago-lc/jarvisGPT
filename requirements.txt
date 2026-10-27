@@ -141,3 +141,7 @@ pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
 
 # IANA timezone data on Windows (Google Calendar dates).
 tzdata>=2024.1
+
+# ── HAIZEN: o Claude cria e gerencia os agentes (MCP) ────────────────────────
+# Só o servidor MCP precisa dele; o Jarvis funciona sem. Veja LEIA-ME-HAIZEN.md.
+mcp>=1.2,<3
