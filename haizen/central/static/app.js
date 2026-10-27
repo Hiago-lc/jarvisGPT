@@ -707,4 +707,176 @@ ROTAS.agentes = async (param) => {
   }
 };
 
+// ── Jarvis (conversa por texto e voz) ─────────────────────────────────────
+const JARVIS_NOMES = {
+  haizen: "agentes da HAIZEN", central: "central", lembrar: "memória", buscar_memoria: "memória",
+  open_app: "abrir app", computer_settings: "ajustes do PC", web_search: "pesquisa na web",
+  reminder: "lembrete", weather_report: "clima", google_agenda: "agenda",
+};
+
+async function apiBin(caminho, corpo) {
+  const r = await fetch(`/api/${caminho}`, { method: "POST", headers: { "X-Central": "1", "Content-Type": "application/octet-stream" }, body: corpo });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.erro || `Erro ${r.status}`);
+  return d;
+}
+
+async function tocar(texto) {
+  const r = await fetch("/api/jarvis/falar", { method: "POST", headers: { "X-Central": "1", "Content-Type": "application/json" }, body: JSON.stringify({ texto }) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.erro || "A voz não respondeu"); }
+  const url = URL.createObjectURL(await r.blob());
+  const som = new Audio(url);
+  som.addEventListener("ended", () => URL.revokeObjectURL(url));
+  JARVIS.som?.pause();
+  JARVIS.som = som;
+  await som.play();
+}
+
+const JARVIS = { gravando: false, blocos: [], ctx: null, fluxo: null, som: null, ocupado: false };
+
+async function comecarGravacao() {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Este navegador não libera o microfone. No celular, abra pelo endereço https do Tailscale.");
+  JARVIS.fluxo = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  JARVIS.ctx = new AudioContext({ sampleRate: 16000 });
+  await JARVIS.ctx.audioWorklet.addModule("/microfone.js");
+  const fonte = JARVIS.ctx.createMediaStreamSource(JARVIS.fluxo);
+  const no = new AudioWorkletNode(JARVIS.ctx, "microfone");
+  JARVIS.blocos = [];
+  no.port.onmessage = (e) => JARVIS.blocos.push(e.data);
+  fonte.connect(no);
+  JARVIS.gravando = true;
+}
+
+async function pararGravacao() {
+  JARVIS.gravando = false;
+  const taxa = JARVIS.ctx.sampleRate;
+  JARVIS.fluxo.getTracks().forEach((t) => t.stop());
+  await JARVIS.ctx.close();
+  const total = JARVIS.blocos.reduce((n, b) => n + b.length, 0);
+  const pcm = new Int16Array(total);
+  let i = 0;
+  for (const b of JARVIS.blocos) for (const v of b) pcm[i++] = Math.max(-1, Math.min(1, v)) * 0x7fff;
+  JARVIS.blocos = [];
+  if (total < taxa * 0.3) return "";
+  return (await apiBin(`jarvis/ouvir?taxa=${taxa}`, pcm.buffer)).texto;
+}
+
+function balao(m) {
+  if (m.papel === "usuario") return `<div class="msg eu"><p>${esc(m.texto)}</p></div>`;
+  const acoes = (m.acoes || []).map((a) => JARVIS_NOMES[a] || a);
+  return `<div class="msg ele"><p>${esc(m.texto)}</p>${acoes.length ? `<span class="msg-acoes">Usou: ${esc(acoes.join(", "))}</span>` : ""}</div>`;
+}
+
+function mostrarConfirmacao(c) {
+  const el = $("#confirmacao");
+  if (!el) return;
+  if (!c) { el.hidden = true; return; }
+  el.hidden = false;
+  $("#conf-titulo").textContent = c.titulo;
+}
+
+ROTAS.jarvis = async () => {
+  const [estado, hist] = await Promise.all([api("GET", "jarvis/estado"), api("GET", "jarvis/historico")]);
+  const voz = lembrar("central.voz", true);
+  main.innerHTML = `
+    <div class="jarvis">
+      <div class="topo"><div><h1>Jarvis</h1><p class="sub">${esc(estado.onde)}${estado.modelo ? `, ${esc(estado.modelo)}` : ""}</p></div>
+        <div class="jarvis-opcoes"><label class="voz-opcao"><input type="checkbox" id="voz"${voz ? " checked" : ""}${estado.voz ? "" : " disabled"}> Responder em voz</label>
+        <button class="botao" id="limpar">Limpar conversa</button></div></div>
+      <div class="confirmacao" id="confirmacao" role="alert" hidden>
+        <span><strong>Confirmar no PC:</strong> <span id="conf-titulo"></span></span>
+        <span class="confirmacao-acoes"><button class="botao" id="conf-nao">Cancelar</button><button class="botao primario" id="conf-sim">Confirmar</button></span>
+      </div>
+      <div class="conversa" id="conversa" aria-live="polite">${hist.length ? hist.map(balao).join("") : `
+        <div class="boas-vindas"><p>Pergunte sobre o faturamento, peça uma proposta a um agente ou mande o PC fazer algo.</p>
+          <div class="sugestoes">
+            <button class="sugestao">Como está o financeiro deste mês?</button>
+            <button class="sugestao">Quais tarefas estão atrasadas?</button>
+            <button class="sugestao">Quais agentes eu tenho?</button>
+          </div></div>`}</div>
+      <form class="compositor" id="compositor">
+        <button type="button" class="microfone" id="mic" aria-pressed="false" ${estado.ouvido ? "" : "disabled title=\"Ouvido não configurado\""}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" fill="currentColor"/></svg>
+          <span id="mic-rotulo">Falar</span></button>
+        <textarea id="entrada" rows="1" placeholder="Escreva para o Jarvis" aria-label="Mensagem para o Jarvis"></textarea>
+        <button class="botao primario" type="submit" id="enviar">Enviar</button>
+      </form>
+    </div>`;
+  const conversa = $("#conversa");
+  const rolar = () => { conversa.scrollTop = conversa.scrollHeight; };
+  rolar();
+  mostrarConfirmacao(estado.confirmacao);
+
+  const enviar = async (texto, porVoz = false) => {
+    texto = texto.trim();
+    if (!texto || JARVIS.ocupado) return;
+    JARVIS.ocupado = true;
+    $(".boas-vindas", conversa)?.remove();
+    conversa.insertAdjacentHTML("beforeend", balao({ papel: "usuario", texto }) + '<div class="msg ele pensando" id="pensando"><p>Pensando…</p></div>');
+    rolar();
+    $("#enviar").disabled = true;
+    try {
+      const r = await api("POST", "jarvis/mensagem", { texto, voz: porVoz });
+      $("#pensando")?.remove();
+      conversa.insertAdjacentHTML("beforeend", balao({ papel: "jarvis", texto: r.resposta, acoes: r.acoes }));
+      rolar();
+      mostrarConfirmacao(r.confirmacao);
+      if ($("#voz")?.checked) tocar(r.resposta).catch((e) => avisar(e.message));
+      atualizarSelo();
+    } catch (e) {
+      $("#pensando")?.remove();
+      conversa.insertAdjacentHTML("beforeend", `<div class="msg ele erro-msg"><p>${esc(e.message)}</p></div>`);
+      rolar();
+    } finally {
+      JARVIS.ocupado = false;
+      if ($("#enviar")) $("#enviar").disabled = false;
+    }
+  };
+
+  const entrada = $("#entrada");
+  entrada.addEventListener("input", () => { entrada.style.height = "auto"; entrada.style.height = `${Math.min(entrada.scrollHeight, 160)}px`; });
+  entrada.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#compositor").requestSubmit(); } });
+  $("#compositor").addEventListener("submit", (e) => { e.preventDefault(); const t = entrada.value; entrada.value = ""; entrada.style.height = "auto"; enviar(t); });
+  $$(".sugestao", conversa).forEach((b) => b.addEventListener("click", () => enviar(b.textContent)));
+  $("#voz").addEventListener("change", (e) => guardar("central.voz", e.target.checked));
+  $("#limpar").addEventListener("click", async () => { await api("DELETE", "jarvis/historico"); ROTAS.jarvis(); });
+  $("#conf-sim").addEventListener("click", async () => { await api("POST", "jarvis/confirmacao", { aceitar: true }); mostrarConfirmacao(null); avisar("Confirmado"); });
+  $("#conf-nao").addEventListener("click", async () => { await api("POST", "jarvis/confirmacao", { aceitar: false }); mostrarConfirmacao(null); avisar("Cancelado"); });
+
+  const mic = $("#mic");
+  mic.addEventListener("click", async () => {
+    try {
+      if (!JARVIS.gravando) {
+        JARVIS.som?.pause();
+        await comecarGravacao();
+        mic.setAttribute("aria-pressed", "true");
+        $("#mic-rotulo").textContent = "Ouvindo… toque para enviar";
+      } else {
+        mic.setAttribute("aria-pressed", "false");
+        mic.disabled = true;
+        $("#mic-rotulo").textContent = "Transcrevendo…";
+        const texto = await pararGravacao();
+        mic.disabled = false;
+        $("#mic-rotulo").textContent = "Falar";
+        if (texto) enviar(texto, true); else avisar("Não ouvi nada. Fale um pouco mais perto do microfone.");
+      }
+    } catch (e) {
+      JARVIS.gravando = false;
+      mic.disabled = false;
+      mic.setAttribute("aria-pressed", "false");
+      $("#mic-rotulo").textContent = "Falar";
+      avisar(e.message.includes("Permission") || e.name === "NotAllowedError" ? "O navegador bloqueou o microfone. Libere nas permissões do site." : e.message);
+    }
+  });
+
+  // Confirmações que aparecem depois (uma ação do PC pedindo seu ok).
+  navegar.timer = setInterval(async () => {
+    try { mostrarConfirmacao((await api("GET", "jarvis/confirmacao")).confirmacao); } catch (_) { /* silencioso */ }
+  }, 4000);
+};
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => { /* sem app instalável, a página funciona igual */ });
+}
+
 navegar();

@@ -1,3 +1,5 @@
+> **Jarvis web:** o assistente e a central no navegador, no PC e no celular. Inicie com `py jarvis_web.py`. Veja [o guia](LEIA-ME-WEB.md).
+
 > **Central HAIZEN:** faturamento, clientes, tarefas e pipeline no seu PC. Veja [o guia](LEIA-ME-CENTRAL.md).
 
 > **HAIZEN:** agentes da agência comandados por voz e criados com o Claude. Veja [o guia](LEIA-ME-HAIZEN.md).

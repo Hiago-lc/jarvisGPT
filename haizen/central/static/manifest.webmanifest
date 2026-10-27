@@ -1,0 +1,16 @@
+{
+  "name": "Jarvis · HAIZEN",
+  "short_name": "Jarvis",
+  "description": "Assistente e central da HAIZEN: faturamento, clientes, tarefas, pipeline e agentes.",
+  "lang": "pt-BR",
+  "start_url": "/#/jarvis",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F2F5F4",
+  "theme_color": "#0B1D23",
+  "icons": [
+    {"src": "/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icone.svg", "sizes": "any", "type": "image/svg+xml"}
+  ]
+}

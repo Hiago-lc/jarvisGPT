@@ -141,6 +141,13 @@ CREATE TABLE IF NOT EXISTS oportunidades (
     criado_em REAL NOT NULL,
     atualizado_em REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS jarvis_mensagens (
+    id INTEGER PRIMARY KEY,
+    papel TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    acoes TEXT NOT NULL DEFAULT '[]',
+    criado_em REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS receitas_receb ON receitas(data_recebimento);
 CREATE INDEX IF NOT EXISTS despesas_pag ON despesas(data_pagamento);
 CREATE INDEX IF NOT EXISTS tarefas_status ON tarefas(status);

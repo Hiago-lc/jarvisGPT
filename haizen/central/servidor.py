@@ -25,9 +25,14 @@ from haizen.central import dados
 ESTATICOS = Path(__file__).resolve().parent / "static"
 PORTA = int(os.environ.get("HAIZEN_CENTRAL_PORTA", "8765"))
 _HOSTS = {"127.0.0.1", "localhost"}
+# Pelo Tailscale ("tailscale serve"), o pedido chega com o nome do PC na sua
+# rede privada, que sempre termina em .ts.net. O servidor continua preso a
+# 127.0.0.1: só o próprio Tailscale, rodando neste PC, consegue repassar.
+_SUFIXOS_HOST = (".ts.net",)
 _TIPOS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
           ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml",
-          ".png": "image/png", ".ico": "image/x-icon"}
+          ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json",
+          ".webmanifest": "application/manifest+json"}
 
 
 def _trabalho(t: dict, com_entrega: bool = False) -> dict:
@@ -75,17 +80,27 @@ class _Handler(BaseHTTPRequestHandler):
     def _erro(self, status, msg):
         self._json({"erro": msg}, status)
 
-    def _corpo(self) -> dict:
+    def _bruto(self, limite: int = 8_000_000) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
-        if not n:
-            return {}
-        if n > 2_000_000:
+        if n > limite:
             raise ValueError("pedido grande demais")
-        return json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+        return self.rfile.read(n) if n else b""
+
+    def _corpo(self) -> dict:
+        bruto = self._bruto(2_000_000)
+        return json.loads(bruto.decode("utf-8") or "{}") if bruto else {}
+
+    def _binario(self, corpo: bytes, tipo: str):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(corpo)
 
     def _host_ok(self) -> bool:
-        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-        return host in _HOSTS
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        return host in _HOSTS or host.endswith(_SUFIXOS_HOST)
 
     # ── roteamento ──────────────────────────────────────────────────────────
     def do_GET(self):
@@ -122,6 +137,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._erro(HTTPStatus.INTERNAL_SERVER_ERROR, f"{type(e).__name__}: {e}")
         if resultado is _NAO_ACHOU:
             return self._erro(HTTPStatus.NOT_FOUND, "rota inexistente")
+        if isinstance(resultado, _Audio):
+            return self._binario(resultado.dados, "audio/wav")
         self._json(resultado)
 
     def _api(self, metodo, partes, q):
@@ -134,6 +151,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if partes and partes[0] == "trabalhos":
             return self._trabalhos(metodo, partes[1:], q)
+        if partes and partes[0] == "jarvis":
+            return self._jarvis(metodo, partes[1:], q)
 
         if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "ficha":
             return dados.ficha_cliente(int(partes[1]))
@@ -190,6 +209,30 @@ class _Handler(BaseHTTPRequestHandler):
                 return _trabalho(novo)
         return _NAO_ACHOU
 
+    def _jarvis(self, metodo, partes, q):
+        from haizen.central import cerebro
+        rota = partes[0] if partes else ""
+        if rota == "estado" and metodo == "GET":
+            return {**cerebro.estado(), "confirmacao": cerebro.confirmacao_pendente()}
+        if rota == "historico" and metodo == "GET":
+            return cerebro.historico(int(q.get("limite") or 40))
+        if rota == "historico" and metodo == "DELETE":
+            cerebro.limpar_historico()
+            return {"ok": True}
+        if rota == "mensagem" and metodo == "POST":
+            c = self._corpo()
+            return cerebro.responder(c.get("texto", ""), bool(c.get("voz")))
+        if rota == "ouvir" and metodo == "POST":
+            return {"texto": cerebro.ouvir(self._bruto(), int(q.get("taxa") or 16000))}
+        if rota == "falar" and metodo == "POST":
+            return _Audio(cerebro.falar(self._corpo().get("texto", "")))
+        if rota == "confirmacao" and metodo == "GET":
+            return {"confirmacao": cerebro.confirmacao_pendente()}
+        if rota == "confirmacao" and metodo == "POST":
+            cerebro.resolver_confirmacao(bool(self._corpo().get("aceitar")))
+            return {"ok": True}
+        return _NAO_ACHOU
+
     def _estatico(self, caminho: str):
         rel = "index.html" if caminho in ("/", "") else caminho.lstrip("/")
         if not re.fullmatch(r"[A-Za-z0-9_\-./]+", rel) or ".." in rel:
@@ -205,12 +248,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy",
                          "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                         "img-src 'self' data:; connect-src 'self'")
+                         "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'")
+        if arq.name == "sw.js":
+            self.send_header("Service-Worker-Allowed", "/")
         self.end_headers()
         self.wfile.write(corpo)
 
 
 _NAO_ACHOU = object()
+
+
+class _Audio:
+    def __init__(self, dados: bytes):
+        self.dados = dados
 _servidor: ThreadingHTTPServer | None = None
 _lock = threading.Lock()
 
