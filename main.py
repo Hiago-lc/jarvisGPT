@@ -838,7 +838,22 @@ class JarvisLive:
         into a dead socket would keep resetting the very timer meant to catch it.
         """
         if self._rx_deadline is None:
-            self._rx_deadline = time.monotonic() + _STALL_LIMIT
+            self._rx_deadline = time.monotonic() + self._stall_limit()
+
+    def _stall_limit(self) -> float:
+        """30 s fit Gemini Live, which answers in one or two. A local model has
+        to load into the GPU and read the whole prompt before its first word,
+        which on a modest card takes longer than that: the watchdog then threw
+        the answer away and reconnected. With the pipeline engine, wait as long
+        as the model connection itself is allowed to take."""
+        if self._engine is None:
+            return _STALL_LIMIT
+        try:
+            from memory.config_manager import get_provider_config
+            t = float(get_provider_config("openai_compat").get("timeout") or 0)
+        except Exception:
+            t = 0.0
+        return max(_STALL_LIMIT, t + 30.0, 120.0)
 
     def _clear_stall(self) -> None:
         """The server spoke, so the return path is alive."""
@@ -857,7 +872,7 @@ class JarvisLive:
             if deadline is None or time.monotonic() < deadline:
                 continue
             self._clear_stall()
-            print(f"[JARVIS] ⚠️  No response for {_STALL_LIMIT:.0f}s — "
+            print(f"[JARVIS] ⚠️  No response for {self._stall_limit():.0f}s — "
                   f"the live session is not answering. Rebuilding it.")
             self.ui.write_log("SYS: The model stopped answering — reconnecting.")
             self.request_reconnect(keep_context=True, reason="no response")

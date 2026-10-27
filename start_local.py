@@ -340,6 +340,30 @@ def iniciar_com_windows(perfil: str, ligar: bool) -> str:
             f"dentro dele. ({atalho})")
 
 
+def aquecer_modelo(modelo: str, url: str = OLLAMA_URL) -> None:
+    """Carrega o modelo na placa de vídeo em segundo plano, logo ao abrir.
+
+    Sem isso, o primeiro "oi" pagava a carga do modelo (dezenas de segundos
+    numa placa modesta) e parecia que o Jarvis não respondia. Um pedido vazio
+    ao Ollama só carrega o modelo, e keep_alive=-1 o mantém carregado.
+    """
+    import threading
+    import urllib.request
+
+    def _carregar():
+        corpo = json.dumps({"model": modelo, "prompt": "", "keep_alive": -1}).encode()
+        req = urllib.request.Request(f"{url}/api/generate", data=corpo,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                r.read()
+            print(f"[Ollama] {modelo} carregado e pronto.")
+        except Exception as e:  # noqa: BLE001 - só adianta o trabalho; sem ele, carrega na 1ª fala
+            print(f"[Ollama] não consegui pré-carregar {modelo}: {e}")
+
+    threading.Thread(target=_carregar, daemon=True, name="aquecer-modelo").start()
+
+
 def ligar_central() -> None:
     """A central (painel, financeiro, celular) roda dentro da janela, sem
     outro processo. Se outra cópia já ocupa a porta, usa aquela."""
@@ -390,6 +414,8 @@ if __name__ == "__main__":
         contexto = int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))
         modelo = preparar_ollama(modelo, contexto)
     configure(a.perfil, modelo)
+    if a.perfil == "local":
+        aquecer_modelo(modelo)
     if not a.sem_central:
         ligar_central()
     from main import main

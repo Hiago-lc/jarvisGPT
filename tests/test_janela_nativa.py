@@ -159,5 +159,39 @@ class CentralNaJanelaTests(unittest.TestCase):
             self.assertIn(trecho, fonte)
 
 
+class RespostaLentaTests(unittest.TestCase):
+    """O modelo local demora mais que o Gemini para a primeira palavra."""
+
+    def test_watchdog_waits_for_the_local_model(self):
+        fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+        self.assertIn("self._rx_deadline = time.monotonic() + self._stall_limit()", fonte)
+        self.assertIn("return max(_STALL_LIMIT, t + 30.0, 120.0)", fonte)
+
+    def test_model_is_loaded_at_startup(self):
+        import threading
+        pedidos = []
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def abrir(req, timeout=None):
+            pedidos.append((req.full_url, json.loads(req.data), timeout))
+            return Resp()
+        with patch("urllib.request.urlopen", side_effect=abrir):
+            start_local.aquecer_modelo("jarvis-qwen3-12k")
+            for t in threading.enumerate():
+                if t.name == "aquecer-modelo":
+                    t.join(5)
+        self.assertEqual(pedidos[0][0], "http://127.0.0.1:11434/api/generate")
+        self.assertEqual(pedidos[0][1], {"model": "jarvis-qwen3-12k", "prompt": "", "keep_alive": -1})
+
+
 if __name__ == "__main__":
     unittest.main()
