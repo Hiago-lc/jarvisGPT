@@ -37,6 +37,9 @@ from importlib.util import find_spec
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 GROQ_URL = "https://api.groq.com/openai/v1"
+# A API do Gemini também fala o protocolo da OpenAI. No plano gratuito
+# (projeto sem cobrança ativada) não há crédito: só um limite de pedidos.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 # Escolhido para uma GPU de 4 GB (ex.: RX 580) com 16 GB de RAM: cabe inteiro
 # na placa via Vulkan, chama ferramentas de forma confiável e é a variante
@@ -67,7 +70,8 @@ LOCAL_TIMEOUT = "180"
 DEFAULT_CONTEXT = 12288
 DERIVED_PREFIX = "jarvis-"
 
-PERFIS = ("local", "hibrido")
+PERFIS = ("local", "hibrido", "gemini")
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +104,15 @@ def verificar(perfil: str, modelo: str) -> list[str]:
             problemas.append(
                 f"O modelo '{modelo}' não está no Ollama (instalados: {instalados}). "
                 f"Rode: ollama pull {modelo}")
+        if find_spec("faster_whisper") is None:
+            problemas.append(
+                "Falta o reconhecimento de voz local. Rode: "
+                "python -m pip install faster-whisper")
+    elif perfil == "gemini":
+        if not chave_gemini():
+            problemas.append(
+                "Falta a chave do Gemini. Crie uma gratuita em "
+                "https://aistudio.google.com/apikey e salve com: setx GEMINI_API_KEY \"sua-chave\"")
         if find_spec("faster_whisper") is None:
             problemas.append(
                 "Falta o reconhecimento de voz local. Rode: "
@@ -162,7 +175,21 @@ def _env(name: str, default: str) -> str:
 def modelo_padrao(perfil: str) -> str:
     if perfil == "local":
         return _env("JARVIS_LOCAL_MODEL", DEFAULT_LOCAL_MODEL)
+    if perfil == "gemini":
+        return _env("JARVIS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     return _env("JARVIS_GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def chave_gemini() -> str:
+    """GEMINI_API_KEY do ambiente, ou a chave já salva pela tela inicial do Jarvis."""
+    chave = os.environ.get("GEMINI_API_KEY", "").strip()
+    if chave:
+        return chave
+    try:
+        from memory import config_manager as cm
+        return str(cm.load_api_keys().get("gemini_api_key") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _os_name() -> str:
@@ -187,14 +214,14 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
                    vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
                    **LOCAL_TOOL_BUDGET)
     else:
-        llm.update(base_url=GROQ_URL, model=modelo, vision=False,
-                   max_tools="0", max_tool_chars="0")
+        llm.update(base_url=GROQ_URL if perfil == "hibrido" else GEMINI_URL,
+                   model=modelo, vision=False, max_tools="0", max_tool_chars="0")
         llm.pop("api_key", None)          # a chave só existe em memória
-        llm.pop("history_chars", None)    # o Groq tem contexto de sobra
-        llm.pop("timeout", None)          # e responde em segundos
+        llm.pop("history_chars", None)    # na nuvem há contexto de sobra
+        llm.pop("timeout", None)          # e a resposta vem em segundos
 
     stt = creds.setdefault("whisper", {})
-    if perfil == "local":
+    if perfil in ("local", "gemini"):
         stt.update(backend="local", base_url="", api_key="", device="cpu",
                    model=_env("JARVIS_WHISPER_MODEL", DEFAULT_WHISPER),
                    language="pt")
@@ -215,9 +242,15 @@ def configure(perfil: str = "local", modelo: str = "") -> None:
     from memory import config_manager as cm
 
     modelo = modelo or modelo_padrao(perfil)
-    chave = os.environ.get("GROQ_API_KEY", "").strip()
-    if perfil == "hibrido" and not chave:
-        raise SystemExit("Defina GROQ_API_KEY no ambiente antes de usar o perfil hibrido.")
+    chave, destinos = "", ()
+    if perfil == "hibrido":
+        chave, destinos = os.environ.get("GROQ_API_KEY", "").strip(), ("openai_compat", "whisper")
+        if not chave:
+            raise SystemExit("Defina GROQ_API_KEY no ambiente antes de usar o perfil hibrido.")
+    elif perfil == "gemini":
+        chave, destinos = chave_gemini(), ("openai_compat",)
+        if not chave:
+            raise SystemExit("Falta a chave do Gemini (GEMINI_API_KEY ou a salva no Jarvis).")
 
     data = montar_config(cm.load_api_keys(), perfil, modelo)
     cm.ensure_config_dir()
@@ -232,7 +265,7 @@ def configure(perfil: str = "local", modelo: str = "") -> None:
         def runtime_config():
             current = original()
             block = current.setdefault("providers", {}).setdefault("creds", {})
-            for pid in ("openai_compat", "whisper"):
+            for pid in destinos:
                 block.setdefault(pid, {})["api_key"] = chave
             return current
 

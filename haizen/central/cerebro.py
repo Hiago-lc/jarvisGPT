@@ -88,7 +88,8 @@ def estado() -> dict:
     llm = get_provider_config(pipe.get("llm") or "openai_compat")
     base = llm.get("base_url", "")
     onde = ("modelo local" if "127.0.0.1" in base or "localhost" in base
-            else "Groq (plano gratuito)" if "groq" in base else base or "não configurado")
+            else "Groq (plano gratuito)" if "groq" in base
+            else "Gemini (plano gratuito)" if "googleapis" in base else base or "não configurado")
     return {"modelo": llm.get("model", ""), "onde": onde,
             "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt"))}
 

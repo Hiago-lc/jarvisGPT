@@ -152,5 +152,25 @@ class OllamaContextTests(unittest.TestCase):
         self.assertEqual(PipelineEngine(FakeLLM())._history_chars, 24000)
 
 
+class GeminiProfileTests(unittest.TestCase):
+    def test_gemini_uses_saved_key_in_memory_and_local_whisper(self):
+        saved, text, runtime, mode, _ = _run('gemini', {'GEMINI_API_KEY': '', 'JARVIS_GEMINI_MODEL': ''},
+                                             {'gemini_api_key': 'chave-salva'})
+        self.assertEqual(runtime['openai_compat']['base_url'], start_local.GEMINI_URL)
+        self.assertEqual(runtime['openai_compat']['model'], start_local.DEFAULT_GEMINI_MODEL)
+        self.assertEqual(runtime['openai_compat']['api_key'], 'chave-salva')
+        self.assertEqual(runtime['whisper']['backend'], 'local')
+        self.assertNotIn('api_key', saved['providers']['creds']['openai_compat'])
+
+    def test_env_key_wins(self):
+        _, text, runtime, _, _ = _run('gemini', {'GEMINI_API_KEY': 'chave-env'}, {'gemini_api_key': 'velha'})
+        self.assertEqual(runtime['openai_compat']['api_key'], 'chave-env')
+        self.assertNotIn('chave-env', text)
+
+    def test_local_profile_never_receives_a_cloud_key(self):
+        _, _, runtime, _, _ = _run('local', {'GROQ_API_KEY': 'groq-secret'})
+        self.assertEqual(runtime['openai_compat'].get('api_key', ''), '')
+
+
 if __name__ == '__main__':
     unittest.main()

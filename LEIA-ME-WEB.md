@@ -8,12 +8,15 @@ O cérebro continua no seu PC: modelo, voz, agentes, arquivos e controle do comp
 
 ```powershell
 py jarvis_web.py                    # modelo local
-py jarvis_web.py --perfil hibrido   # Groq gratuito + voz local (mais rápido nesta placa)
+py jarvis_web.py --perfil gemini    # Gemini gratuito + voz local (mais rápido nesta placa)
+py jarvis_web.py --perfil hibrido   # Groq gratuito + voz local
 ```
+
+O perfil `gemini` usa a chave do Gemini que você já salvou no Jarvis (ou `GEMINI_API_KEY`). Ele só é gratuito se o projeto da chave **não tiver cobrança ativada**: confira em https://aistudio.google.com/apikey se o plano aparece como "Free". No plano gratuito não há crédito, só um limite de pedidos por minuto e por dia.
 
 O navegador abre na tela **Jarvis**. A janela antiga, com o avatar, não abre, e isso economiza memória. Ela continua disponível com `py start_local.py`, se você quiser.
 
-Para o perfil híbrido iniciar sozinho, a chave do Groq precisa estar salva no Windows (uma vez): `setx GROQ_API_KEY "sua-chave"`. Depois, abra um PowerShell novo.
+Para o perfil `hibrido` iniciar sozinho, a chave do Groq precisa estar salva no Windows (uma vez): `setx GROQ_API_KEY "sua-chave"`. Depois, abra um PowerShell novo. O perfil `gemini` não precisa disso se a chave já estiver salva no Jarvis.
 
 ## Iniciar junto com o Windows
 
