@@ -204,5 +204,88 @@ class LancadorTests(unittest.TestCase):
             self.assertIn("tailscale.com/download", jarvis_web.ligar_tailscale())
 
 
+class RegistroTolerante(_Base):
+    def setUp(self):
+        super().setUp()
+        from haizen import store
+        store.salvar_cliente("LOJA EXEMPLO SOLUÇÕES")
+
+    def _receitas(self):
+        from haizen.central import dados
+        return dados.listar("receitas")
+
+    def test_singular_type_and_loose_fields(self):
+        r = self.cerebro.executar_ferramenta("central", {
+            "acao": "registrar", "tipo": "receita", "cliente": "loja exemplo solucoes",
+            "descricao": "2/2 E-commerce TRAY", "valor": 600, "vencimento": "10/11/2026",
+            "recebido": True})
+        self.assertIn("Registrado com sucesso", r)
+        rec = self._receitas()[0]
+        self.assertEqual((rec["descricao"], rec["valor"], rec["vencimento"], rec["recebido"]),
+                         ("2/2 E-commerce TRAY", 600.0, "2026-11-10", True))
+        self.assertEqual(rec["cliente_nome"], "LOJA EXEMPLO SOLUÇÕES")
+
+    def test_fields_as_object_or_json_with_synonyms(self):
+        self.cerebro.executar_ferramenta("central", {
+            "acao": "registrar", "tipo": "pagamento",
+            "campos": {"cliente": "LOJA EXEMPLO SOLUÇÕES", "descricao_servico": "A", "valor": "600,00",
+                       "data_vencimento": "2026-11-10"}})
+        self.cerebro.executar_ferramenta("central", {
+            "acao": "registrar", "tipo": "receitas",
+            "campos": json.dumps({"cliente_nome": "Loja Exemplo", "servico": "B", "valor": 1}),
+        })
+        self.assertEqual(sorted(r["descricao"] for r in self._receitas()), ["A", "B"])
+
+    def test_errors_are_explicit_and_nothing_is_saved(self):
+        r = self.cerebro.executar_ferramenta("central", {"acao": "registrar", "tipo": "boleto", "valor": 1})
+        self.assertIn("Não registrei nada", r)
+        r = self.cerebro.executar_ferramenta("central", {"acao": "registrar", "tipo": "receitas",
+                                                         "cliente": "Ninguém Ltda", "valor": 1})
+        self.assertIn("não encontrei o cliente", r)
+        r = self.cerebro.executar_ferramenta("central", {"acao": "registrar", "tipo": "receitas",
+                                                         "valor": 1, "vencimento": "31/02/2026"})
+        self.assertIn("Não registrei nada", r)
+        self.assertEqual(self._receitas(), [])
+
+    def test_prompt_forbids_inventing_support(self):
+        self.sistema.stop()
+        try:
+            texto = self.cerebro._sistema("digitou")
+        finally:
+            self.sistema.start()
+        self.assertIn("Não invente suporte", texto)
+
+
+class DatasTests(unittest.TestCase):
+    def test_brazilian_dates(self):
+        from haizen.central.dados import _data
+        self.assertEqual(_data("10/11/2026"), "2026-11-10")
+        self.assertEqual(_data("5/1/26"), "2026-01-05")
+        self.assertEqual(_data("2026-11-10T12:00"), "2026-11-10")
+        with self.assertRaises(ValueError):
+            _data("ontem")
+
+
+class TailscaleTests(unittest.TestCase):
+    def test_activation_output_is_not_hidden_and_waits(self):
+        import jarvis_web
+        import subprocess
+        with patch.object(jarvis_web, "_tailscale", return_value="tailscale"), \
+             patch.object(jarvis_web, "endereco_tailscale", return_value="https://pc.tail1.ts.net"), \
+             patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            msg = jarvis_web.ligar_tailscale()
+        kwargs = run.call_args.kwargs
+        self.assertNotIn("capture_output", kwargs)
+        self.assertGreaterEqual(kwargs["timeout"], 300)
+        self.assertIn("https://pc.tail1.ts.net", msg)
+
+    def test_timeout_is_a_message_not_a_crash(self):
+        import jarvis_web
+        import subprocess
+        with patch.object(jarvis_web, "_tailscale", return_value="tailscale"), \
+             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("t", 300)):
+            self.assertIn("Ative o Serve", jarvis_web.ligar_tailscale())
+
+
 if __name__ == "__main__":
     unittest.main()

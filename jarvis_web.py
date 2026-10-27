@@ -66,11 +66,19 @@ def ligar_tailscale() -> str:
                 "(no PC e no celular, mesma conta) e rode de novo com --tailscale.")
     # Publica a central SÓ dentro da sua rede Tailscale (serve, não funnel):
     # ninguém fora dos seus aparelhos consegue abrir.
-    r = subprocess.run([exe, "serve", "--bg", str(PORTA)], capture_output=True, text=True,
-                       timeout=30)
+    #
+    # Na primeira vez o Tailscale imprime um link para ativar o "Serve" e
+    # ESPERA você ativar. Por isso a saída vai direto para a tela (não é
+    # capturada) e há tempo de sobra para abrir o link e clicar.
+    print("Ligando o acesso pelo celular no Tailscale...")
+    print("Se aparecer um link abaixo, abra no navegador, ative e volte aqui.")
+    try:
+        r = subprocess.run([exe, "serve", "--bg", str(PORTA)], timeout=300)
+    except subprocess.TimeoutExpired:
+        return ("O Tailscale não terminou em 5 minutos. Ative o Serve pelo link que ele "
+                "mostrou e rode de novo com --tailscale.")
     if r.returncode != 0:
-        detalhe = (r.stderr or r.stdout).strip()[:300]
-        return f"O Tailscale recusou: {detalhe}"
+        return "O Tailscale recusou (veja a mensagem acima). O Jarvis continua funcionando no PC."
     url = endereco_tailscale(exe)
     return (f"Pelo celular (com o Tailscale ligado): {url}" if url
             else "Tailscale ligado. Veja o endereço .ts.net no app do Tailscale.")

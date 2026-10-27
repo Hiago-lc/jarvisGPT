@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import time
 
 from haizen import store
@@ -40,11 +41,19 @@ def reais(c) -> float:
 
 
 def _data(v) -> str:
-    v = (v or "").strip()[:10]
+    """AAAA-MM-DD. Aceita também 10/11/2026, 10/11/26 e 10/11 (ano atual)."""
+    v = (v or "").strip()
     if not v:
         return ""
-    dt.date.fromisoformat(v)              # valida; levanta ValueError se inválida
-    return v
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:/(\d{2}|\d{4}))?", v)
+    if m:
+        dia, mes, ano = m.groups()
+        ano = int(ano) + 2000 if ano and len(ano) == 2 else int(ano or dt.date.today().year)
+        return dt.date(ano, int(mes), int(dia)).isoformat()
+    try:
+        return dt.date.fromisoformat(v[:10]).isoformat()
+    except ValueError:
+        raise ValueError(f"data inválida '{v}'; use AAAA-MM-DD ou DD/MM/AAAA") from None
 
 
 def _bool(v) -> int:
