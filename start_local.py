@@ -78,6 +78,7 @@ DERIVED_PREFIX = "jarvis-"
 
 PERFIS = ("local", "hibrido", "gemini")
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_RESERVAS = "gemini-flash-lite-latest,gemini-2.5-flash"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
                    vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
                    **LOCAL_TOOL_BUDGET)
         llm.pop("reasoning_effort", None)
+        llm.pop("fallback_models", None)
     else:
         llm.update(base_url=GROQ_URL if perfil == "hibrido" else GEMINI_URL,
                    model=modelo, vision=False, **NUVEM_TOOL_BUDGET)
@@ -240,8 +242,11 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
         llm["timeout"] = "90"
         if perfil == "gemini":
             llm["reasoning_effort"] = "low"   # pensa menos antes de responder
+            # Se o principal estiver sobrecarregado (503) ou no limite (429).
+            llm["fallback_models"] = _env("JARVIS_GEMINI_RESERVAS", GEMINI_RESERVAS)
         else:
             llm.pop("reasoning_effort", None)
+            llm.pop("fallback_models", None)
 
     stt = creds.setdefault("whisper", {})
     if perfil in ("local", "gemini"):

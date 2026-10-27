@@ -1125,6 +1125,13 @@ def _failure_line(what: str, exc: Exception) -> str:
     which part, because "please try again" on a server that is not running is
     advice that cannot work and wastes the listener's time."""
     name = type(exc).__name__.lower()
+    texto = str(exc)
+    if texto.startswith("503") or "high demand" in texto or "overloaded" in texto:
+        return ("O serviço de inteligência está sobrecarregado agora. Tente de novo em "
+                "alguns minutos.")
+    if texto.startswith("429") or "RESOURCE_EXHAUSTED" in texto or "quota" in texto.lower():
+        return ("Atingi o limite gratuito do modelo por agora. Tente mais tarde, ou use o "
+                "modelo local.")
     if "connect" in name or "timeout" in name:
         return (f"I could not reach {what}. It looks like the server is not "
                 f"running or the address is wrong — the details are in the log.")

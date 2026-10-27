@@ -459,5 +459,89 @@ class GeminiRespostaTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", local)
 
 
+class GeminiSobrecargaTests(unittest.TestCase):
+    """503 "high demand" e 429: insistir um pouco e trocar de modelo, antes do erro."""
+
+    def _rodar(self, respostas, reservas="gemini-flash-lite-latest,gemini-2.5-flash"):
+        import asyncio
+        import types
+        modelos = []
+
+        class Resposta:
+            def __init__(self, status):
+                self.status_code = status
+
+            async def aiter_lines(self):
+                for linha in ('data: {"choices":[{"delta":{"content":"Pronto."}}]}', "data: [DONE]"):
+                    yield linha
+
+            async def aread(self):
+                return b'{"error":{"message":"This model is currently experiencing high demand."}}'
+
+            async def aclose(self):
+                pass
+
+        class Cliente:
+            def __init__(self, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def build_request(self, metodo, url, headers=None, json=None):
+                return json
+
+            async def send(self, corpo, stream=False):
+                modelos.append(corpo["model"])
+                return Resposta(respostas.pop(0))
+        mod = types.SimpleNamespace(AsyncClient=Cliente, ReadTimeout=TimeoutError, ConnectTimeout=TimeoutError)
+
+        async def sem_espera(_):
+            pass
+        with patch.dict(sys.modules, {"httpx": mod}), patch("asyncio.sleep", sem_espera):
+            from providers.llm_openai import OpenAICompatLLM
+            llm = OpenAICompatLLM({"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                                   "model": "gemini-flash-latest", "api_key": "k",
+                                   "fallback_models": reservas})
+
+            async def tudo():
+                return [ev async for ev in llm.chat([{"role": "user", "content": "oi"}])]
+            try:
+                return asyncio.run(tudo()), modelos, None
+            except Exception as e:  # noqa: BLE001
+                return None, modelos, e
+
+    def test_one_503_is_retried_on_the_same_model(self):
+        ev, modelos, erro = self._rodar([503, 200])
+        self.assertEqual(ev, [{"text": "Pronto."}])
+        self.assertEqual(modelos, ["gemini-flash-latest", "gemini-flash-latest"])
+
+    def test_persistent_503_moves_to_the_next_model(self):
+        ev, modelos, _ = self._rodar([503, 503, 200])
+        self.assertEqual(modelos, ["gemini-flash-latest", "gemini-flash-latest", "gemini-flash-lite-latest"])
+        self.assertEqual(ev, [{"text": "Pronto."}])
+
+    def test_quota_moves_on_and_missing_reserve_is_skipped(self):
+        ev, modelos, _ = self._rodar([429, 404, 200])
+        self.assertEqual(modelos, ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash"])
+
+    def test_a_real_error_is_not_retried(self):
+        _, modelos, erro = self._rodar([401])
+        self.assertEqual(modelos, ["gemini-flash-latest"])
+        self.assertTrue(str(erro).startswith("401"))
+
+    def test_spoken_message_explains_overload(self):
+        from providers.engine_pipeline import _failure_line
+        self.assertIn("sobrecarregado", _failure_line("o modelo", RuntimeError("503 high demand")))
+        self.assertIn("limite gratuito", _failure_line("o modelo", RuntimeError("429 RESOURCE_EXHAUSTED")))
+
+    def test_profile_has_reserves(self):
+        cfg = start_local.montar_config({}, "gemini", "gemini-flash-latest")["providers"]["creds"]["openai_compat"]
+        self.assertEqual(cfg["fallback_models"], start_local.GEMINI_RESERVAS)
+
+
 if __name__ == "__main__":
     unittest.main()

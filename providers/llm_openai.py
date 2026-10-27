@@ -340,6 +340,10 @@ class OpenAICompatLLM:
         # Gemini (e outros) pensam antes de responder; "low" encurta essa espera
         # sem tirar a capacidade de usar ferramentas. Vazio = padrão do servidor.
         self.reasoning_effort = (cfg.get("reasoning_effort") or "").strip()
+        # Outros modelos do mesmo serviço, para quando o principal está
+        # sobrecarregado (503) ou no limite (429): cada um tem fila e cota próprias.
+        self.fallback_models = [m.strip() for m in str(cfg.get("fallback_models") or "").split(",")
+                                if m.strip() and m.strip() != self.model]
 
         # A budget on a model running on your own hardware, unless the user
         # chose one themselves.
@@ -466,23 +470,8 @@ class OpenAICompatLLM:
                 return
 
             buf = _ToolCallBuffer()
-            # Uma segunda tentativa quando o servidor não respondeu NADA a tempo
-            # (o Gemini gratuito às vezes engasga numa requisição): melhor que
-            # mostrar um erro para algo que, repetido, responde em segundos.
-            # Só antes do primeiro pedaço: depois disso, repetir duplicaria a fala.
-            for tentativa in (1, 2):
-                try:
-                    r = await cl.send(cl.build_request(
-                        "POST", f"{self.base}/chat/completions",
-                        headers=self._headers(), json=body), stream=True)
-                    break
-                except (self._httpx.ReadTimeout, self._httpx.ConnectTimeout):
-                    if tentativa == 2:
-                        raise
+            r = await self._abrir_stream(cl, body)
             try:
-                if r.status_code >= 400:
-                    detail = _terse((await r.aread()).decode("utf-8", "replace"))
-                    raise RuntimeError(f"{r.status_code} {detail}")
                 async for line in r.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -506,6 +495,44 @@ class OpenAICompatLLM:
             calls = buf.drain()
             if calls:
                 yield {"tool_calls": calls}
+
+    async def _abrir_stream(self, cl, body: dict):
+        """A resposta em streaming, já com status 200.
+
+        Tudo aqui acontece ANTES do primeiro pedaço da resposta, então repetir é
+        seguro (depois disso, repetir duplicaria a fala):
+          - nada chegou a tempo: mais uma tentativa;
+          - serviço sobrecarregado (500/502/503/504): espera um instante e tenta
+            de novo; continuando, passa ao próximo modelo da lista;
+          - limite atingido (429) ou modelo reserva inexistente (404): próximo modelo.
+        """
+        import asyncio
+        modelos = [self.model, *self.fallback_models]
+        ultimo = None
+        for i, modelo in enumerate(modelos):
+            corpo = {**body, "model": modelo}
+            for tentativa in (1, 2):
+                try:
+                    r = await cl.send(cl.build_request(
+                        "POST", f"{self.base}/chat/completions",
+                        headers=self._headers(), json=corpo), stream=True)
+                except (self._httpx.ReadTimeout, self._httpx.ConnectTimeout) as e:
+                    ultimo = e
+                    continue
+                if r.status_code < 400:
+                    if i:
+                        print(f"[LLM] {self.model} indisponível; respondendo com {modelo}.")
+                    return r
+                detail = _terse((await r.aread()).decode("utf-8", "replace"))
+                await r.aclose()
+                ultimo = RuntimeError(f"{r.status_code} {detail}")
+                if r.status_code in (500, 502, 503, 504) and tentativa == 1:
+                    await asyncio.sleep(1.5)
+                    continue
+                if r.status_code in (429, 500, 502, 503, 504) or (r.status_code == 404 and i):
+                    break               # próximo modelo
+                raise ultimo            # erro de verdade (chave, pedido): não adianta insistir
+        raise ultimo if ultimo else RuntimeError("sem resposta do modelo")
 
     # -- for the settings panel ---------------------------------------------
     def models(self, timeout: float = 8.0) -> list[str]:
