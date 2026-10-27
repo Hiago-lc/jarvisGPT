@@ -306,6 +306,73 @@ class InvencaoTests(_Base):
         self.assertEqual(len(dados.listar("receitas", status="Pago")), 1)
 
 
+class RegistroDiretoTests(_Base):
+    """Pedido claro de receita/despesa: grava sem passar pelo modelo."""
+
+    def setUp(self):
+        super().setUp()
+        from haizen import store
+        store.salvar_cliente("LOJA EXEMPLO SOLUÇÕES")
+        store.salvar_cliente("Loja")
+
+    def _pedir(self, texto):
+        llm = FakeLLM([("Resposta do modelo.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            r = self.cerebro.responder(texto)
+        return r, llm
+
+    def _receitas(self):
+        from haizen.central import dados
+        return dados.listar("receitas")
+
+    def test_the_exact_request_that_failed(self):
+        from haizen.central import dados
+        r, llm = self._pedir("Registre a receita de R$ 600 da LOJA EXEMPLO SOLUÇÕES, descrição "
+                             "2/2 E-commerce TRAY, vencimento hoje, não foi recebida")
+        self.assertEqual(llm.pedidos, [])
+        self.assertEqual(r["acoes"], ["central"])
+        rec = self._receitas()[0]
+        self.assertEqual((rec["descricao"], rec["valor"], rec["vencimento"], rec["recebido"],
+                          rec["cliente_nome"]),
+                         ("2/2 E-commerce TRAY", 600.0, dados.hoje(), False, "LOJA EXEMPLO SOLUÇÕES"))
+        self.assertIn("a receber", r["resposta"])
+        self.assertIn("R$ 600,00", r["resposta"])
+
+    def test_received_with_date_and_accentless_client(self):
+        r, _ = self._pedir("por favor, lance um faturamento de 1.250,50 reais da loja exemplo solucoes, "
+                           "descrição Site institucional, vencimento 10/11/2026, já recebido")
+        rec = self._receitas()[0]
+        self.assertEqual((rec["valor"], rec["vencimento"], rec["recebido"], rec["descricao"]),
+                         (1250.5, "2026-11-10", True, "Site institucional"))
+        self.assertEqual(rec["cliente_nome"], "LOJA EXEMPLO SOLUÇÕES")   # o nome mais longo vence
+
+    def test_missing_description_asks_instead_of_guessing(self):
+        r, llm = self._pedir("registre a receita de R$ 600 da LOJA EXEMPLO SOLUÇÕES")
+        self.assertIn("falta a descrição", r["resposta"])
+        self.assertEqual(r["acoes"], [])
+        self.assertEqual(self._receitas(), [])
+        self.assertEqual(llm.pedidos, [])
+
+    def test_unknown_client_asks(self):
+        r, _ = self._pedir("registre a receita de R$ 600 da Ninguém Ltda, descrição X")
+        self.assertIn("não reconheci o cliente", r["resposta"])
+        self.assertEqual(self._receitas(), [])
+
+    def test_expense(self):
+        from haizen.central import dados
+        r, _ = self._pedir("Registre uma despesa de R$ 80 descrição Adobe, categoria Software, já paga")
+        d = dados.listar("despesas")[0]
+        self.assertEqual((d["descricao"], d["valor"], d["pago"], d["categoria"]),
+                         ("Adobe", 80.0, True, "Software"))
+        self.assertIn("paga", r["resposta"])
+
+    def test_questions_and_chat_go_to_the_model(self):
+        for texto in ("quanto recebi este mês?", "registrou a receita de R$ 600?",
+                      "bom dia", "adicione uma tarefa de revisar o site"):
+            r, llm = self._pedir(texto)
+            self.assertEqual(r["resposta"], "Resposta do modelo.", texto)
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

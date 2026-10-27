@@ -396,6 +396,15 @@ def responder(texto: str, por_voz: bool = False) -> dict:
     if not texto:
         raise ValueError("mensagem vazia")
     ligar_confirmacoes()
+    # Registro de receita/despesa com tudo na frase: o código grava, sem modelo.
+    from haizen.central.atalhos import registro_direto
+    direto = registro_direto(texto)
+    if direto is not None:
+        resposta, gravou = direto
+        _guardar("usuario", texto)
+        _guardar("jarvis", resposta, ["central"] if gravou else [])
+        return {"resposta": resposta, "acoes": ["central"] if gravou else [],
+                "confirmacao": confirmacao_pendente()}
     llm = _provedor("llm")
     from providers import schema
     decls = schema.budget(_declaracoes(), max_tools=llm.caps.get("max_tools"),
