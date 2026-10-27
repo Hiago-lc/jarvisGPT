@@ -527,6 +527,77 @@ class AcoesDoPcTests(_Base):
         abrir.assert_called_once_with("https://exemplo.com/v.mp4")
 
 
+class AgendaDiretaTests(_Base):
+    """'O que tenho na agenda hoje?' vai direto ao Google Agenda, sem o modelo."""
+
+    def _servico(self, itens=(), erro=None):
+        pedidos = []
+
+        class Lista:
+            def execute(self, **_):
+                if erro:
+                    raise erro
+                return {"items": list(itens)}
+
+        class Eventos:
+            def list(self, **kw):
+                pedidos.append(kw)
+                return Lista()
+
+        class Servico:
+            def events(self):
+                return Eventos()
+        return patch("core.google_calendar.service", return_value=Servico()), pedidos
+
+    def _pedir(self, texto):
+        llm = FakeLLM([("Resposta do modelo.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            return self.cerebro.responder(texto), llm
+
+    def test_todays_agenda_the_way_it_was_asked(self):
+        hoje = __import__("datetime").date.today().isoformat()
+        p, pedidos = self._servico([
+            {"summary": "Reunião com cliente", "start": {"dateTime": f"{hoje}T09:30:00-03:00"}},
+            {"summary": "Entrega do site", "start": {"date": hoje}}])
+        with p:
+            r, llm = self._pedir("Preciso que você me passe as demandas que estão no Google Agenda de hoje por favor.")
+        self.assertEqual(llm.pedidos, [])
+        self.assertEqual(r["acoes"], ["google_agenda"])
+        self.assertIn("2 compromissos hoje", r["resposta"])
+        self.assertIn("09:30: Reunião com cliente", r["resposta"])
+        self.assertIn("dia todo: Entrega do site", r["resposta"])
+        self.assertTrue(pedidos[0]["timeMin"].startswith(hoje))
+
+    def test_tomorrow_and_empty(self):
+        p, pedidos = self._servico([])
+        with p:
+            r, _ = self._pedir("tenho alguma reunião amanhã?")
+        self.assertEqual(r["resposta"], "Você não tem nada no Google Agenda amanhã.")
+        amanha = (__import__("datetime").date.today() + __import__("datetime").timedelta(days=1)).isoformat()
+        self.assertTrue(pedidos[0]["timeMin"].startswith(amanha))
+
+    def test_week_shows_the_day(self):
+        import datetime as dt
+        d = dt.date.today()
+        p, _ = self._servico([{"summary": "Call", "start": {"dateTime": f"{d.isoformat()}T15:00:00-03:00"}}])
+        with p:
+            r, _ = self._pedir("o que tenho na agenda esta semana?")
+        self.assertIn(f"{d.strftime('%d/%m')}, 15:00: Call", r["resposta"])
+
+    def test_connection_problem_is_told_plainly(self):
+        from core.google_calendar_errors import CalendarSetupError
+        p, _ = self._servico(erro=CalendarSetupError("A autorização do Google expirou ou foi revogada."))
+        with p:
+            r, _ = self._pedir("o que tenho na agenda hoje?")
+        self.assertIn("Não consegui ler o Google Agenda: A autorização do Google expirou", r["resposta"])
+
+    def test_creating_an_event_still_goes_to_the_model(self):
+        for texto in ("marca uma reunião amanhã às 10h", "agenda uma call com o cliente sexta",
+                      "quais demandas da central estão atrasadas?"):
+            r, llm = self._pedir(texto)
+            self.assertEqual(r["resposta"], "Resposta do modelo.", texto)
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

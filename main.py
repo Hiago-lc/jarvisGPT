@@ -2098,8 +2098,8 @@ class JarvisLive:
         """Registro de receita/despesa feito pelo código, sem o modelo.
         Vazio quando a frase não é um pedido de registro."""
         try:
-            from haizen.central.atalhos import registro_direto
-            r = registro_direto(text)
+            from haizen.central.atalhos import responder_direto
+            r = responder_direto(text)
         except Exception as e:
             print(f"[HAIZEN] atalho da central falhou: {e}")
             return ""

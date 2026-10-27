@@ -116,3 +116,81 @@ def registro_direto(texto: str) -> tuple[str, bool] | None:
     return (f"Registrei a {'despesa' if despesa else 'receita'}{quem}: {r.get('descricao')}, "
             f"{_brl(float(r.get('valor') or 0))}, vencimento {_br(r.get('vencimento', ''))}, "
             f"{situacao}. Já aparece no Financeiro.", True)
+
+
+# ── Google Agenda: consultar é objetivo, não precisa do modelo ──────────────
+_AGENDA = re.compile(r"\b(agenda|compromissos?|reuni[oõ]es|reuni[aã]o|eventos?|calend[aá]rio|demandas)\b", re.I)
+_AGENDA_MUDAR = re.compile(r"\b(marc|cri|agend[ae]\s+(?:uma|um|para|pra)|adicion|coloc|inclu|registr|desmarc|"
+                           r"cancel|remarc|mud[ae]|apag)\w*", re.I)
+_DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+
+
+def _periodo(texto: str) -> tuple[dt.date, dt.date, str]:
+    """(início, fim exclusivo, nome do período) pedido na frase; hoje se nada."""
+    t = _plano(texto)
+    hoje = dt.date.today()
+    if "proxima semana" in t or "semana que vem" in t:
+        ini = hoje + dt.timedelta(days=7 - hoje.weekday())
+        return ini, ini + dt.timedelta(days=7), "na próxima semana"
+    if "semana" in t:
+        return hoje, hoje + dt.timedelta(days=7 - hoje.weekday()), "nesta semana"
+    if "depois de amanha" in t:
+        d = hoje + dt.timedelta(days=2)
+        return d, d + dt.timedelta(days=1), "depois de amanhã"
+    if "amanha" in t:
+        d = hoje + dt.timedelta(days=1)
+        return d, d + dt.timedelta(days=1), "amanhã"
+    return hoje, hoje + dt.timedelta(days=1), "hoje"
+
+
+def _hora(inicio: dict) -> str:
+    if "dateTime" in (inicio or {}):
+        return dt.datetime.fromisoformat(inicio["dateTime"].replace("Z", "+00:00")).strftime("%H:%M")
+    return "dia todo"
+
+
+def agenda_direta(texto: str) -> str | None:
+    """Resposta para "o que tenho na agenda hoje?"; None se não for consulta."""
+    if not _AGENDA.search(texto) or _AGENDA_MUDAR.search(texto):
+        return None
+    if "demandas" in texto.lower() and not re.search(r"agenda|calend", texto, re.I):
+        return None                      # "demandas" sozinho é da central, não da agenda
+    ini, fim, nome = _periodo(texto)
+    from zoneinfo import ZoneInfo
+    fuso = ZoneInfo("America/Sao_Paulo")
+    comeco = dt.datetime.combine(ini, dt.time(), fuso)
+    final = dt.datetime.combine(fim, dt.time(), fuso)
+    try:
+        from core.google_calendar import service
+        itens = service().events().list(
+            calendarId="primary", timeMin=comeco.isoformat(), timeMax=final.isoformat(),
+            singleEvents=True, orderBy="startTime", maxResults=30).execute(num_retries=1).get("items", [])
+    except Exception as e:  # noqa: BLE001
+        from core.google_calendar_errors import CalendarSetupError, diagnose
+        motivo = str(e) if isinstance(e, CalendarSetupError) else diagnose(e)[1]
+        return f"Não consegui ler o Google Agenda: {motivo}"
+    if not itens:
+        return f"Você não tem nada no Google Agenda {nome}."
+    varios_dias = (fim - ini).days > 1
+    linhas = []
+    for ev in itens:
+        inicio = ev.get("start") or {}
+        quando = _hora(inicio)
+        if varios_dias:
+            dia = dt.date.fromisoformat((inicio.get("dateTime") or inicio.get("date"))[:10])
+            quando = f"{_DIAS[dia.weekday()]} {dia.strftime('%d/%m')}, {quando}"
+        linhas.append(f"{quando}: {ev.get('summary') or '(sem título)'}")
+    n = len(itens)
+    return (f"Você tem {n} compromisso{'s' if n > 1 else ''} {nome} no Google Agenda:\n"
+            + "\n".join(linhas))
+
+
+def responder_direto(texto: str) -> tuple[str, list[str]] | None:
+    """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
+    r = registro_direto(texto)
+    if r is not None:
+        return r[0], (["central"] if r[1] else [])
+    a = agenda_direta(texto)
+    if a is not None:
+        return a, ["google_agenda"]
+    return None

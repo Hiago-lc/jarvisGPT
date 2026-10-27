@@ -519,14 +519,14 @@ def responder(texto: str, por_voz: bool = False) -> dict:
         raise ValueError("mensagem vazia")
     ligar_confirmacoes()
     # Registro de receita/despesa com tudo na frase: o código grava, sem modelo.
-    from haizen.central.atalhos import registro_direto
-    direto = registro_direto(texto)
+    # e consulta da agenda: o código resolve, sem o modelo.
+    from haizen.central.atalhos import responder_direto
+    direto = responder_direto(texto)
     if direto is not None:
-        resposta, gravou = direto
+        resposta, usadas = direto
         _guardar("usuario", texto)
-        _guardar("jarvis", resposta, ["central"] if gravou else [])
-        return {"resposta": resposta, "acoes": ["central"] if gravou else [],
-                "confirmacao": confirmacao_pendente()}
+        _guardar("jarvis", resposta, usadas)
+        return {"resposta": resposta, "acoes": usadas, "confirmacao": confirmacao_pendente()}
     llm = _provedor("llm")
     from providers import schema
     # A web manda bem menos histórico que a janela antiga (MAX_HISTORICO_CHARS),
