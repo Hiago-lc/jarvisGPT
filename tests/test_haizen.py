@@ -306,5 +306,25 @@ class BudgetTests(unittest.TestCase):
         self.assertIn('haizen', [d['name'] for d in kept])
 
 
+class ClaudeLookupTests(unittest.TestCase):
+    def test_finds_claude_outside_the_path(self):
+        from haizen import executor
+        with tempfile.TemporaryDirectory() as d:
+            bin_dir = Path(d) / '.local' / 'bin'
+            bin_dir.mkdir(parents=True)
+            exe = bin_dir / ('claude.exe' if os.name == 'nt' else 'claude')
+            exe.write_text('')
+            with patch('shutil.which', return_value=None), \
+                 patch('pathlib.Path.home', return_value=Path(d)), \
+                 patch.dict(os.environ, {'HAIZEN_CLAUDE_PATH': ''}):
+                self.assertEqual(executor.claude_disponivel(), str(exe))
+
+    def test_manual_path_wins_and_must_exist(self):
+        from haizen import executor
+        with patch.dict(os.environ, {'HAIZEN_CLAUDE_PATH': '/nao/existe/claude'}), \
+             patch('shutil.which', return_value='/usr/bin/claude'):
+            self.assertIsNone(executor.claude_disponivel())
+
+
 if __name__ == '__main__':
     unittest.main()

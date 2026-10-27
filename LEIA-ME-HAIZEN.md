@@ -59,4 +59,4 @@ Exemplos de pedidos ao Claude:
 | Entregas | `Documentos\HAIZEN\entregas` |
 | Agentes | `C:\JARVIS\haizen\agentes\*.md` |
 
-Variáveis opcionais: `HAIZEN_DB`, `HAIZEN_ENTREGAS_DIR`, `HAIZEN_AGENTES_DIR`, `HAIZEN_CLAUDE_TIMEOUT` (segundos, padrão 900), `HAIZEN_LOCAL_TIMEOUT_MS` (padrão 300000).
+Variáveis opcionais: `HAIZEN_CLAUDE_PATH` (caminho do `claude.exe`, se ele não for achado sozinho), `HAIZEN_DB`, `HAIZEN_ENTREGAS_DIR`, `HAIZEN_AGENTES_DIR`, `HAIZEN_CLAUDE_TIMEOUT` (segundos, padrão 900), `HAIZEN_LOCAL_TIMEOUT_MS` (padrão 300000).

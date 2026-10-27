@@ -62,9 +62,11 @@ def registrar(pasta: Path) -> Path:
 
 
 def registrar_claude_code() -> str:
-    exe = shutil.which("claude")
+    from haizen.executor import claude_disponivel
+    exe = claude_disponivel()
     if not exe:
-        return "Claude Code não encontrado; pulei esta parte."
+        return ("Claude Code não encontrado. Rode 'where.exe claude' num PowerShell "
+                "novo; se aparecer um caminho, defina HAIZEN_CLAUDE_PATH com ele.")
     subprocess.run([exe, "mcp", "remove", "--scope", "user", NOME],
                    capture_output=True, text=True)
     r = subprocess.run([exe, "mcp", "add", "--scope", "user", NOME, "--",

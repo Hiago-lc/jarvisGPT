@@ -49,8 +49,35 @@ def montar_prompt(agente: agentes.Agente, cliente: dict | None, pedido: str) -> 
 
 
 # ── executores ──────────────────────────────────────────────────────────────
+def _candidatos_claude() -> list[Path]:
+    """Onde os instaladores do Claude Code costumam deixá-lo, além do PATH.
+
+    O instalador nativo põe o executável em ~/.local/bin, pasta que muitas
+    vezes não está no PATH do terminal (ou do Jarvis, aberto antes dela
+    entrar). O npm global usa %APPDATA%\\npm.
+    """
+    home = Path.home()
+    nomes = ("claude.exe", "claude.cmd", "claude") if os.name == "nt" else ("claude",)
+    pastas = [home / ".local" / "bin", home / ".claude" / "local"]
+    if os.environ.get("APPDATA"):
+        pastas.append(Path(os.environ["APPDATA"]) / "npm")
+    if os.environ.get("LOCALAPPDATA"):
+        pastas.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "claude")
+    return [pasta / n for pasta in pastas for n in nomes]
+
+
 def claude_disponivel() -> str | None:
-    return shutil.which("claude")
+    """Caminho do Claude Code, ou None. HAIZEN_CLAUDE_PATH tem a palavra final."""
+    manual = os.environ.get("HAIZEN_CLAUDE_PATH", "").strip()
+    if manual:
+        return manual if Path(manual).is_file() else None
+    achado = shutil.which("claude")
+    if achado:
+        return achado
+    for c in _candidatos_claude():
+        if c.is_file():
+            return str(c)
+    return None
 
 
 def _ambiente_assinatura() -> dict:
