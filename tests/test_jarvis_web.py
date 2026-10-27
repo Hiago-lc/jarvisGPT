@@ -598,6 +598,35 @@ class AgendaDiretaTests(_Base):
             self.assertEqual(r["resposta"], "Resposta do modelo.", texto)
 
 
+class RecusaTests(_Base):
+    def test_refusal_without_trying_gets_reminded_of_its_tools(self):
+        chamada = FunctionCall(id="w", name="open_app", args={"app_name": "WhatsApp"})
+        tool = {"name": "open_app", "description": "abre apps",
+                "handler": lambda parameters=None, player=None: "WhatsApp aberto."}
+        llm = FakeLLM([("Não consigo abrir o WhatsApp diretamente.", []), ("", [chamada]),
+                       ("Abri o WhatsApp.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm), \
+             patch.object(self.cerebro, "_acoes_pc", return_value={"open_app": tool}):
+            r = self.cerebro.responder("abre o WhatsApp")
+        self.assertEqual(r["resposta"], "Abri o WhatsApp.")
+        self.assertEqual(r["acoes"], ["open_app"])
+        self.assertIn("open_app", llm.pedidos[1]["messages"][-1]["content"])
+
+    def test_honest_refusal_after_retry_is_kept(self):
+        llm = FakeLLM([("Não tenho acesso ao seu banco.", []), ("Não tenho acesso ao seu banco.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            r = self.cerebro.responder("mostra meu saldo do banco")
+        self.assertEqual(r["resposta"], "Não tenho acesso ao seu banco.")
+
+    def test_draft_requests_never_offer_the_sending_tool(self):
+        t = ("Eu quero que você abra meu WhatsApp e digite a mensagem Fechou ali pro Guilherme, "
+             "mas não envie, por favor.")
+        escolhidas = self.cerebro.escolher_acoes(t, ["send_message"])
+        self.assertIn("whatsapp_draft", escolhidas)
+        self.assertNotIn("send_message", escolhidas)
+        self.assertIn("send_message", self.cerebro.escolher_acoes("manda no whats pro Pedro: oi"))
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

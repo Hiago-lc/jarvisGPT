@@ -58,7 +58,8 @@ ACOES = (
     ("web_search", "web_search",
      r"pesquis|procur[ae] na|busc[ae]|google|pre[cç]o|cota[cç]|not[ií]cia|quem [eé]|o que [eé]|quanto custa"),
     ("whatsapp_desktop_search", "whatsapp_desktop_search", r"contato"),
-    ("whatsapp_draft", "whatsapp_draft", r"rascunho"),
+    ("whatsapp_draft", "whatsapp_draft",
+     r"rascunho|n[aã]o envi|sem enviar|mas n[aã]o mand|s[oó] (?:digit|escrev)|digit[ae] a mensagem"),
     ("youtube_video", "youtube_video", r"youtube|m[uú]sica|clipe|playlist"),
 )
 # Sempre oferecidas, além das que combinarem: as mais usadas.
@@ -233,6 +234,10 @@ def escolher_acoes(texto: str, anteriores=()) -> list[str]:
     """Ações do PC para esta mensagem: as que combinam com o pedido, as da
     resposta anterior (para "faz de novo", "agora fecha") e as de sempre."""
     escolhidas = [nome for nome, rx in _PALAVRAS if rx.search(texto or "")]
+    if "whatsapp_draft" in escolhidas:
+        # "Digita, mas não envia": a ferramenta que envia nem entra na conversa.
+        escolhidas = [n for n in escolhidas if n != "send_message"]
+        anteriores = [a for a in anteriores if a != "send_message"]
     for nome in (*anteriores, *SEMPRE):
         if nome in _MODULO and nome not in escolhidas:
             escolhidas.append(nome)
@@ -488,6 +493,19 @@ _AFIRMA_QUE_FEZ = re.compile(
 _SO_SEM_FAZER = re.compile(r"\b(n[ãa]o|nada|ainda n[ãa]o|nenhum)\b", re.I)
 
 
+# "Não consigo abrir o WhatsApp", "não tenho acesso à sua agenda"... ditos sem
+# ter tentado nenhuma ferramenta. O modelo pequeno esquece o que pode fazer.
+_RECUSA = re.compile(
+    r"n[ãa]o (?:consigo|posso|tenho (?:acesso|como|conex[ãa]o|permiss[ãa]o)|[ée] poss[íi]vel|"
+    r"est[áa] dispon[íi]vel|tenho a (?:capacidade|ferramenta))|sem acesso|"
+    r"(?:precisaria|voc[êe] (?:pode|precisa|deve)) (?:fazer|abrir|acessar) (?:isso )?(?:diretamente|manualmente)",
+    re.I)
+
+
+def _recusou(texto: str, acoes: list) -> bool:
+    return not acoes and bool(texto) and bool(_RECUSA.search(texto))
+
+
 def _inventou(texto: str, acoes: list) -> bool:
     if acoes or not texto:
         return False
@@ -562,13 +580,21 @@ def responder(texto: str, por_voz: bool = False) -> dict:
             acoes.append(c.name)
             msgs.append({"role": "tool", "tool_call_id": c.id or f"c{rodada}{i}",
                          "name": c.name, "content": str(resultado)[:4000]})
-    if tools and _inventou(resposta, acoes):
-        # O modelo disse que fez sem chamar nada. Uma chance de fazer de verdade.
+    inventou, recusou = _inventou(resposta, acoes), _recusou(resposta, acoes)
+    if tools and (inventou or recusou):
+        if inventou:
+            # O modelo disse que fez sem chamar nada. Uma chance de fazer de verdade.
+            aviso = ("[sistema] Nenhuma ferramenta foi chamada nesta mensagem, então nada foi "
+                     "feito nem conferido. Se o pedido exige registrar, alterar ou consultar, "
+                     "chame a ferramenta agora. Senão, responda sem dizer que fez.")
+        else:
+            # Disse que não consegue sem ter tentado. Lembrar do que ele tem.
+            nomes = ", ".join(d["name"] for d in decls)
+            aviso = ("[sistema] Você controla este computador e tem estas ferramentas agora: "
+                     f"{nomes}. Se alguma serve para o pedido, chame-a agora em vez de dizer "
+                     "que não consegue. Só recuse se nenhuma servir.")
         msgs += [{"role": "assistant", "content": resposta},
-                 {"role": "user", "content": "[sistema] Nenhuma ferramenta foi chamada nesta "
-                  "mensagem, então nada foi feito nem conferido. Se o pedido exige registrar, "
-                  "alterar ou consultar, chame a ferramenta agora. Senão, responda sem dizer "
-                  "que fez."}]
+                 {"role": "user", "content": aviso}]
         texto_llm, chamadas = llm.complete(msgs, tools)
         resposta = _limpar(texto_llm)
         if chamadas:
