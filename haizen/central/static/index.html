@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central HAIZEN</title>
+<link rel="stylesheet" href="/app.css">
+<link rel="icon" href="/icone.svg" type="image/svg+xml">
+</head>
+<body>
+<aside class="trilho" aria-label="Navegação">
+  <a class="marca" href="#/painel" aria-label="Central HAIZEN, ir para o painel">
+    <svg class="marca-icone" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="5" fill="#16323B"/>
+      <path d="M7 27 10.5 9h4l-1.4 7h5.2L19.7 9h-2.5L22 3.5 26 9h-2.3L20 27h-4l1.5-7.4h-5.2L10.8 27z" fill="#F2F5F4"/>
+      <path d="M22 3.5 26 9h-2.3L20 27h-4" fill="#9BC53D"/>
+    </svg>
+    <span class="marca-nome">HAIZEN</span>
+  </a>
+  <nav>
+    <a href="#/painel" data-rota="painel">Painel</a>
+    <a href="#/financeiro" data-rota="financeiro">Financeiro</a>
+    <a href="#/clientes" data-rota="clientes">Clientes</a>
+    <a href="#/tarefas" data-rota="tarefas">Tarefas</a>
+    <a href="#/pipeline" data-rota="pipeline">Pipeline</a>
+    <a href="#/agentes" data-rota="agentes">Agentes <span class="selo" id="selo-agentes" hidden></span></a>
+  </nav>
+  <p class="trilho-rodape">Dados neste computador</p>
+</aside>
+
+<main id="conteudo" tabindex="-1">
+  <p class="carregando">Carregando…</p>
+</main>
+
+<dialog id="dialogo">
+  <form method="dialog" id="dialogo-form">
+    <header class="dialogo-topo">
+      <h2 id="dialogo-titulo"></h2>
+      <button type="button" class="botao-icone" data-fechar aria-label="Fechar">✕</button>
+    </header>
+    <div id="dialogo-corpo"></div>
+    <p class="erro" id="dialogo-erro" role="alert" hidden></p>
+    <footer class="dialogo-acoes" id="dialogo-acoes"></footer>
+  </form>
+</dialog>
+
+<div class="aviso" id="aviso" role="status" aria-live="polite" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

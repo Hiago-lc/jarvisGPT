@@ -67,7 +67,106 @@ CREATE TABLE IF NOT EXISTS trabalhos (
     atualizado_em REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS trabalhos_status ON trabalhos(status);
+
+-- ── Central (faturamento, tarefas, pipeline) ───────────────────────────────
+-- Valores em centavos (inteiro): soma de dinheiro em ponto flutuante erra.
+-- Datas em texto ISO (AAAA-MM-DD). base44_id permite reimportar sem duplicar.
+CREATE TABLE IF NOT EXISTS marcas (
+    id INTEGER PRIMARY KEY,
+    nome TEXT NOT NULL,
+    chave TEXT NOT NULL UNIQUE,
+    pasta TEXT NOT NULL DEFAULT '',
+    cliente_id INTEGER REFERENCES clientes(id),
+    notas TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS receitas (
+    id INTEGER PRIMARY KEY,
+    cliente_id INTEGER REFERENCES clientes(id),
+    descricao TEXT NOT NULL DEFAULT '',
+    valor_centavos INTEGER NOT NULL,
+    vencimento TEXT NOT NULL DEFAULT '',
+    recebido INTEGER NOT NULL DEFAULT 0,
+    data_recebimento TEXT NOT NULL DEFAULT '',
+    mes_referencia TEXT NOT NULL DEFAULT '',
+    base44_id TEXT UNIQUE,
+    criado_em REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS despesas (
+    id INTEGER PRIMARY KEY,
+    descricao TEXT NOT NULL,
+    categoria TEXT NOT NULL DEFAULT 'Outros',
+    valor_centavos INTEGER NOT NULL,
+    vencimento TEXT NOT NULL DEFAULT '',
+    pago INTEGER NOT NULL DEFAULT 0,
+    data_pagamento TEXT NOT NULL DEFAULT '',
+    mes_referencia TEXT NOT NULL DEFAULT '',
+    base44_id TEXT UNIQUE,
+    criado_em REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tarefas (
+    id INTEGER PRIMARY KEY,
+    titulo TEXT NOT NULL,
+    descricao TEXT NOT NULL DEFAULT '',
+    acessos TEXT NOT NULL DEFAULT '',
+    cliente_id INTEGER REFERENCES clientes(id),
+    status TEXT NOT NULL DEFAULT 'A Fazer',
+    prioridade TEXT NOT NULL DEFAULT 'Média',
+    data_entrega TEXT NOT NULL DEFAULT '',
+    horas_estimadas REAL NOT NULL DEFAULT 0,
+    comentarios TEXT NOT NULL DEFAULT '[]',
+    concluida_em TEXT NOT NULL DEFAULT '',
+    base44_id TEXT UNIQUE,
+    criado_em REAL NOT NULL,
+    atualizado_em REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS subtarefas (
+    id INTEGER PRIMARY KEY,
+    tarefa_id INTEGER NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+    titulo TEXT NOT NULL,
+    concluida INTEGER NOT NULL DEFAULT 0,
+    ordem INTEGER NOT NULL DEFAULT 0,
+    base44_id TEXT UNIQUE
+);
+CREATE TABLE IF NOT EXISTS oportunidades (
+    id INTEGER PRIMARY KEY,
+    titulo TEXT NOT NULL,
+    cliente_id INTEGER REFERENCES clientes(id),
+    contato TEXT NOT NULL DEFAULT '',
+    servico TEXT NOT NULL DEFAULT '',
+    valor_centavos INTEGER NOT NULL DEFAULT 0,
+    etapa TEXT NOT NULL DEFAULT 'Lead',
+    notas TEXT NOT NULL DEFAULT '',
+    previsao TEXT NOT NULL DEFAULT '',
+    base44_id TEXT UNIQUE,
+    criado_em REAL NOT NULL,
+    atualizado_em REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS receitas_receb ON receitas(data_recebimento);
+CREATE INDEX IF NOT EXISTS despesas_pag ON despesas(data_pagamento);
+CREATE INDEX IF NOT EXISTS tarefas_status ON tarefas(status);
 """
+
+# Colunas acrescentadas a tabelas que já existiam em bancos de versões
+# anteriores. CREATE TABLE IF NOT EXISTS não altera uma tabela existente.
+_COLUNAS_NOVAS = {
+    "clientes": {
+        "status": "TEXT NOT NULL DEFAULT 'Ativo'",
+        "contato": "TEXT NOT NULL DEFAULT ''",
+        "email": "TEXT NOT NULL DEFAULT ''",
+        "endereco": "TEXT NOT NULL DEFAULT ''",
+        "base44_id": "TEXT",
+    },
+}
+
+
+def _migrar(con) -> None:
+    for tabela, colunas in _COLUNAS_NOVAS.items():
+        existentes = {r[1] for r in con.execute(f"PRAGMA table_info({tabela})")}
+        for nome, tipo in colunas.items():
+            if nome not in existentes:
+                con.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}")
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS clientes_base44 "
+                "ON clientes(base44_id) WHERE base44_id IS NOT NULL")
 
 
 @contextmanager
@@ -78,7 +177,9 @@ def conexao():
     con.row_factory = sqlite3.Row
     try:
         con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA foreign_keys=ON")
         con.executescript(_SCHEMA)
+        _migrar(con)
         yield con
         con.commit()
     finally:

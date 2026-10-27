@@ -165,6 +165,50 @@ def refazer_trabalho(id: int, ajuste: str) -> dict:
     return servicos.refazer(id, ajuste)
 
 
+# ── central (faturamento, tarefas, pipeline) ───────────────────────────────
+@mcp.tool()
+def painel_haizen(de: str = "", ate: str = "") -> dict:
+    """Números da HAIZEN num período (datas AAAA-MM-DD; vazio = mês atual):
+    recebido, custos, lucro, margem, a receber, vencido, a pagar, tarefas
+    atrasadas, série de 12 meses, quem mais pagou, custos por categoria e pipeline."""
+    from haizen.central import dados
+    hoje = dados.hoje()
+    return dados.painel(de or hoje[:8] + "01", ate or hoje)
+
+
+@mcp.tool()
+def listar_registros(tipo: str, cliente: str = "", status: str = "") -> list[dict]:
+    """Lista registros da central. tipo: receitas, despesas, tarefas,
+    oportunidades, clientes ou marcas. Logins e senhas das tarefas nunca vêm."""
+    from haizen.central import dados
+    if tipo not in dados.ENTIDADES or tipo == "subtarefas":
+        raise ValueError("tipo: receitas, despesas, tarefas, oportunidades, clientes ou marcas")
+    filtros = {}
+    if cliente:
+        c = store.buscar_cliente(cliente)
+        if c is None:
+            raise ValueError(f"cliente não encontrado: {cliente}")
+        filtros["cliente_id"] = c["id"]
+    if status:
+        filtros["etapa" if tipo == "oportunidades" else "status"] = status
+    return dados.listar(tipo, **filtros)
+
+
+@mcp.tool()
+def registrar(tipo: str, campos: dict) -> dict:
+    """Cria um registro na central. tipo: receitas (cliente_id, descricao, valor,
+    vencimento, recebido), despesas (descricao, categoria, valor, vencimento, pago),
+    tarefas (titulo, cliente_id, status, prioridade, data_entrega, descricao) ou
+    oportunidades (titulo, cliente_id, contato, servico, valor, etapa).
+    Valores em reais; datas AAAA-MM-DD. Confirme com o usuário antes de lançar dinheiro."""
+    from haizen.central import dados
+    if tipo not in ("receitas", "despesas", "tarefas", "oportunidades"):
+        raise ValueError("tipo: receitas, despesas, tarefas ou oportunidades")
+    campos = dict(campos or {})
+    campos.pop("acessos", None)             # senhas só pela central, nunca pelo Claude
+    return dados.criar(tipo, campos)
+
+
 if __name__ == "__main__":
     # A saída padrão é o canal com o Claude. O que o Jarvis imprime durante
     # um trabalho ("[Gemini] ...") vai para a saída de erro, não para o canal.
