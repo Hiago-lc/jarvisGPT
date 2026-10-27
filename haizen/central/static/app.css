@@ -273,3 +273,6 @@ main { grid-column: 2; grid-row: 2; }
   body { grid-template-rows: auto; }
   .trilho, .versao, main { grid-column: 1; grid-row: auto; }
 }
+
+/* Dentro da janela do Jarvis: sem o chat (o Jarvis da janela já conversa). */
+body.embutido .trilho nav a[data-rota="jarvis"] { display: none; }

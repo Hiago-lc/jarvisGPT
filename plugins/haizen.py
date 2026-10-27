@@ -54,6 +54,14 @@ PLUGIN = {
 }
 
 
+# Tela da central pedida em palavras.
+_TELAS = (("financeiro", ("financ", "receita", "despesa", "faturamento", "pagamento")),
+          ("clientes", ("cliente",)),
+          ("tarefas", ("tarefa", "entrega")),
+          ("pipeline", ("pipeline", "oportunidade", "lead", "funil")),
+          ("agentes", ("agente", "trabalho", "aprova")),
+          ("painel", ("painel", "resumo")))
+
 _retomado = False
 
 
@@ -141,6 +149,13 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             return "Agentes: " + "; ".join(f"{a.nome} ({a.descricao})" for a in lista)
 
         if acao == "central":
+            # Dentro da janela do Jarvis, a central abre ali mesmo, na tela
+            # pedida ("abre o financeiro"); sem a janela, no navegador.
+            pedido = " ".join(str(p.get(k) or "") for k in ("pedido", "tipo", "dados")).lower()
+            rota = next((r for r, chaves in _TELAS if any(c in pedido for c in chaves)), "")
+            if player is not None and hasattr(player, "show_central"):
+                player.show_central(rota)
+                return f"Abri a central da HAIZEN{' em ' + rota if rota else ''} aqui na janela."
             from haizen.central import servidor
             servidor.iniciar(abrir_navegador=True)
             return "Abri a central da HAIZEN no navegador."

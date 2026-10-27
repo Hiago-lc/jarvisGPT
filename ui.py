@@ -4251,6 +4251,7 @@ class MainWindow(QMainWindow):
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
     _confirm_sig    = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
+    _central_sig    = pyqtSignal(str)        # abrir a central da HAIZEN (rota)
     _wake_dl_sig    = pyqtSignal(bool, str)  # wake-word install finished (ok, message)
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
@@ -4522,7 +4523,17 @@ class MainWindow(QMainWindow):
         self._right_panel = self._build_right_panel()
         body.addWidget(self._right_panel, stretch=3)
 
-        root.addLayout(body, stretch=1)
+        # Duas páginas na mesma janela: o HUD do Jarvis e a central da HAIZEN.
+        # A central só é montada no primeiro clique (o navegador embutido do Qt
+        # custa memória, e quem não abre a central não paga por ela).
+        self._hud_page = QWidget()
+        self._hud_page.setLayout(body)
+        self._paginas = QStackedWidget()
+        self._paginas.addWidget(self._hud_page)
+        self._central_page = None
+        self._central_view = None
+        self._central_url = ""
+        root.addWidget(self._paginas, stretch=1)
         root.addWidget(self._build_footer())
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
@@ -4559,6 +4570,7 @@ class MainWindow(QMainWindow):
         self._camera_sig.connect(self._show_camera_frame)
         self._confirm_sig.connect(self._show_confirm_banner)
         self._confirm_hide_sig.connect(self._hide_confirm_banner)
+        self._central_sig.connect(self._mostrar_central)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._wake_btns_sig.connect(self._refresh_wake_btns)
@@ -4591,6 +4603,8 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         self._desktop_shortcut = QShortcut(QKeySequence("F8"), self)
         self._desktop_shortcut.activated.connect(self._show_desktop_monitor)
+        self._central_shortcut = QShortcut(QKeySequence("F9"), self)
+        self._central_shortcut.activated.connect(self._toggle_central)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
@@ -5398,6 +5412,19 @@ class MainWindow(QMainWindow):
         self._desktop_btn.clicked.connect(self._show_desktop_monitor)
         lay.addSpacing(8)
         lay.addWidget(self._desktop_btn)
+        # Faturamento, clientes, tarefas, pipeline e agentes da HAIZEN, aqui
+        # dentro: a área principal troca para a central, sem abrir navegador.
+        self._central_btn = QPushButton("Central HAIZEN")
+        self._central_btn.setObjectName("central_haizen_button")
+        self._central_btn.setFixedSize(138, 30)
+        self._central_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self._central_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._central_btn.setCheckable(True)
+        self._central_btn.setToolTip("Financeiro, clientes, tarefas, pipeline e agentes (F9)")
+        self._central_btn.setStyleSheet(self._desktop_btn.styleSheet() + f" QPushButton:checked {{color:{C.DARK}; background:{C.PRI}; border-color:{C.PRI};}}")
+        self._central_btn.clicked.connect(self._toggle_central)
+        lay.addSpacing(6)
+        lay.addWidget(self._central_btn)
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -6878,6 +6905,89 @@ class MainWindow(QMainWindow):
         if self.on_audio_device_change:
             self.on_audio_device_change()
 
+    # ── Central da HAIZEN, dentro da janela ──────────────────────────────────
+
+    _ROTAS_CENTRAL = ("painel", "financeiro", "clientes", "tarefas", "pipeline", "agentes")
+
+    def _toggle_central(self):
+        if self._central_page is not None and self._paginas.currentWidget() is self._central_page:
+            self._mostrar_hud()
+        else:
+            self._mostrar_central("")
+
+    def _mostrar_hud(self):
+        self._paginas.setCurrentWidget(self._hud_page)
+        self._central_btn.setChecked(False)
+
+    def _mostrar_central(self, rota: str = ""):
+        if self._central_page is None:
+            self._central_page = self._build_central_page()
+            self._paginas.addWidget(self._central_page)
+        rota = rota if rota in self._ROTAS_CENTRAL else ""
+        if rota and self._central_view is not None:
+            from PyQt6.QtCore import QUrl
+            self._central_view.setUrl(QUrl(f"{self._central_url}?embutido=1#/{rota}"))
+        self._paginas.setCurrentWidget(self._central_page)
+        self._central_btn.setChecked(True)
+
+    def _build_central_page(self) -> QWidget:
+        page = QWidget()
+        page.setStyleSheet(f"background: {C.BG};")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        barra = QWidget()
+        barra.setFixedHeight(38)
+        barra.setStyleSheet(f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER};")
+        bl = QHBoxLayout(barra)
+        bl.setContentsMargins(12, 0, 12, 0)
+        voltar = QPushButton("◂  JARVIS  (F9)")
+        voltar.setFixedHeight(26)
+        voltar.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        voltar.setCursor(Qt.CursorShape.PointingHandCursor)
+        voltar.setStyleSheet(f"QPushButton {{color:{C.PRI}; background:transparent; border:1px solid {C.PRI_DIM}; border-radius:4px; padding: 0 10px;}} QPushButton:hover {{border-color:{C.PRI};}}")
+        voltar.clicked.connect(self._mostrar_hud)
+        bl.addWidget(voltar)
+        titulo = QLabel("CENTRAL HAIZEN  ·  a voz do Jarvis continua ligada")
+        titulo.setFont(QFont("Courier New", 8))
+        titulo.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        bl.addSpacing(12)
+        bl.addWidget(titulo)
+        bl.addStretch()
+        v.addWidget(barra)
+
+        try:
+            from haizen.central import servidor
+            self._central_url = servidor.iniciar(abrir_navegador=False).rstrip("/") + "/"
+        except Exception as e:  # noqa: BLE001
+            v.addWidget(self._central_aviso(f"A central não iniciou: {e}"), 1)
+            return page
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            v.addWidget(self._central_aviso(
+                "Falta um componente do Qt para mostrar a central aqui dentro.\n\n"
+                "Feche o Jarvis e rode uma vez no PowerShell, na pasta C:\\JARVIS:\n\n"
+                "    py -m pip install PyQt6-WebEngine\n\n"
+                "Depois abra o Jarvis de novo."), 1)
+            return page
+        view = QWebEngineView(page)
+        view.setUrl(QUrl(f"{self._central_url}?embutido=1#/painel"))
+        v.addWidget(view, 1)
+        self._central_view = view
+        return page
+
+    def _central_aviso(self, texto: str) -> QWidget:
+        l = QLabel(texto)
+        l.setWordWrap(True)
+        l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        l.setFont(QFont("Courier New", 10))
+        l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; padding: 40px;")
+        return l
+
     # ── Memory panel ─────────────────────────────────────────────────────────
 
     def _open_memory_panel(self):
@@ -7085,6 +7195,14 @@ class _RootShim:
 
 class JarvisUI:
     def __init__(self, face_path: str, size=None):
+        if QApplication.instance() is None:
+            # O navegador embutido do Qt (central da HAIZEN) só funciona se for
+            # preparado antes de a aplicação existir. Sem o pacote, segue igual.
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+            try:
+                import PyQt6.QtWebEngineWidgets  # noqa: F401
+            except Exception:
+                pass
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._win = MainWindow(face_path)
@@ -7143,6 +7261,10 @@ class JarvisUI:
     @on_audio_device_change.setter
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
+
+    def show_central(self, rota: str = "") -> None:
+        """Mostra a central da HAIZEN dentro da janela (seguro de qualquer thread)."""
+        self._win._central_sig.emit(str(rota or ""))
 
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action

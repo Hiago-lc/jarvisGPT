@@ -113,5 +113,51 @@ class AppsDaLojaTests(unittest.TestCase):
         self.assertEqual(abriu, [["explorer.exe", "shell:AppsFolder\\5319275A.51895FA4EA97F_cv1g1gvanyjgm!App"]])
 
 
+class CentralNaJanelaTests(unittest.TestCase):
+    """A central da HAIZEN abre dentro da janela do Jarvis, na tela pedida."""
+
+    def _run(self, params, player):
+        import plugins.haizen as plug
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {"HAIZEN_DB": str(Path(d) / "h.db")}):
+            return plug.run(params, player=player)
+
+    def test_voice_command_opens_the_right_screen_inside_the_window(self):
+        abertas = []
+
+        class Janela:
+            def show_central(self, rota=""):
+                abertas.append(rota)
+
+            def write_log(self, *_):
+                pass
+        r = self._run({"acao": "central", "pedido": "abre o financeiro"}, Janela())
+        self.assertEqual(abertas, ["financeiro"])
+        self.assertIn("aqui na janela", r)
+        self._run({"acao": "central", "pedido": "quero ver os clientes"}, Janela())
+        self._run({"acao": "central"}, Janela())
+        self.assertEqual(abertas, ["financeiro", "clientes", ""])
+
+    def test_without_the_window_it_uses_the_browser(self):
+        from haizen.central import servidor
+        with patch.object(servidor, "iniciar", return_value="http://127.0.0.1:8765/") as iniciar:
+            r = self._run({"acao": "central"}, None)
+        iniciar.assert_called_once_with(abrir_navegador=True)
+        self.assertIn("navegador", r)
+
+    def test_embedded_page_hides_its_own_chat(self):
+        raiz = Path(__file__).resolve().parent.parent
+        js = (raiz / "haizen/central/static/app.js").read_text(encoding="utf-8")
+        css = (raiz / "haizen/central/static/app.css").read_text(encoding="utf-8")
+        self.assertIn('new URLSearchParams(location.search).has("embutido")', js)
+        self.assertIn('!(EMBUTIDO && rota === "jarvis")', js)
+        self.assertIn('body.embutido .trilho nav a[data-rota="jarvis"] { display: none; }', css)
+
+    def test_window_has_the_central_page(self):
+        fonte = (Path(__file__).resolve().parent.parent / "ui.py").read_text(encoding="utf-8")
+        for trecho in ('QPushButton("Central HAIZEN")', 'QKeySequence("F9")', "QWebEngineView",
+                       "?embutido=1#/painel", "AA_ShareOpenGLContexts", "def show_central"):
+            self.assertIn(trecho, fonte)
+
+
 if __name__ == "__main__":
     unittest.main()

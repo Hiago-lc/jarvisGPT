@@ -119,9 +119,14 @@ const confirmar = (texto) => new Promise((ok) => {
 const ROTAS = {};
 const main = $("#conteudo");
 
+// Dentro da janela do Jarvis (?embutido=1), o próprio Jarvis já conversa e
+// ouve: a central esconde o chat dela para não haver dois assistentes.
+const EMBUTIDO = new URLSearchParams(location.search).has("embutido");
+if (EMBUTIDO) document.body.classList.add("embutido");
+
 async function navegar() {
   const [rota, param] = (location.hash.replace(/^#\/?/, "") || "painel").split("/");
-  const tela = ROTAS[rota] ? rota : "painel";
+  const tela = ROTAS[rota] && !(EMBUTIDO && rota === "jarvis") ? rota : "painel";
   $$(".trilho nav a").forEach((a) => {
     if (a.dataset.rota === tela) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });

@@ -81,6 +81,18 @@ Sem console, o que acontece fica em `%LOCALAPPDATA%\JarvisGPT\jarvis_janela.log`
 
 O Whisper recebe uma lista de palavras esperadas (nomes de apps, HAIZEN e os clientes ativos da central), para errar menos nomes como "WhatsApp Business". Os nomes dos clientes ficam só na memória, nunca no arquivo de configuração.
 
+## Tudo dentro da janela do Jarvis
+
+O botão **Central HAIZEN** no topo da janela (ou a tecla **F9**) troca a área principal para o painel, o financeiro, os clientes, as tarefas, o pipeline e os agentes. **◂ JARVIS** (ou F9 de novo) volta. A voz continua ligada nas duas telas, e você também pode dizer "abre o financeiro" ou "mostra os clientes".
+
+Na primeira vez, instale o componente que desenha a central dentro da janela (uma vez só, com o Jarvis fechado):
+
+```powershell
+py -m pip install PyQt6-WebEngine
+```
+
+Ele só ocupa memória quando a central é aberta. No celular, a mesma central continua no endereço do Tailscale.
+
 ## O que muda em relação ao Gemini
 
 - A conversa é ouvir → pensar → falar em sequência, então há uma pausa antes da resposta, maior no perfil local.
