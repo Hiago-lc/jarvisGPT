@@ -138,6 +138,10 @@ class OllamaContextTests(unittest.TestCase):
         _, _, runtime, _, _ = _run('local', {})
         self.assertEqual(runtime['openai_compat']['history_chars'], '8000')
 
+    def test_local_profile_waits_longer_for_the_first_word(self):
+        _, _, runtime, _, _ = _run('local', {'JARVIS_TIMEOUT': ''})
+        self.assertEqual(runtime['openai_compat']['timeout'], '180')
+
     def test_engine_takes_history_budget_from_the_model(self):
         from providers.engine_pipeline import PipelineEngine
 

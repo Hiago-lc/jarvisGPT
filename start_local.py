@@ -53,6 +53,12 @@ DEFAULT_WHISPER = "small"
 LOCAL_TOOL_BUDGET = {"max_tools": "10", "max_tool_chars": "8000",
                      "history_chars": "8000"}
 
+# Quanto esperar pela primeira palavra do modelo local, em segundos. O padrão
+# do provedor (60 s) é pouco para uma placa modesta: antes de responder, o
+# modelo lê ~7 mil tokens de instruções, e na primeira vez ainda carrega o
+# modelo na memória. Nas vezes seguintes o Ollama reaproveita essa leitura.
+LOCAL_TIMEOUT = "180"
+
 # O Ollama abre modelos com 4096 tokens de contexto por padrão, e só as
 # instruções e ferramentas do Jarvis passam de 7 mil. A API compatível com a
 # OpenAI não aceita mudar isso por pedido, então criamos um modelo derivado com
@@ -178,12 +184,14 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
     llm = creds.setdefault("openai_compat", {})
     if perfil == "local":
         llm.update(base_url=OLLAMA_URL + "/v1", model=modelo, api_key="",
-                   vision=False, **LOCAL_TOOL_BUDGET)
+                   vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
+                   **LOCAL_TOOL_BUDGET)
     else:
         llm.update(base_url=GROQ_URL, model=modelo, vision=False,
                    max_tools="0", max_tool_chars="0")
         llm.pop("api_key", None)          # a chave só existe em memória
         llm.pop("history_chars", None)    # o Groq tem contexto de sobra
+        llm.pop("timeout", None)          # e responde em segundos
 
     stt = creds.setdefault("whisper", {})
     if perfil == "local":
