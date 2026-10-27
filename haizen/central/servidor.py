@@ -206,6 +206,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._jarvis(metodo, partes[1:], q)
         if partes and partes[0] == "sistema":
             return self._sistema(metodo, partes[1:])
+        if partes and partes[0] == "janela":
+            return self._janela(metodo, partes[1:], q)
 
         if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "ficha":
             return dados.ficha_cliente(int(partes[1]))
@@ -260,6 +262,41 @@ class _Handler(BaseHTTPRequestHandler):
                 novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
                 worker.iniciar()
                 return _trabalho(novo)
+        return _NAO_ACHOU
+
+    def _janela(self, metodo, partes, q):
+        """A interface comandando o Jarvis da janela (só quando ele está aberto)."""
+        from haizen.central import janela
+        p = janela.ponte()
+        if p is None:
+            return _NAO_ACHOU
+        rota = partes[0] if partes else ""
+        if rota == "estado" and metodo == "GET":
+            from haizen.central import cerebro
+            hist = cerebro.historico(1)
+            return {**p.estado(int(q.get("desde") or 0)),
+                    "ultima": hist[-1]["criado_em"] if hist else 0}
+        if rota == "mensagem" and metodo == "POST":
+            texto = str(self._corpo().get("texto") or "").strip()
+            if not texto:
+                raise ValueError("mensagem vazia")
+            p.enviar(texto[:4000])
+            return {"ok": True}
+        if rota == "microfone" and metodo == "POST":
+            p.microfone(bool(self._corpo().get("ligado")))
+            return {"ok": True}
+        if rota == "acordar" and metodo == "POST":
+            p.acordar()
+            return {"ok": True}
+        if rota == "interromper" and metodo == "POST":
+            p.interromper()
+            return {"ok": True}
+        if rota == "ajuste" and metodo == "POST":
+            nome = str(self._corpo().get("nome") or "")
+            if nome not in janela.AJUSTES:
+                raise ValueError("ajuste desconhecido")
+            p.abrir(nome)
+            return {"ok": True}
         return _NAO_ACHOU
 
     def _sistema(self, metodo, partes):

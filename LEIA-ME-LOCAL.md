@@ -83,15 +83,19 @@ O Whisper recebe uma lista de palavras esperadas (nomes de apps, HAIZEN e os cli
 
 ## Tudo dentro da janela do Jarvis
 
-O botão **Central HAIZEN** no topo da janela (ou a tecla **F9**) troca a área principal para o painel, o financeiro, os clientes, as tarefas, o pipeline e os agentes. **◂ JARVIS** (ou F9 de novo) volta. A voz continua ligada nas duas telas, e você também pode dizer "abre o financeiro" ou "mostra os clientes".
+O Jarvis abre na interface nova: barra lateral com Jarvis, Painel, Financeiro, Clientes, Tarefas, Pipeline e Agentes, e no rodapé o microfone e os Ajustes.
 
-Na primeira vez, instale o componente que desenha a central dentro da janela (uma vez só, com o Jarvis fechado):
+- **Jarvis**: a conversa (por voz ou escrita) com o mesmo Jarvis que ouve e controla o PC. O círculo no topo mostra o que ele está fazendo: ouvindo, pensando, respondendo, microfone desligado ou em espera. **Registro** mostra o que acontece por dentro, e **Interromper** para uma resposta ou tarefa.
+- **Microfone** (na barra lateral): liga e desliga, como o F4.
+- **Ajustes**: áudio, memória, modelo e voz, plugins, controle pelo celular e o **visual clássico** (o avatar antigo). F9 alterna entre os dois visuais.
+
+Na primeira vez, instale o componente que desenha a interface (uma vez só, com o Jarvis fechado):
 
 ```powershell
 py -m pip install PyQt6-WebEngine
 ```
 
-Ele só ocupa memória quando a central é aberta. No celular, a mesma central continua no endereço do Tailscale.
+Sem ele, o Jarvis abre no visual clássico, como antes. Para preferir sempre o clássico: `setx JARVIS_VISUAL_CLASSICO 1`.
 
 ## O que muda em relação ao Gemini
 

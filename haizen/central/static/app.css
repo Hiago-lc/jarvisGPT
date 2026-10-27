@@ -34,21 +34,41 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ── trilho ── */
 .trilho {
-  background: var(--petroleo); color: #C9D3D2; padding: 22px 14px;
-  display: flex; flex-direction: column; gap: 28px; position: sticky; top: 0; height: 100vh;
+  background: var(--petroleo); color: #B9C6C5; padding: 20px 12px 16px;
+  display: flex; flex-direction: column; gap: 22px; position: sticky; top: 0; height: 100vh;
 }
 .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; padding: 0 8px; }
 .marca-icone { width: 30px; height: 30px; flex: none; }
 .marca-nome { font: 600 17px/1 var(--display); letter-spacing: .18em; color: #E8EEED; font-stretch: expanded; }
 .trilho nav { display: flex; flex-direction: column; gap: 2px; }
 .trilho nav a {
-  text-decoration: none; padding: 9px 10px; border-radius: var(--raio);
-  display: flex; justify-content: space-between; align-items: center;
+  text-decoration: none; padding: 9px 10px; border-radius: 9px; font-size: 14.5px;
+  display: flex; align-items: center; gap: 12px; color: #B9C6C5;
 }
-.trilho nav a:hover { background: var(--petroleo-2); color: #fff; }
-.trilho nav a[aria-current="page"] { background: var(--petroleo-2); color: #fff; box-shadow: inset 3px 0 0 var(--limao); }
+.nav-icone { width: 19px; height: 19px; flex: none; opacity: .8; }
+.trilho nav a:hover { background: #12282F; color: #fff; }
+.trilho nav a[aria-current="page"] { background: var(--petroleo-2); color: #fff; }
+.trilho nav a[aria-current="page"] .nav-icone { color: var(--limao); opacity: 1; }
+.nav-jarvis { font-weight: 600; color: #E8EEED !important; }
+.nav-grupo { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, .07); }
+.selo, .nav-estado { margin-left: auto; }
 .selo { background: var(--limao); color: var(--petroleo); border-radius: 9px; font-size: 12px; font-weight: 700; padding: 0 7px; }
-.trilho-rodape { margin-top: auto; font-size: 12px; color: #7F9294; padding: 0 8px; }
+.nav-estado { width: 8px; height: 8px; border-radius: 50%; background: #5E7377; }
+.nav-estado[data-estado="ouvindo"], .nav-estado[data-estado="falando"] { background: var(--limao); }
+.nav-estado[data-estado="pensando"] { background: #E0B04B; }
+.nav-estado[data-estado="mudo"] { background: var(--tijolo); }
+.trilho-sistema { margin-top: auto; display: flex; flex-direction: column; gap: 4px; }
+.mic-pilula, .trilho-botao {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border-radius: 9px;
+  border: 0; background: none; color: #B9C6C5; font-size: 14px; cursor: pointer; text-align: left;
+}
+.mic-pilula { border: 1px solid #22404A; }
+.mic-pilula:hover, .trilho-botao:hover { background: #12282F; color: #fff; }
+.mic-ponto { width: 10px; height: 10px; border-radius: 50%; margin: 0 4px; background: var(--tijolo); flex: none; }
+.mic-pilula[aria-pressed="true"] { color: #E8EEED; }
+.mic-pilula[aria-pressed="true"] .mic-ponto { background: var(--limao); box-shadow: 0 0 0 3px rgba(155, 197, 61, .2); }
+.trilho-rodape { font-size: 12px; color: #6F8487; padding: 0 10px; margin: 6px 0 0; }
+.trilho-sistema[hidden] + .trilho-rodape { margin-top: auto; }
 
 /* ── área principal ── */
 main { padding: 28px clamp(16px, 3vw, 40px) 64px; min-width: 0; outline: none; }
@@ -276,3 +296,56 @@ main { grid-column: 2; grid-row: 2; }
 
 /* Dentro da janela do Jarvis: sem o chat (o Jarvis da janela já conversa). */
 body.embutido .trilho nav a[data-rota="jarvis"] { display: none; }
+
+/* ── Jarvis com a janela nativa ── */
+.jarvis.nativo .jarvis-topo { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.jarvis-titulo h1 { margin: 0; }
+.jarvis-titulo .sub { margin-top: 2px; }
+.jarvis-acoes { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.jarvis-acoes .botao[aria-expanded="true"] { background: var(--petroleo); color: #fff; border-color: var(--petroleo); }
+.jarvis-corpo { flex: 1; display: flex; gap: 16px; min-height: 0; margin-bottom: 14px; }
+.jarvis-corpo .conversa { min-width: 0; }
+.registro { width: 330px; flex: none; overflow-y: auto; background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px; padding: 6px 14px; }
+.registro[hidden] { display: none; }
+.registro ol { list-style: none; margin: 0; padding: 0; font-size: 12.5px; line-height: 1.45; color: var(--cinza); }
+.registro li { padding: 6px 0; border-bottom: 1px solid #EEF2F1; overflow-wrap: anywhere; }
+.registro li:last-child { border-bottom: 0; }
+
+/* O orbe: o único movimento da interface, e só para dizer o que o Jarvis está fazendo. */
+.orbe { --cor: var(--limao); position: relative; width: 52px; height: 52px; flex: none; border-radius: 50%;
+  border: 2px solid var(--linha); background: radial-gradient(circle at 50% 50%, #fff 0 54%, transparent 55%);
+  display: flex; align-items: center; justify-content: center; gap: 3px; }
+.orbe i { display: none; width: 4px; height: 8px; border-radius: 2px; background: var(--petroleo); }
+.orbe[data-estado="ouvindo"] { border-color: var(--cor); animation: respirar 2.6s ease-in-out infinite; }
+.orbe[data-estado="pensando"] { border-color: var(--linha); border-top-color: var(--petroleo); animation: girar .9s linear infinite; }
+.orbe[data-estado="falando"] { border-color: var(--cor); }
+.orbe[data-estado="falando"] i { display: block; animation: barra .8s ease-in-out infinite; }
+.orbe[data-estado="falando"] i:nth-child(2) { animation-delay: -.6s; }
+.orbe[data-estado="falando"] i:nth-child(3) { animation-delay: -.3s; }
+.orbe[data-estado="falando"] i:nth-child(4) { animation-delay: -.45s; }
+.orbe[data-estado="mudo"]::after { content: ""; position: absolute; width: 2px; height: 60%; background: var(--tijolo); transform: rotate(45deg); border-radius: 1px; }
+.orbe[data-estado="dormindo"] { opacity: .45; }
+@keyframes respirar { 0%, 100% { box-shadow: 0 0 0 0 rgba(155, 197, 61, .35); } 50% { box-shadow: 0 0 0 9px rgba(155, 197, 61, 0); } }
+@keyframes girar { to { transform: rotate(360deg); } }
+@keyframes barra { 0%, 100% { height: 6px; } 50% { height: 20px; } }
+
+.lista-ajustes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: min(420px, 80vw); }
+.ajuste { width: 100%; display: grid; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--linha); border-radius: 10px; background: var(--superficie); cursor: pointer; }
+.ajuste:hover { border-color: var(--foco); }
+.ajuste span { color: var(--cinza); font-size: 13px; }
+
+@media (max-width: 760px) {
+  .trilho-sistema { flex-direction: row; margin-top: 0; width: 100%; }
+  .nav-grupo { flex-direction: row; flex-wrap: wrap; margin-top: 0; padding-top: 0; border-top: 0; }
+  .nav-icone { display: none; }
+  .jarvis-corpo { flex-direction: column; }
+  .registro { width: auto; max-height: 35vh; }
+  .jarvis.nativo .jarvis-topo { flex-wrap: wrap; }
+}
+.trilho-sistema[hidden], .trilho-botao[hidden], .mic-pilula[hidden] { display: none; }
+@media (max-width: 760px) {
+  .mic-pilula, .trilho-botao { width: auto; white-space: nowrap; }
+  .jarvis.nativo { height: auto; min-height: calc(100dvh - 300px); }
+  .jarvis.nativo .jarvis-corpo { flex: none; }
+  .jarvis.nativo .compositor { position: sticky; bottom: 10px; }
+}

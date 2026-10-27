@@ -149,13 +149,14 @@ class CentralNaJanelaTests(unittest.TestCase):
         js = (raiz / "haizen/central/static/app.js").read_text(encoding="utf-8")
         css = (raiz / "haizen/central/static/app.css").read_text(encoding="utf-8")
         self.assertIn('new URLSearchParams(location.search).has("embutido")', js)
-        self.assertIn('!(EMBUTIDO && rota === "jarvis")', js)
+        self.assertIn('!(EMBUTIDO && !PONTE && rota === "jarvis")', js)
         self.assertIn('body.embutido .trilho nav a[data-rota="jarvis"] { display: none; }', css)
 
     def test_window_has_the_central_page(self):
         fonte = (Path(__file__).resolve().parent.parent / "ui.py").read_text(encoding="utf-8")
-        for trecho in ('QPushButton("Central HAIZEN")', 'QKeySequence("F9")', "QWebEngineView",
-                       "?embutido=1#/painel", "AA_ShareOpenGLContexts", "def show_central"):
+        for trecho in ('QPushButton("Visual novo")', 'QKeySequence("F9")', "QWebEngineView",
+                       "?app=1#/jarvis", "AA_ShareOpenGLContexts", "def show_central",
+                       "janela.registrar(_PonteJanela(self))", "QTimer.singleShot(0, self._abrir_visual_inicial)"):
             self.assertIn(trecho, fonte)
 
 
@@ -256,6 +257,92 @@ class PromptLocalTests(unittest.TestCase):
     def test_stale_mute_reason_is_dropped(self):
         fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
         self.assertIn('if diag["motivo"] and agora - diag["quando"] > 2:', fonte)
+
+
+class PonteTests(unittest.TestCase):
+    """A interface nova comanda o Jarvis da janela pelas rotas /api/janela."""
+
+    def setUp(self):
+        import http.client
+        from haizen.central import janela, servidor
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"HAIZEN_DB": str(Path(self.tmp.name) / "h.db")})
+        self.env.start()
+        self.porta = 17000 + os.getpid() % 900
+        self.p = patch.object(servidor, "PORTA", self.porta)
+        self.p.start()
+        servidor.iniciar(abrir_navegador=False)
+        self.servidor, self.janela, self.http = servidor, janela, http.client
+        self.eventos = []
+        test = self
+
+        class Ponte:
+            def estado(self, desde=0):
+                return {"estado": "LISTENING", "mudo": False, "dormindo": False, "nome": "Jarvis",
+                        "atividade": [{"id": i, "texto": t} for i, t in ((1, "a"), (2, "b")) if i > desde]}
+
+            def enviar(self, texto):
+                test.eventos.append(("enviar", texto))
+
+            def microfone(self, ligado):
+                test.eventos.append(("mic", ligado))
+
+            def acordar(self):
+                test.eventos.append(("acordar",))
+
+            def interromper(self):
+                test.eventos.append(("interromper",))
+
+            def abrir(self, nome):
+                test.eventos.append(("ajuste", nome))
+        self.Ponte = Ponte
+
+    def tearDown(self):
+        self.janela.registrar(None)
+        self.servidor.parar()
+        self.p.stop()
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def pedir(self, metodo, caminho, corpo=None):
+        c = self.http.HTTPConnection("127.0.0.1", self.porta, timeout=5)
+        c.request(metodo, caminho, body=json.dumps(corpo) if corpo is not None else None,
+                  headers={"X-Central": "1"})
+        r = c.getresponse()
+        dados = json.loads(r.read() or b"{}")
+        c.close()
+        return r.status, dados
+
+    def test_without_the_window_the_routes_do_not_exist(self):
+        self.janela.registrar(None)
+        self.assertEqual(self.pedir("GET", "/api/janela/estado")[0], 404)
+
+    def test_state_activity_and_commands(self):
+        from haizen import store
+        self.janela.registrar(self.Ponte())
+        store.guardar_mensagem("jarvis", "Oi", origem="janela")
+        st, e = self.pedir("GET", "/api/janela/estado?desde=1")
+        self.assertEqual(st, 200)
+        self.assertEqual([a["texto"] for a in e["atividade"]], ["b"])
+        self.assertGreater(e["ultima"], 0)
+        self.assertEqual(self.pedir("POST", "/api/janela/mensagem", {"texto": " abre o WhatsApp "})[0], 200)
+        self.assertEqual(self.pedir("POST", "/api/janela/mensagem", {"texto": "  "})[0], 400)
+        self.pedir("POST", "/api/janela/microfone", {"ligado": False})
+        self.pedir("POST", "/api/janela/ajuste", {"nome": "audio"})
+        self.assertEqual(self.pedir("POST", "/api/janela/ajuste", {"nome": "rm -rf"})[0], 400)
+        self.pedir("POST", "/api/janela/interromper", {})
+        self.assertEqual(self.eventos, [("enviar", "abre o WhatsApp"), ("mic", False),
+                                        ("ajuste", "audio"), ("interromper",)])
+
+    def test_front_uses_the_bridge(self):
+        raiz = Path(__file__).resolve().parent.parent / "haizen/central/static"
+        js = (raiz / "app.js").read_text(encoding="utf-8")
+        html = (raiz / "index.html").read_text(encoding="utf-8")
+        for trecho in ('ROTAS.jarvis = async () => (PONTE ? jarvisNativo() : jarvisWeb());',
+                       'api("POST", "janela/mensagem", { texto })', 'api("POST", "janela/ajuste"'):
+            self.assertIn(trecho, js)
+        self.assertIn('id="mic-global"', html)
+        self.assertIn('id="abrir-ajustes"', html)
 
 
 if __name__ == "__main__":

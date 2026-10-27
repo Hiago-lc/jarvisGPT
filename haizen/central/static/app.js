@@ -124,13 +124,22 @@ const main = $("#conteudo");
 const EMBUTIDO = new URLSearchParams(location.search).has("embutido");
 if (EMBUTIDO) document.body.classList.add("embutido");
 
+// Dentro da janela do Jarvis (?app=1) a interface é a própria janela: a tela
+// Jarvis comanda o Jarvis nativo (voz, PC), pela ponte /api/janela.
+const APP = new URLSearchParams(location.search).has("app");
+if (APP) document.body.classList.add("app");
+let PONTE = false;          // a janela do Jarvis está aberta e respondendo
+let NATIVO = null;          // quem, na tela atual, quer saber do estado da janela
+
 async function navegar() {
-  const [rota, param] = (location.hash.replace(/^#\/?/, "") || "painel").split("/");
-  const tela = ROTAS[rota] && !(EMBUTIDO && rota === "jarvis") ? rota : "painel";
+  const [rota, param] = (location.hash.replace(/^#\/?/, "") || (PONTE ? "jarvis" : "painel")).split("/");
+  const padrao = PONTE ? "jarvis" : "painel";
+  const tela = ROTAS[rota] && !(EMBUTIDO && !PONTE && rota === "jarvis") ? rota : padrao;
   $$(".trilho nav a").forEach((a) => {
     if (a.dataset.rota === tela) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   clearInterval(navegar.timer);
+  NATIVO = null;
   if (CONVERSA.ligada && tela !== "jarvis") desligarConversa();   // sair da tela desliga o microfone
   try {
     await opcoes();
@@ -858,7 +867,9 @@ function mostrarConfirmacao(c) {
   $("#conf-titulo").textContent = c.titulo;
 }
 
-ROTAS.jarvis = async () => {
+ROTAS.jarvis = async () => (PONTE ? jarvisNativo() : jarvisWeb());
+
+const jarvisWeb = async () => {
   const [estado, hist] = await Promise.all([api("GET", "jarvis/estado"), api("GET", "jarvis/historico")]);
   const voz = lembrar("central.voz", true);
   main.innerHTML = `
@@ -1050,4 +1061,189 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => { /* sem app instalável, a página funciona igual */ });
 }
 
-navegar();
+// ── Ponte com a janela do Jarvis ──────────────────────────────────────────
+const ESTADOS = {
+  LISTENING: ["ouvindo", "Ouvindo. Pode falar."],
+  THINKING: ["pensando", "Pensando…"],
+  SPEAKING: ["falando", "Respondendo"],
+  MUTED: ["mudo", "Microfone desligado"],
+  SLEEPING: ["dormindo", "Em espera"],
+};
+const PONTE_ESTADO = { desde: 0, linhas: [], ultimo: null };
+
+function lerEstado(e) {
+  if (e.mudo) return ESTADOS.MUTED;
+  if (e.dormindo) return ESTADOS.SLEEPING;
+  return ESTADOS[e.estado] || ["ouvindo", "Pronto"];
+}
+
+function pintarSistema(e) {
+  const pilula = $("#mic-global");
+  pilula.setAttribute("aria-pressed", String(!e.mudo));
+  $("#mic-global-rotulo").textContent = e.mudo ? "Microfone desligado" : "Microfone ligado";
+  const [classe, texto] = lerEstado(e);
+  const ponto = $("#nav-estado");
+  ponto.hidden = false;
+  ponto.dataset.estado = classe;
+  ponto.title = texto;
+}
+
+async function lacoPonte() {
+  for (;;) {
+    try {
+      const e = await api("GET", `janela/estado?desde=${PONTE_ESTADO.desde}`);
+      for (const l of e.atividade) {
+        PONTE_ESTADO.linhas.push(l.texto);
+        PONTE_ESTADO.desde = l.id;
+      }
+      PONTE_ESTADO.linhas = PONTE_ESTADO.linhas.slice(-150);
+      PONTE_ESTADO.ultimo = e;
+      pintarSistema(e);
+      if (NATIVO) NATIVO(e);
+    } catch (_) { /* janela ocupada ou reiniciando: tenta de novo */ }
+    await new Promise((ok) => setTimeout(ok, document.hidden ? 5000 : 1000));
+  }
+}
+
+$("#mic-global").addEventListener("click", async () => {
+  const ligado = $("#mic-global").getAttribute("aria-pressed") !== "true";
+  try {
+    await api("POST", "janela/microfone", { ligado });
+    pintarSistema({ ...(PONTE_ESTADO.ultimo || {}), mudo: !ligado });
+  } catch (e) { avisar(e.message); }
+});
+
+const AJUSTES = [
+  ["audio", "Áudio", "Microfone e alto-falante usados pelo Jarvis"],
+  ["memoria", "Memória", "O que o Jarvis guardou sobre você"],
+  ["motor", "Modelo e voz", "Qual modelo responde, como ele ouve e fala"],
+  ["personalizar", "Aparência e nome", "Nome do assistente e cores do visual clássico"],
+  ["plugins", "Plugins", "Ligar e desligar extensões"],
+  ["plugins_ajustes", "Ajustes dos plugins", "Configurações de cada extensão"],
+  ["remoto", "Controle pelo celular", "Código para usar o Jarvis no celular"],
+  ["classico", "Visual clássico", "Volta ao visual antigo, com o avatar (F9 alterna)"],
+];
+$("#abrir-ajustes").addEventListener("click", () => {
+  dialogo({
+    titulo: "Ajustes",
+    corpo: `<ul class="lista-ajustes">${AJUSTES.map(([id, nome, desc]) =>
+      `<li><button type="button" class="ajuste" data-ajuste="${id}"><strong>${esc(nome)}</strong><span>${esc(desc)}</span></button></li>`).join("")}</ul>`,
+    acoes: [{ texto: "Fechar", acao: () => {} }],
+    aoAbrir: (corpo) => $$(".ajuste", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try {
+        await api("POST", "janela/ajuste", { nome: b.dataset.ajuste });
+        $("#dialogo").close();
+      } catch (e) { avisar(e.message); }
+    })),
+  });
+});
+
+// ── Tela Jarvis com a janela nativa ───────────────────────────────────────
+async function jarvisNativo() {
+  const [e, hist] = await Promise.all([api("GET", "janela/estado"), api("GET", "jarvis/historico")]);
+  const nome = e.nome || "Jarvis";
+  main.innerHTML = `
+    <div class="jarvis nativo">
+      <header class="jarvis-topo">
+        <div class="orbe" id="orbe" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="jarvis-titulo"><h1>${esc(nome)}</h1><p class="sub" id="jarvis-estado" role="status">…</p></div>
+        <div class="jarvis-acoes">
+          <button class="botao" type="button" id="acordar" hidden>Acordar</button>
+          <button class="botao" type="button" id="interromper" hidden>Interromper</button>
+          <button class="botao" type="button" id="ver-registro" aria-expanded="false" aria-controls="registro">Registro</button>
+        </div>
+      </header>
+      <div class="jarvis-corpo">
+        <div class="conversa" id="conversa" aria-live="polite"></div>
+        <aside class="registro" id="registro" hidden aria-label="Registro do Jarvis"><ol id="registro-linhas"></ol></aside>
+      </div>
+      <form class="compositor" id="compositor">
+        <textarea id="entrada" rows="1" placeholder="Fale ou escreva para o ${esc(nome)}" aria-label="Mensagem para o ${esc(nome)}"></textarea>
+        <button class="botao primario" type="submit" id="enviar">Enviar</button>
+      </form>
+    </div>`;
+  const conversa = $("#conversa");
+  const rolar = () => { conversa.scrollTop = conversa.scrollHeight; };
+  const vazio = `<div class="boas-vindas"><p>Fale com o ${esc(nome)} pelo microfone ou escreva aqui. Ele abre programas, mexe em arquivos, consulta a agenda e cuida do financeiro da HAIZEN.</p>
+    <div class="sugestoes"><button class="sugestao" type="button">O que tenho na agenda hoje?</button><button class="sugestao" type="button">Como está o financeiro deste mês?</button><button class="sugestao" type="button">Abre o WhatsApp</button></div></div>`;
+  let vista = hist.length ? hist[hist.length - 1].criado_em : 0;
+  let aguardando = null;           // {desde, quando}: mensagem enviada esperando resposta
+  const desenhar = (h) => {
+    conversa.innerHTML = h.length ? h.map((m) => balao({ ...m, origem: "" })).join("") : vazio;
+    if (aguardando) conversa.insertAdjacentHTML("beforeend", '<div class="msg ele pensando"><p>Pensando…</p></div>');
+    $$(".sugestao", conversa).forEach((b) => b.addEventListener("click", () => enviar(b.textContent)));
+    rolar();
+  };
+  desenhar(hist);
+
+  const registro = $("#registro");
+  const linhas = $("#registro-linhas");
+  const pintarRegistro = () => {
+    linhas.innerHTML = PONTE_ESTADO.linhas.slice(-80).map((l) => `<li>${esc(l.replace(/^SYS:\s*/, ""))}</li>`).join("");
+    registro.scrollTop = registro.scrollHeight;
+  };
+  $("#ver-registro").addEventListener("click", (ev) => {
+    registro.hidden = !registro.hidden;
+    ev.currentTarget.setAttribute("aria-expanded", String(!registro.hidden));
+    guardar("central.registro", !registro.hidden);
+    if (!registro.hidden) pintarRegistro();
+  });
+  if (lembrar("central.registro", false)) $("#ver-registro").click();
+
+  const enviar = async (texto) => {
+    texto = (texto || "").trim();
+    if (!texto) return;
+    try {
+      await api("POST", "janela/mensagem", { texto });
+      aguardando = { quando: Date.now() };
+      // Mostra na hora; o histórico de verdade chega com a resposta.
+      $(".boas-vindas", conversa)?.remove();
+      $(".pensando", conversa)?.remove();
+      conversa.insertAdjacentHTML("beforeend", balao({ papel: "usuario", texto }) + '<div class="msg ele pensando"><p>Pensando…</p></div>');
+      rolar();
+    } catch (e) { avisar(e.message); }
+  };
+  const entrada = $("#entrada");
+  entrada.addEventListener("input", () => { entrada.style.height = "auto"; entrada.style.height = `${Math.min(entrada.scrollHeight, 160)}px`; });
+  entrada.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); $("#compositor").requestSubmit(); } });
+  $("#compositor").addEventListener("submit", (ev) => { ev.preventDefault(); const t = entrada.value; entrada.value = ""; entrada.style.height = "auto"; enviar(t); });
+  $("#acordar").addEventListener("click", () => api("POST", "janela/acordar").catch((er) => avisar(er.message)));
+  $("#interromper").addEventListener("click", () => api("POST", "janela/interromper").catch((er) => avisar(er.message)));
+
+  const orbe = $("#orbe");
+  const pintar = async (est) => {
+    const [classe, texto] = lerEstado(est);
+    orbe.dataset.estado = classe;
+    $("#jarvis-estado").textContent = est.dormindo ? "Em espera. Diga a palavra de ativação ou toque em Acordar." : texto;
+    $("#acordar").hidden = !est.dormindo;
+    $("#interromper").hidden = !["THINKING", "SPEAKING"].includes(est.estado) || est.mudo;
+    if (!registro.hidden) pintarRegistro();
+    if (est.ultima && est.ultima !== vista) {
+      vista = est.ultima;
+      const h = await api("GET", "jarvis/historico").catch(() => null);
+      if (h) {
+        const ultima = h[h.length - 1];
+        if (aguardando && ultima && ultima.papel === "jarvis") aguardando = null;
+        desenhar(h);
+      }
+    } else if (aguardando && Date.now() - aguardando.quando > 240000) {
+      aguardando = null;
+      $(".pensando", conversa)?.remove();
+      avisar("O Jarvis não respondeu a tempo. Veja o Registro para saber o que aconteceu.");
+    }
+  };
+  NATIVO = pintar;
+  pintar(e);
+}
+
+async function iniciar() {
+  try { await api("GET", "janela/estado"); PONTE = true; } catch (_) { PONTE = false; }
+  if (PONTE) {
+    $("#sistema").hidden = false;
+    $("#abrir-ajustes").hidden = !APP;     // os painéis abrem na tela do PC
+    document.body.classList.add("ponte");
+    lacoPonte();
+  }
+  navegar();
+}
+iniciar();

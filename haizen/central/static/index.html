@@ -22,15 +22,21 @@
     </svg>
     <span class="marca-nome">HAIZEN</span>
   </a>
-  <nav>
-    <a href="#/jarvis" data-rota="jarvis">Jarvis</a>
-    <a href="#/painel" data-rota="painel">Painel</a>
-    <a href="#/financeiro" data-rota="financeiro">Financeiro</a>
-    <a href="#/clientes" data-rota="clientes">Clientes</a>
-    <a href="#/tarefas" data-rota="tarefas">Tarefas</a>
-    <a href="#/pipeline" data-rota="pipeline">Pipeline</a>
-    <a href="#/agentes" data-rota="agentes">Agentes <span class="selo" id="selo-agentes" hidden></span></a>
+  <nav aria-label="Telas">
+    <a href="#/jarvis" data-rota="jarvis" class="nav-jarvis"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg><span>Jarvis</span><span class="nav-estado" id="nav-estado" hidden></span></a>
+    <div class="nav-grupo">
+      <a href="#/painel" data-rota="painel"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Painel</span></a>
+      <a href="#/financeiro" data-rota="financeiro"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M21 19H3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Financeiro</span></a>
+      <a href="#/clientes" data-rota="clientes"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM2.5 20c.6-3.3 3.3-5.5 6.5-5.5s5.9 2.2 6.5 5.5M16 4.3a3.5 3.5 0 0 1 0 6.4M18 14.8c1.9.8 3.2 2.6 3.5 5.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Clientes</span></a>
+      <a href="#/tarefas" data-rota="tarefas"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Tarefas</span></a>
+      <a href="#/pipeline" data-rota="pipeline"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Pipeline</span></a>
+      <a href="#/agentes" data-rota="agentes"><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8l3 5-7 11L5 9z M5 9h14 M12 20 9.5 9 12 4l2.5 5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Agentes</span> <span class="selo" id="selo-agentes" hidden></span></a>
+    </div>
   </nav>
+  <div class="trilho-sistema" id="sistema" hidden>
+    <button type="button" class="mic-pilula" id="mic-global" aria-pressed="true"><span class="mic-ponto" aria-hidden="true"></span><span id="mic-global-rotulo">Microfone ligado</span></button>
+    <button type="button" class="trilho-botao" id="abrir-ajustes" hidden><svg class="nav-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Ajustes</span></button>
+  </div>
   <p class="trilho-rodape">Dados neste computador</p>
 </aside>
 
