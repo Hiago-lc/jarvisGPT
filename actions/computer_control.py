@@ -547,11 +547,11 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
 def _screen_find(description: str) -> tuple[int, int] | None:
     if not isinstance(description, str) or not description.strip():
         return None
-    api_key = _get_api_key()
-    if not api_key:
-        print("[ComputerControl] ⚠️ No API key for screen_find")
-        return None
-
+    # No Gemini key check here. The accessibility tree below needs no model at
+    # all, and the visual fallback goes through `gemini.as_json`, which uses
+    # whatever provider is configured (Ollama, Groq) and refuses on its own
+    # when nothing can see images. Requiring a Gemini key first made a local
+    # setup skip even the model-free path.
     try:
         from google import genai
         from google.genai import types as gtypes

@@ -332,6 +332,18 @@ def _cooling(model: str) -> bool:
         return False
 
 
+def gemini_disabled() -> bool:
+    """True when the launcher asked for no Gemini request at all.
+
+    `start_local.py` sets JARVIS_NO_GEMINI and `start_openai.py` sets the older
+    JARVIS_OPENAI_ONLY; both mean the same thing here. An old key left in the
+    settings must not quietly turn a free, local setup back into a Gemini one.
+    """
+    import os
+    return (os.environ.get("JARVIS_NO_GEMINI") == "1"
+            or os.environ.get("JARVIS_OPENAI_ONLY") == "1")
+
+
 def api_key(refresh: bool = False) -> str:
     """The Gemini key from config/api_keys.json. Cached; never raises."""
     global _cached_key
@@ -698,8 +710,7 @@ def call(contents, tier: str = FAST, config=None,
         ladder = (rungs + tuple(ladder)) if _provider_first() \
             else (tuple(ladder) + rungs)
 
-    import os
-    resolved_key = "" if os.environ.get("JARVIS_OPENAI_ONLY") == "1" else (key or api_key())
+    resolved_key = "" if gemini_disabled() else (key or api_key())
     if not resolved_key:
         # A provider does not need a Gemini key. Before this, a missing key
         # meant every one-shot call in the app failed — which is exactly the

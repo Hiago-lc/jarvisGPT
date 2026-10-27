@@ -1,3 +1,5 @@
+> **Sem API de créditos:** inicie com `python start_local.py` (tudo no seu PC) ou `python start_local.py --perfil hibrido` (Groq gratuito). Veja [o guia](LEIA-ME-LOCAL.md).
+
 > **Atualização: agilidade, Google Agenda e memória persistente:** leia [este guia](GOOGLE-AGENDA-E-MEMORIA.md).
 
 > **Gemini + controle do computador:** veja [o guia atualizado](CONTROLE-COMPUTADOR.md). Inicie com `python start_gemini.py` para voltar ao Gemini.

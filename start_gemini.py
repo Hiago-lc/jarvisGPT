@@ -18,6 +18,7 @@ def configure():
     cm.ensure_config_dir()
     cm.CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
     os.environ.pop('JARVIS_OPENAI_ONLY', None)
+    os.environ.pop('JARVIS_NO_GEMINI', None)
 
 
 if __name__ == '__main__':
