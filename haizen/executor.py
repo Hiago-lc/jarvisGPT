@@ -63,6 +63,7 @@ def _candidatos_claude() -> list[Path]:
         pastas.append(Path(os.environ["APPDATA"]) / "npm")
     if os.environ.get("LOCALAPPDATA"):
         pastas.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "claude")
+        pastas.append(Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "WinGet" / "Links")
     return [pasta / n for pasta in pastas for n in nomes]
 
 
