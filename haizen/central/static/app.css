@@ -259,3 +259,6 @@ dialog::backdrop { background: rgba(11, 29, 35, .45); }
   .microfone[aria-pressed="true"] span { display: inline; }
   .jarvis .topo { margin-bottom: 12px; }
 }
+
+.conversa-botao { white-space: nowrap; }
+.conversa-botao[aria-pressed="true"] { background: var(--limao); border-color: var(--limao); color: var(--petroleo); font-weight: 600; }

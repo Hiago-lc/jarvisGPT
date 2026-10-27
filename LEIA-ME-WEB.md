@@ -24,7 +24,7 @@ Para o perfil `hibrido` iniciar sozinho, a chave do Groq precisa estar salva no 
 py jarvis_web.py --perfil hibrido --iniciar-com-windows
 ```
 
-Para abrir também a janela de voz (o Jarvis que conversa e mexe no PC):
+A janela antiga, com o avatar, não é mais necessária: a web faz tudo o que ela fazia. Se ainda quiser abri-la junto:
 
 ```powershell
 py jarvis_web.py --perfil local --iniciar-com-windows --com-janela
@@ -53,6 +53,7 @@ No PC, o app também pode ser instalado: no Chrome ou no Edge, abra `http://127.
 
 ## Voz
 
+- **Conversa**: toque uma vez e fale normalmente. Quando você para de falar, o Jarvis responde em voz e volta a ouvir. Toque de novo para parar. Marque **Só quando eu disser "Jarvis"** se houver gente conversando por perto. Sair da tela do Jarvis desliga o microfone.
 - Toque em **Falar**, diga o que quer e toque de novo para enviar. O áudio vai para o seu PC, onde o Whisper transcreve.
 - Com **Responder em voz** marcado, a resposta toca com a voz do Piper.
 - No celular, o microfone só funciona pelo endereço `https://...ts.net`, porque o navegador exige HTTPS.
@@ -64,10 +65,13 @@ No PC, o app também pode ser instalado: no Chrome ou no Edge, abra `http://127.
 | Financeiro e central | "Quanto recebi este mês?", "Registre uma despesa de R$ 80 da Adobe, paga hoje" |
 | Tarefas | "Quais tarefas estão atrasadas?", "Conclui a tarefa do cardápio" |
 | Agentes | "Pede ao comercial uma proposta de site para a Padaria Sol" |
-| PC | "Abre o Spotify", "Aumenta o volume", "Me lembra às 15h de ligar para o cliente" |
+| PC | "Abre o Spotify", "Aumenta o volume", "Digita olá e aperta Enter", "Fecha o Chrome" |
+| Arquivos | "Move o relatório da pasta Downloads para Documentos", "Resume o PDF da proposta" |
+| Navegador e mensagens | "Abre o site da HAIZEN", "Toca uma música no YouTube", "Manda no WhatsApp pro Pedro: chego às 15h" |
+| Agenda e lembretes | "Me lembra às 15h de ligar para o cliente", "Marca uma reunião amanhã às 10h" |
 | Pesquisa e clima | "Pesquisa o preço do domínio .com.br", "Vai chover amanhã?" |
 | Memória | "Lembra que eu prefiro reuniões à tarde" |
 
 Ações irreversíveis no PC, como desligar ou apagar arquivos, aparecem como um aviso **Confirmar no PC** na tela do Jarvis. Nada acontece sem o seu clique.
 
-Ficaram de fora da web, de propósito, as ações que dependem de ver a tela e clicar por você: pelo celular você não está vendo o PC, e um clique às cegas é arriscado. Para essas, use a janela antiga.
+A web tem todas as ações da janela antiga. A cada mensagem, o Jarvis recebe só as ferramentas que combinam com o pedido, porque o modelo local não consegue lidar com todas de uma vez. As tarefas que precisam **ver a tela** ("o que tem na tela?") usam o Gemini e só funcionam com a chave dele.

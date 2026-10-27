@@ -465,6 +465,68 @@ class JanelaDeVozTests(_Base):
         self.assertIn("resposta = self._atalho_central(text)", fonte)
 
 
+class AcoesDoPcTests(_Base):
+    """Todas as ações da janela antiga na web, escolhidas pelo pedido."""
+
+    def test_every_old_window_action_is_listed(self):
+        modulos = {f.stem for f in (Path(__file__).resolve().parent.parent / "actions").glob("*.py")}
+        sem_ferramenta = {"background_monitor", "proactive", "screen_processor", "system_monitor"}
+        self.assertEqual(set(self.cerebro.ACOES_PC), modulos - sem_ferramenta)
+
+    def test_request_picks_matching_actions_first(self):
+        e = self.cerebro.escolher_acoes
+        self.assertEqual(e("move o arquivo da pasta downloads")[0], "file_controller")
+        self.assertIn("youtube_video", e("toca uma música no youtube"))
+        self.assertIn("send_message", e("manda mensagem no whats pro Pedro"))
+        self.assertIn("reminder", e("me lembra às 15h de ligar"))
+        self.assertIn("weather_report", e("vai chover amanhã?"))
+        self.assertIn("computer_control", e("digita olá e aperta enter"))
+        for sempre in self.cerebro.SEMPRE:
+            self.assertIn(sempre, e("bom dia"))
+
+    def test_previous_turn_actions_stay_available(self):
+        self.cerebro._guardar("usuario", "abre a pasta downloads")
+        self.cerebro._guardar("jarvis", "Abri.", ["file_controller"])
+        self.assertIn("file_controller", self.cerebro.prioridade("agora apaga o primeiro"))
+
+    def test_matching_action_survives_a_tight_budget(self):
+        from providers import schema
+        grande = {"type": "OBJECT", "properties": {"x": {"type": "STRING", "description": "y" * 2500}}}
+        falsas = {n: {"name": n, "description": n, "parameters": grande, "handler": lambda **_: ""}
+                  for n in ("file_controller", "open_app", "computer_settings", "computer_control", "web_search")}
+        with patch.object(self.cerebro, "_acoes_pc", side_effect=lambda nomes=None: {
+                n: falsas[n] for n in (nomes or falsas) if n in falsas}):
+            texto = "move o arquivo da pasta downloads"
+            d = schema.budget(self.cerebro._declaracoes(texto), max_tools=10, max_chars=9000,
+                              core_names=self.cerebro.prioridade(texto))
+        nomes = [x["name"] for x in d]
+        self.assertIn("file_controller", nomes)
+        self.assertIn("central", nomes)
+
+    def test_actions_get_a_web_player(self):
+        def handler(parameters=None, player=None):
+            player.write_log("SYS: abrindo")
+            player.request_say("Diga que o Spotify abriu.")
+            player.avatar_sorrir()            # recurso da janela antiga: não pode quebrar
+            return "Spotify aberto."
+        tool = {"name": "open_app", "description": "x", "handler": handler}
+        with patch.object(self.cerebro, "_acoes_pc", return_value={"open_app": tool}):
+            r = self.cerebro.executar_ferramenta("open_app", {"app_name": "Spotify"})
+        self.assertTrue(r.startswith("Spotify aberto."))
+        self.assertIn("Diga que o Spotify abriu.", r)
+
+    def test_empty_result_uses_the_log(self):
+        tool = {"name": "computer_settings", "description": "x",
+                "handler": lambda parameters=None, player=None: player.write_log("Volume em 40%.")}
+        with patch.object(self.cerebro, "_acoes_pc", return_value={"computer_settings": tool}):
+            self.assertEqual(self.cerebro.executar_ferramenta("computer_settings", {}), "Volume em 40%.")
+
+    def test_video_opens_in_the_pc_browser(self):
+        with patch("webbrowser.open") as abrir:
+            self.cerebro._PlayerWeb().show_video("https://exemplo.com/v.mp4", "v")
+        abrir.assert_called_once_with("https://exemplo.com/v.mp4")
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

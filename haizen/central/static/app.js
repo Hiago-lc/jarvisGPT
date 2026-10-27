@@ -126,6 +126,7 @@ async function navegar() {
     if (a.dataset.rota === tela) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   clearInterval(navegar.timer);
+  if (CONVERSA.ligada && tela !== "jarvis") desligarConversa();   // sair da tela desliga o microfone
   try {
     await opcoes();
     await ROTAS[tela](param);
@@ -712,6 +713,12 @@ const JARVIS_NOMES = {
   haizen: "agentes da HAIZEN", central: "central", lembrar: "memória", buscar_memoria: "memória",
   open_app: "abrir app", computer_settings: "ajustes do PC", web_search: "pesquisa na web",
   reminder: "lembrete", weather_report: "clima", google_agenda: "agenda",
+  computer_control: "teclado e mouse", browser_control: "navegador", file_controller: "arquivos",
+  file_processor: "leitura de arquivo", code_helper: "código", dev_agent: "projeto de código",
+  desktop_control: "área de trabalho", flight_finder: "voos", game_updater: "jogos",
+  screen_task: "tarefa na tela", send_message: "mensagem", video_player: "vídeo",
+  whatsapp_desktop_search: "contatos do WhatsApp", whatsapp_draft: "rascunho no WhatsApp",
+  youtube_video: "YouTube",
 };
 
 async function apiBin(caminho, corpo) {
@@ -729,7 +736,77 @@ async function tocar(texto) {
   som.addEventListener("ended", () => URL.revokeObjectURL(url));
   JARVIS.som?.pause();
   JARVIS.som = som;
+  const fim = new Promise((ok) => ["ended", "pause", "error"].forEach((ev) => som.addEventListener(ev, ok, { once: true })));
   await som.play();
+  return fim;          // quem precisa (modo conversa) espera a fala terminar
+}
+
+// ── Modo conversa: ouve sem parar, responde em voz e volta a ouvir ───────────
+// Detecta a fala pelo volume (com um piso de ruído que se ajusta ao ambiente).
+// Enquanto transcreve e enquanto o Jarvis fala, ignora o microfone, para não
+// responder à própria voz.
+const CONVERSA = { ligada: false, estado: "parado", ctx: null, fluxo: null, antes: [], segmento: [],
+                   fala: 0, silencio: 0, piso: 0.008, aoFrase: null, aoEstado: null };
+
+async function ligarConversa(aoFrase, aoEstado) {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Este navegador não libera o microfone. No celular, abra pelo endereço https do Tailscale.");
+  CONVERSA.fluxo = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  CONVERSA.ctx = new AudioContext({ sampleRate: 16000 });
+  await CONVERSA.ctx.audioWorklet.addModule("/microfone.js");
+  const fonte = CONVERSA.ctx.createMediaStreamSource(CONVERSA.fluxo);
+  const no = new AudioWorkletNode(CONVERSA.ctx, "microfone");
+  Object.assign(CONVERSA, { ligada: true, antes: [], segmento: [], fala: 0, silencio: 0, aoFrase, aoEstado });
+  mudarConversa("ouvindo");
+  no.port.onmessage = (e) => blocoConversa(e.data);
+  fonte.connect(no);
+}
+
+function desligarConversa() {
+  CONVERSA.ligada = false;
+  CONVERSA.fluxo?.getTracks().forEach((t) => t.stop());
+  CONVERSA.ctx?.close().catch(() => {});
+  CONVERSA.ctx = CONVERSA.fluxo = null;
+  mudarConversa("parado");
+}
+
+function mudarConversa(estado) {
+  CONVERSA.estado = estado;
+  CONVERSA.aoEstado?.(estado);
+}
+
+function blocoConversa(bloco) {
+  if (!CONVERSA.ligada || !["ouvindo", "gravando"].includes(CONVERSA.estado)) return;
+  const taxa = CONVERSA.ctx.sampleRate;
+  const dur = bloco.length / taxa;
+  let soma = 0;
+  for (const v of bloco) soma += v * v;
+  const rms = Math.sqrt(soma / bloco.length);
+  const limiar = Math.max(0.012, CONVERSA.piso * 3);
+  if (CONVERSA.estado === "ouvindo") {
+    CONVERSA.antes.push(bloco);
+    if (CONVERSA.antes.length > Math.ceil(0.3 / dur)) CONVERSA.antes.shift();      // 300 ms antes da fala
+    if (rms < limiar) { CONVERSA.piso = CONVERSA.piso * 0.995 + rms * 0.005; CONVERSA.fala = 0; return; }
+    CONVERSA.fala += dur;
+    if (CONVERSA.fala < 0.15) return;
+    CONVERSA.segmento = CONVERSA.antes.slice();
+    CONVERSA.silencio = 0;
+    mudarConversa("gravando");
+    return;
+  }
+  CONVERSA.segmento.push(bloco);
+  CONVERSA.silencio = rms < limiar ? CONVERSA.silencio + dur : 0;
+  const total = CONVERSA.segmento.length * dur;
+  if (CONVERSA.silencio < 0.9 && total < 25) return;          // fim da frase: ~1 s de silêncio
+  const blocos = CONVERSA.segmento;
+  CONVERSA.segmento = [];
+  CONVERSA.antes = [];
+  mudarConversa("pensando");
+  const pcm = new Int16Array(blocos.reduce((n, b) => n + b.length, 0));
+  let i = 0;
+  for (const b of blocos) for (const v of b) pcm[i++] = Math.max(-1, Math.min(1, v)) * 0x7fff;
+  Promise.resolve(CONVERSA.aoFrase(pcm, taxa))
+    .catch((e) => avisar(e.message))
+    .finally(() => { if (CONVERSA.ligada) mudarConversa("ouvindo"); });
 }
 
 const JARVIS = { gravando: false, blocos: [], ctx: null, fluxo: null, som: null, ocupado: false };
@@ -783,6 +860,7 @@ ROTAS.jarvis = async () => {
     <div class="jarvis">
       <div class="topo"><div><h1>Jarvis</h1><p class="sub">${esc(estado.onde)}${estado.modelo ? `, ${esc(estado.modelo)}` : ""}</p></div>
         <div class="jarvis-opcoes"><label class="voz-opcao"><input type="checkbox" id="voz"${voz ? " checked" : ""}${estado.voz ? "" : " disabled"}> Responder em voz</label>
+        <label class="voz-opcao" title="No modo conversa, só responde quando a frase tiver o nome dele"><input type="checkbox" id="chamar"${lembrar("central.chamar", false) ? " checked" : ""}> Só quando eu disser "Jarvis"</label>
         <button class="botao" id="limpar">Limpar conversa</button></div></div>
       <div class="confirmacao" id="confirmacao" role="alert" hidden>
         <span><strong>Confirmar no PC:</strong> <span id="conf-titulo"></span></span>
@@ -799,6 +877,7 @@ ROTAS.jarvis = async () => {
         <button type="button" class="microfone" id="mic" aria-pressed="false" ${estado.ouvido ? "" : "disabled title=\"Ouvido não configurado\""}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" fill="currentColor"/></svg>
           <span id="mic-rotulo">Falar</span></button>
+        <button type="button" class="botao conversa-botao" id="modo-conversa" aria-pressed="false" ${estado.ouvido ? "" : "disabled"}>Conversa</button>
         <textarea id="entrada" rows="1" placeholder="Escreva para o Jarvis" aria-label="Mensagem para o Jarvis"></textarea>
         <button class="botao primario" type="submit" id="enviar">Enviar</button>
       </form>
@@ -824,9 +903,9 @@ ROTAS.jarvis = async () => {
     } catch (e) { /* PC ocupado ou sem rede: tenta de novo na próxima volta */ }
   }, 5000);
 
-  const enviar = async (texto, porVoz = false) => {
+  const enviar = async (texto, porVoz = false, opcoes = {}) => {
     texto = texto.trim();
-    if (!texto || JARVIS.ocupado) return;
+    if (!texto || JARVIS.ocupado) return null;
     JARVIS.ocupado = true;
     $(".boas-vindas", conversa)?.remove();
     conversa.insertAdjacentHTML("beforeend", balao({ papel: "usuario", texto }) + '<div class="msg ele pensando" id="pensando"><p>Pensando…</p></div>');
@@ -839,12 +918,14 @@ ROTAS.jarvis = async () => {
       rolar();
       vista = ultima(await api("GET", "jarvis/historico").catch(() => [])) || vista;
       mostrarConfirmacao(r.confirmacao);
-      if ($("#voz")?.checked) tocar(r.resposta).catch((e) => avisar(e.message));
+      if (opcoes.falar !== false && $("#voz")?.checked) tocar(r.resposta).catch((e) => avisar(e.message));
       atualizarSelo();
+      return r;
     } catch (e) {
       $("#pensando")?.remove();
       conversa.insertAdjacentHTML("beforeend", `<div class="msg ele erro-msg"><p>${esc(e.message)}</p></div>`);
       rolar();
+      return null;
     } finally {
       JARVIS.ocupado = false;
       if ($("#enviar")) $("#enviar").disabled = false;
@@ -860,6 +941,43 @@ ROTAS.jarvis = async () => {
   $("#limpar").addEventListener("click", async () => { await api("DELETE", "jarvis/historico"); ROTAS.jarvis(); });
   $("#conf-sim").addEventListener("click", async () => { await api("POST", "jarvis/confirmacao", { aceitar: true }); mostrarConfirmacao(null); avisar("Confirmado"); });
   $("#conf-nao").addEventListener("click", async () => { await api("POST", "jarvis/confirmacao", { aceitar: false }); mostrarConfirmacao(null); avisar("Cancelado"); });
+
+  $("#chamar").addEventListener("change", (e) => guardar("central.chamar", e.target.checked));
+
+  const botaoConversa = $("#modo-conversa");
+  const ROTULOS = { ouvindo: "Ouvindo…", gravando: "Ouvindo você…", pensando: "Pensando…", falando: "Respondendo…" };
+  const aoEstado = (estado) => {
+    if (!document.body.contains(botaoConversa)) { desligarConversa(); return; }
+    const ligada = estado !== "parado";
+    botaoConversa.setAttribute("aria-pressed", String(ligada));
+    botaoConversa.textContent = ligada ? `${ROTULOS[estado] || "Conversa"} (parar)` : "Conversa";
+    $("#mic").disabled = ligada;
+  };
+  const aoFrase = async (pcm, taxa) => {
+    if (pcm.length < taxa * 0.4) return;                         // estalo, não fala
+    let texto = (await apiBin(`jarvis/ouvir?taxa=${taxa}`, pcm.buffer)).texto || "";
+    if (!texto.trim()) return;
+    if ($("#chamar")?.checked) {
+      if (!/\bjarvis\b/i.test(texto)) return;                       // conversa de fundo
+      texto = texto.replace(/^\W*(ei|ok|olá|oi)?\W*jarvis\W*/i, "") || texto;
+    }
+    const r = await enviar(texto, true, { falar: false });
+    if (r?.resposta && CONVERSA.ligada) {
+      mudarConversa("falando");
+      await tocar(r.resposta).catch((e) => avisar(e.message));
+    }
+  };
+  botaoConversa.addEventListener("click", async () => {
+    if (CONVERSA.ligada) { desligarConversa(); return; }
+    try {
+      JARVIS.som?.pause();
+      await ligarConversa(aoFrase, aoEstado);
+      avisar("Modo conversa ligado. Fale normalmente; toque de novo para parar.");
+    } catch (e) {
+      desligarConversa();
+      avisar(e.name === "NotAllowedError" ? "O navegador bloqueou o microfone. Libere nas permissões do site." : e.message);
+    }
+  });
 
   const mic = $("#mic");
   mic.addEventListener("click", async () => {
