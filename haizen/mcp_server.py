@@ -4,7 +4,7 @@ Roda no seu PC, aberto pelo app do Claude (ou pelo Claude Code), e conversa por
 stdio. Dá ao Claude acesso às mesmas fichas, agentes e trabalhos que o Jarvis
 usa por voz. Instalação: `py -m haizen.instalar_mcp` (veja LEIA-ME-HAIZEN.md).
 
-Requer: pip install mcp
+Requer: pip install mcp (versão 1 ou 2)
 """
 from __future__ import annotations
 
@@ -17,7 +17,10 @@ _RAIZ = Path(__file__).resolve().parent.parent
 if str(_RAIZ) not in sys.path:
     sys.path.insert(0, str(_RAIZ))
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402
+try:                                      # mcp 2.x
+    from mcp.server.mcpserver import MCPServer as FastMCP  # noqa: E402
+except ImportError:                       # mcp 1.x
+    from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 from haizen import agentes, executor, servicos, store, worker  # noqa: E402
 
