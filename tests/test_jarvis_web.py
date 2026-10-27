@@ -373,6 +373,98 @@ class RegistroDiretoTests(_Base):
             self.assertEqual(r["resposta"], "Resposta do modelo.", texto)
 
 
+class JanelaDeVozTests(_Base):
+    """A janela de voz (start_local) usa o mesmo banco, o mesmo atalho e o mesmo histórico."""
+
+    def setUp(self):
+        super().setUp()
+        from haizen import store
+        store.salvar_cliente("LOJA EXEMPLO SOLUÇÕES")
+
+    def _motor(self, falado):
+        import asyncio
+        from providers.engine_pipeline import PipelineEngine
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai"}
+            pedidos = []
+
+        class STT:
+            async def transcribe(self, pcm, rate):
+                return falado
+
+        motor = PipelineEngine(LLM(), STT(), None)
+        emitidos, enviados = [], []
+
+        async def emit(m):
+            emitidos.append(m)
+
+        async def enviar(**kw):
+            enviados.append(kw)
+        motor._emit = emit
+        motor.send_client_content = enviar
+        motor._mic, motor._mic_bytes = [b"\0\0" * 1600], 3200
+        return motor, emitidos, enviados, asyncio
+
+    def test_voice_request_is_saved_without_the_model(self):
+        from haizen.central import dados
+        from haizen.central.atalhos import registro_direto
+        motor, emitidos, enviados, asyncio = self._motor(
+            "Registre a receita de R$ 600 da LOJA EXEMPLO SOLUÇÕES, descrição 2/2 Loja, vencimento hoje")
+        motor.interceptor = lambda t: (registro_direto(t) or ("", False))[0]
+        asyncio.run(motor.flush_microphone())
+        self.assertEqual(enviados, [])                       # o modelo nem foi chamado
+        self.assertEqual(dados.listar("receitas")[0]["descricao"], "2/2 Loja")
+        falas = [m for m in emitidos if getattr(m, "kind", "") == "said" or "Registrei" in str(m)]
+        self.assertTrue(falas)
+        self.assertEqual(motor._history[-1]["role"], "assistant")
+        self.assertIn("Registrei", motor._history[-1]["content"])
+
+    def test_other_speech_goes_to_the_model(self):
+        motor, _, enviados, asyncio = self._motor("abre o Spotify")
+        motor.interceptor = lambda t: ""
+        asyncio.run(motor.flush_microphone())
+        self.assertEqual(len(enviados), 1)
+
+    def test_broken_shortcut_never_loses_the_sentence(self):
+        motor, _, enviados, asyncio = self._motor("abre o Spotify")
+        motor.interceptor = lambda t: 1 / 0
+        asyncio.run(motor.flush_microphone())
+        self.assertEqual(len(enviados), 1)
+
+    def test_window_turns_show_up_in_the_web_history(self):
+        from haizen import store
+        store.guardar_mensagem("usuario", "abre o Spotify", origem="janela")
+        store.guardar_mensagem("jarvis", "Abri o Spotify.", origem="janela")
+        h = self.cerebro.historico()
+        self.assertEqual([(m["papel"], m["origem"]) for m in h],
+                         [("usuario", "janela"), ("jarvis", "janela")])
+        # Respostas da janela não têm ferramentas registradas: não são tratadas como invenção.
+        self.assertEqual([m["content"] for m in self.cerebro._mensagens_anteriores()],
+                         ["abre o Spotify", "Abri o Spotify."])
+
+    def test_plugin_registers_like_the_web(self):
+        import plugins.haizen as plug
+        from haizen.central import dados
+        r = plug.run({"acao": "registrar", "tipo": "receitas", "cliente": "loja exemplo solucoes",
+                      "descricao": "Site", "valor": 600, "vencimento": "10/11/2026", "recebido": True})
+        self.assertIn("Registrado com sucesso", r)
+        rec = dados.listar("receitas")[0]
+        self.assertEqual((rec["valor"], rec["recebido"], rec["vencimento"]), (600.0, True, "2026-11-10"))
+        r = plug.run({"acao": "registrar", "tipo": "despesas", "descricao": "Adobe", "valor": 80,
+                      "recebido": True})
+        self.assertTrue(dados.listar("despesas")[0]["pago"])
+        dados.criar("tarefas", {"titulo": "Revisar site"})
+        self.assertIn("concluída", plug.run({"acao": "concluir", "titulo": "revisar"}))
+        self.assertIn("Revisar site", plug.run({"acao": "listar", "tipo": "tarefas"}))
+
+    def test_main_mirrors_turns_and_wires_the_shortcut(self):
+        fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+        self.assertIn('origem="janela"', fonte)
+        self.assertIn("engine.interceptor = self._atalho_central", fonte)
+        self.assertIn("resposta = self._atalho_central(text)", fonte)
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data

@@ -322,10 +322,10 @@ def _limpar(texto: str) -> str:
 
 def historico(limite: int = 40) -> list[dict]:
     with store.conexao() as con:
-        rows = con.execute("SELECT papel, texto, acoes, criado_em FROM jarvis_mensagens "
+        rows = con.execute("SELECT papel, texto, acoes, criado_em, origem FROM jarvis_mensagens "
                            "ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
     return [{"papel": r["papel"], "texto": r["texto"], "acoes": json.loads(r["acoes"] or "[]"),
-             "criado_em": r["criado_em"]} for r in reversed(rows)]
+             "criado_em": r["criado_em"], "origem": r["origem"]} for r in reversed(rows)]
 
 
 def limpar_historico() -> None:
@@ -334,9 +334,7 @@ def limpar_historico() -> None:
 
 
 def _guardar(papel: str, texto: str, acoes: list | None = None) -> None:
-    with store.conexao() as con:
-        con.execute("INSERT INTO jarvis_mensagens(papel, texto, acoes, criado_em) VALUES(?,?,?,?)",
-                    (papel, texto, json.dumps(acoes or [], ensure_ascii=False), time.time()))
+    store.guardar_mensagem(papel, texto, acoes, "web")
 
 
 def _sistema(canal: str) -> str:
@@ -378,7 +376,10 @@ def _inventou(texto: str, acoes: list) -> bool:
 def _mensagens_anteriores() -> list[dict]:
     out, total = [], 0
     for m in reversed(historico(20)):
-        if m["papel"] == "jarvis" and _inventou(m["texto"], m["acoes"]):
+        # Só a web registra as ferramentas usadas; a janela de voz não, então
+        # o filtro de invenção vale apenas para as respostas da web.
+        if m["papel"] == "jarvis" and m.get("origem", "web") == "web" \
+                and _inventou(m["texto"], m["acoes"]):
             # Uma resposta que disse "fiz" sem fazer ensina o modelo a repetir
             # a invenção; fica de fora do contexto.
             continue

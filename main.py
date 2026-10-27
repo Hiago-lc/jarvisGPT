@@ -937,6 +937,17 @@ class JarvisLive:
             return
         self._session_log.append(f"User: {text}")
         self._persist_turn("user", text)
+        resposta = self._atalho_central(text)
+        if resposta:
+            if self._engine is not None:
+                # O motor fala a resposta e encerra a volta; o registro no
+                # histórico acontece no fim da volta, como numa resposta normal.
+                asyncio.run_coroutine_threadsafe(
+                    self._engine.answer_directly(text, resposta), self._loop)
+            else:
+                self.ui.write_log(f"{self._asst_name}: {resposta}")
+                self._persist_turn("assistant", resposta)
+            return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -2075,6 +2086,24 @@ class JarvisLive:
             record_turn(role, text)
         except Exception:
             self.ui.write_log("SYS: Não foi possível salvar esta mensagem na memória permanente. Confira o espaço em disco e as permissões.")
+        # A mesma conversa aparece no chat da central (web e celular).
+        try:
+            from haizen import store
+            store.guardar_mensagem("usuario" if role == "user" else "jarvis", text,
+                                   origem="janela")
+        except Exception as e:
+            print(f"[HAIZEN] histórico da central indisponível: {e}")
+
+    def _atalho_central(self, text: str) -> str:
+        """Registro de receita/despesa feito pelo código, sem o modelo.
+        Vazio quando a frase não é um pedido de registro."""
+        try:
+            from haizen.central.atalhos import registro_direto
+            r = registro_direto(text)
+        except Exception as e:
+            print(f"[HAIZEN] atalho da central falhou: {e}")
+            return ""
+        return r[0] if r else ""
 
     async def _save_session_summary(self) -> None:
         """Summarise the current session in 1-2 sentences and save to long_term.json."""
@@ -2372,6 +2401,7 @@ class JarvisLive:
         # engine finds it in the audio. With push-to-talk the key release is the
         # signal and the detector stays out of the way.
         engine.auto_turn = not self._ptt_enabled
+        engine.interceptor = self._atalho_central
         self._engine = engine
         try:
             yield engine

@@ -163,6 +163,8 @@ _COLUNAS_NOVAS = {
         "endereco": "TEXT NOT NULL DEFAULT ''",
         "base44_id": "TEXT",
     },
+    # 'web' (chat da central) ou 'janela' (janela de voz do start_local).
+    "jarvis_mensagens": {"origem": "TEXT NOT NULL DEFAULT 'web'"},
 }
 
 
@@ -338,3 +340,17 @@ def gravar_entrega(tid: int, conteudo: str) -> Path:
     arq.write_text(conteudo.strip() + "\n", encoding="utf-8")
     atualizar(tid, status="aguardando_aprovacao", arquivo=str(arq), erro="")
     return arq
+
+
+# ── conversa do Jarvis (web e janela de voz no mesmo histórico) ─────────────
+def guardar_mensagem(papel: str, texto: str, acoes: list | None = None,
+                     origem: str = "web") -> None:
+    import json as _json
+    import time as _time
+    texto = (texto or "").strip()
+    if not texto:
+        return
+    with conexao() as con:
+        con.execute("INSERT INTO jarvis_mensagens(papel, texto, acoes, criado_em, origem) "
+                    "VALUES(?,?,?,?,?)",
+                    (papel, texto, _json.dumps(acoes or [], ensure_ascii=False), _time.time(), origem))

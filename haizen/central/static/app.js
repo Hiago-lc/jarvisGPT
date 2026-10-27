@@ -762,9 +762,10 @@ async function pararGravacao() {
 }
 
 function balao(m) {
-  if (m.papel === "usuario") return `<div class="msg eu"><p>${esc(m.texto)}</p></div>`;
+  const origem = m.origem === "janela" ? '<span class="msg-origem">pela janela de voz</span>' : "";
+  if (m.papel === "usuario") return `<div class="msg eu"><p>${esc(m.texto)}</p>${origem}</div>`;
   const acoes = (m.acoes || []).map((a) => JARVIS_NOMES[a] || a);
-  return `<div class="msg ele"><p>${esc(m.texto)}</p>${acoes.length ? `<span class="msg-acoes">Usou: ${esc(acoes.join(", "))}</span>` : ""}</div>`;
+  return `<div class="msg ele"><p>${esc(m.texto)}</p>${acoes.length ? `<span class="msg-acoes">Usou: ${esc(acoes.join(", "))}</span>` : ""}${origem}</div>`;
 }
 
 function mostrarConfirmacao(c) {
@@ -807,6 +808,22 @@ ROTAS.jarvis = async () => {
   rolar();
   mostrarConfirmacao(estado.confirmacao);
 
+  // O que foi dito na janela de voz do PC aparece aqui sem recarregar.
+  const ultima = (h) => (h.length ? h[h.length - 1].criado_em : 0);
+  let vista = ultima(hist);
+  clearInterval(JARVIS.sincronia);
+  JARVIS.sincronia = setInterval(async () => {
+    if (!document.body.contains(conversa)) { clearInterval(JARVIS.sincronia); return; }
+    if (JARVIS.ocupado || document.hidden) return;
+    try {
+      const h = await api("GET", "jarvis/historico");
+      if (ultima(h) === vista || JARVIS.ocupado) return;
+      vista = ultima(h);
+      conversa.innerHTML = h.map(balao).join("");
+      rolar();
+    } catch (e) { /* PC ocupado ou sem rede: tenta de novo na próxima volta */ }
+  }, 5000);
+
   const enviar = async (texto, porVoz = false) => {
     texto = texto.trim();
     if (!texto || JARVIS.ocupado) return;
@@ -820,6 +837,7 @@ ROTAS.jarvis = async () => {
       $("#pensando")?.remove();
       conversa.insertAdjacentHTML("beforeend", balao({ papel: "jarvis", texto: r.resposta, acoes: r.acoes }));
       rolar();
+      vista = ultima(await api("GET", "jarvis/historico").catch(() => [])) || vista;
       mostrarConfirmacao(r.confirmacao);
       if ($("#voz")?.checked) tocar(r.resposta).catch((e) => avisar(e.message));
       atualizarSelo();

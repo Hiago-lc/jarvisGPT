@@ -8,7 +8,8 @@ from __future__ import annotations
 PLUGIN = {
     "name": "haizen",
     "tier": "core",
-    "brief": "Agentes da HAIZEN: delegar trabalho, ver status, aprovar, fichas de clientes.",
+    "brief": ("Agentes e central da HAIZEN: delegar trabalho, status, aprovar, fichas; "
+              "financeiro, listar e registrar receitas/despesas/tarefas, concluir tarefa."),
     "description": (
         "Comanda os agentes da agência HAIZEN. Use quando o usuário pedir uma "
         "proposta, criativos, legendas, roteiros ou outro trabalho para um cliente, "
@@ -18,14 +19,18 @@ PLUGIN = {
         "refazer (id + pedido com o ajuste), ficha (cliente; com dados para "
         "salvar, sem dados para consultar), agentes (lista os agentes), "
         "central (abre a central com faturamento, clientes, tarefas e pipeline), "
-        "financeiro (resume recebido, custos e pendências do mês)."
+        "financeiro (resume recebido, custos e pendências do mês), "
+        "listar (tipo: receitas, despesas, tarefas, oportunidades ou clientes; filtro cliente), "
+        "registrar (tipo + campos: valor, descricao, cliente, vencimento, recebido; "
+        "tarefa: titulo, cliente, data_entrega), concluir (tarefa pelo titulo). "
+        "Só diga que registrou depois que esta ferramenta confirmar."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "acao": {"type": "STRING",
                      "enum": ["delegar", "status", "aprovar", "refazer", "ficha", "agentes",
-                              "central", "financeiro"],
+                              "central", "financeiro", "listar", "registrar", "concluir"],
                      "description": "O que fazer"},
             "agente": {"type": "STRING",
                        "description": "Nome do agente, ex.: comercial, criativos"},
@@ -35,6 +40,14 @@ PLUGIN = {
             "id": {"type": "INTEGER", "description": "Número do trabalho"},
             "dados": {"type": "STRING",
                       "description": "Dados do cliente para salvar na ficha, em texto livre"},
+            "tipo": {"type": "STRING",
+                     "enum": ["receitas", "despesas", "tarefas", "oportunidades", "clientes"]},
+            "valor": {"type": "NUMBER", "description": "Em reais, ex. 600"},
+            "descricao": {"type": "STRING"},
+            "vencimento": {"type": "STRING", "description": "AAAA-MM-DD ou DD/MM"},
+            "recebido": {"type": "BOOLEAN", "description": "Receita já recebida / despesa já paga"},
+            "titulo": {"type": "STRING", "description": "Título da tarefa"},
+            "data_entrega": {"type": "STRING"},
         },
         "required": ["acao"],
     },
@@ -146,8 +159,16 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
                 partes.append(f"{d['tarefas_atrasadas']} tarefas atrasadas.")
             return " ".join(partes)
 
+        if acao in ("listar", "registrar", "concluir"):
+            # Mesma lógica do chat da central: as duas interfaces gravam igual.
+            from haizen.central.cerebro import _central
+            args = {k: v for k, v in parameters.items() if v not in (None, "")}
+            if args.get("tipo") == "despesas" and "recebido" in args:
+                args["pago"] = args.pop("recebido")
+            return _central(args)
+
         return ("Ação desconhecida. Use delegar, status, aprovar, refazer, ficha, agentes, "
-                "central ou financeiro.")
+                "central, financeiro, listar, registrar ou concluir.")
     except (KeyError, ValueError) as e:
         return str(e).strip("'\"")
     except Exception as e:

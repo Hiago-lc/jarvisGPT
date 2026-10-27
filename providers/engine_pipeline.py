@@ -782,9 +782,37 @@ class PipelineEngine:
             # It also clears main.py's stall watchdog immediately, so a local
             # model taking its time never looks like a dead connection.
             await self._emit(Msg.heard(text))
-            await self.send_client_content(
-                turns={"role": "user", "parts": [{"text": text}]})
+            resposta = await self._interceptado(text)
+            if resposta:
+                await self.answer_directly(text, resposta)
+            else:
+                await self.send_client_content(
+                    turns={"role": "user", "parts": [{"text": text}]})
         return text
+
+    # ── answers that do not need the model ──────────────────────────────────
+    # `interceptor(text) -> str | None` is set by the app. When it returns a
+    # reply, the code already did the work (e.g. saved a record) and the model
+    # is skipped: a small local model sometimes SAYS it did something without
+    # calling the tool, and for an exact request there is nothing to decide.
+    interceptor = None
+
+    async def _interceptado(self, text: str) -> str:
+        if self.interceptor is None:
+            return ""
+        try:
+            return (await asyncio.to_thread(self.interceptor, text)) or ""
+        except Exception as e:      # never lose the user's sentence over this
+            self._log(f"SYS: atalho falhou ({type(e).__name__}); segue para o modelo.")
+            return ""
+
+    async def answer_directly(self, user_text: str, reply: str) -> None:
+        """Say `reply` as this turn's answer, keeping the history coherent."""
+        self._history.append({"role": "user", "content": user_text})
+        self._history.append({"role": "assistant", "content": reply})
+        await self._emit(Msg.said(reply))
+        await self._speak(reply)
+        await self._emit(Msg.turn_end())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
