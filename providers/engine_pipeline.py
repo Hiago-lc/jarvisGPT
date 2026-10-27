@@ -184,11 +184,47 @@ class PipelineEngine:
             if fd:
                 decls.extend(fd)
 
+        self._all_declarations = list(decls)
         self._declarations = schema.budget(
             decls,
             max_tools=self.caps.get("max_tools"),
             max_chars=self.caps.get("max_tool_chars"),
         )
+        self._convert_tools()
+
+        kept, total = len(self._declarations), len(decls)
+        if kept < total:
+            self._log(f"SYS: {kept} of {total} tools declared "
+                      f"({schema.payload_size(self._declarations):,} chars) — "
+                      f"this model's budget.")
+
+    # The app can say, per request, which tools matter most ("agenda" brings the
+    # calendar tool, "arquivo" the file one). A small model only gets a handful
+    # of tools; choosing them by what was asked beats a fixed handful. Set by
+    # main.py: (user text) -> [tool names in priority order].
+    tool_priority = None
+
+    def _choose_tools_for(self, text: str) -> None:
+        if not callable(self.tool_priority) or not getattr(self, "_all_declarations", None):
+            return
+        if not (self.caps.get("max_tools") or self.caps.get("max_tool_chars")):
+            return
+        if self.caps.get("tool_format") == "prompt":
+            return              # baked into the instructions once; not per turn
+        try:
+            order = list(self.tool_priority(text) or [])
+        except Exception:
+            return
+        if not order:
+            return
+        chosen = schema.budget(self._all_declarations, max_tools=self.caps.get("max_tools"),
+                               max_chars=self.caps.get("max_tool_chars"), core_names=order)
+        names = [d.get("name") if isinstance(d, dict) else getattr(d, "name", "") for d in chosen]
+        if names != self.tool_names():
+            self._declarations = chosen
+            self._convert_tools()
+
+    def _convert_tools(self) -> None:
         fmt = self.caps.get("tool_format")
         if not self.caps.get("tools") or not self._declarations:
             self._tools = None
@@ -202,12 +238,6 @@ class PipelineEngine:
             self._tools = None
         else:
             self._tools = schema.convert(self._declarations, fmt)
-
-        kept, total = len(self._declarations), len(decls)
-        if kept < total:
-            self._log(f"SYS: {kept} of {total} tools declared "
-                      f"({schema.payload_size(self._declarations):,} chars) — "
-                      f"this model's budget.")
 
     def tool_names(self) -> list[str]:
         """What the model was actually offered. main.py uses this to decide what
@@ -337,6 +367,8 @@ class PipelineEngine:
         # the MICROPHONE heard and nothing else, so injected text never appears
         # there. The engine matches it — the transcript is emitted where speech
         # is actually recognised, in `flush_microphone`.
+        if isinstance(content, str):
+            self._choose_tools_for(content)
         self._history.append({"role": "user", "content": content})
         self._done_calls.clear()
         self._rounds = 0

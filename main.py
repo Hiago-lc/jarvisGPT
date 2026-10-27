@@ -2162,6 +2162,16 @@ class JarvisLive:
         except Exception as e:
             print(f"[HAIZEN] histórico da central indisponível: {e}")
 
+    def _ferramentas_do_pedido(self, text: str) -> list:
+        """Ferramentas na ordem de importância para este pedido: o modelo local
+        só recebe algumas, e "agenda" tem de trazer a do Google Agenda, "arquivo"
+        a de arquivos, em vez de sempre as mesmas seis."""
+        try:
+            from haizen.central.cerebro import escolher_acoes
+            return ["haizen", *escolher_acoes(text)]
+        except Exception:
+            return []
+
     def _atalho_central(self, text: str) -> str:
         """Registro de receita/despesa feito pelo código, sem o modelo.
         Vazio quando a frase não é um pedido de registro."""
@@ -2470,6 +2480,7 @@ class JarvisLive:
         # signal and the detector stays out of the way.
         engine.auto_turn = not self._ptt_enabled
         engine.interceptor = self._atalho_central
+        engine.tool_priority = self._ferramentas_do_pedido
         self._engine = engine
         try:
             yield engine

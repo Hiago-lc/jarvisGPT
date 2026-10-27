@@ -185,11 +185,147 @@ def agenda_direta(texto: str) -> str | None:
             + "\n".join(linhas))
 
 
+# ── Google Agenda: criar eventos com horário ────────────────────────────────
+_CRIAR = re.compile(r"\b(colo[cq]u?|adicion|mar[cq]u?|agend|cri[ae]|bot[ae]|inclu|anot|p[oõ]e|ponha|lan[cç]|lanqu)\w*", re.I)
+_HORA = r"(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?"
+_FAIXA = re.compile(r"(?:\b(?:d[ae]s?|das)\s+)?" + _HORA + r"\s*(?:[àa]s?|at[ée]|-|–|a)\s+" + _HORA, re.I)
+_UMA = re.compile(r"\b(?:[àa]s|ao meio[- ]dia)\s*" + _HORA, re.I)
+_SEMANA = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+_ULTIMO_DIA: list = []          # [(data, quando)]: o dia citado há pouco na conversa
+
+
+def _dia_citado(texto: str) -> dt.date | None:
+    t = _plano(texto)
+    hoje = dt.date.today()
+    if "depois de amanha" in t:
+        return hoje + dt.timedelta(days=2)
+    if "amanha" in t:
+        return hoje + dt.timedelta(days=1)
+    if re.search(r"\bhoje\b", t):
+        return hoje
+    # "2/2 E-commerce" é parcela, não data: só vale com "dia", "em", "para"... antes.
+    m = re.search(r"\b(?:dia|em|para|no|na|pro)\s+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", texto, re.I)
+    if m:
+        d, mes, ano = m.groups()
+        ano = int(ano) + 2000 if ano and len(ano) == 2 else int(ano or hoje.year)
+        try:
+            data = dt.date(ano, int(mes), int(d))
+            return data if m.group(3) or data >= hoje else data.replace(year=ano + 1)
+        except ValueError:
+            return None
+    for i, nome in enumerate(_SEMANA):
+        if re.search(rf"\b{nome}(?:-feira)?\b", t):
+            return hoje + dt.timedelta(days=(i - hoje.weekday()) % 7 or 7)
+    return None
+
+
+def _lembrar_dia(texto: str) -> dt.date | None:
+    """O dia deste pedido; sem dia, o citado na conversa nos últimos 15 min."""
+    import time as _t
+    dia = _dia_citado(texto)
+    if dia is not None:
+        _ULTIMO_DIA[:] = [(dia, _t.monotonic())]
+        return dia
+    if _ULTIMO_DIA and _t.monotonic() - _ULTIMO_DIA[0][1] < 900:
+        return _ULTIMO_DIA[0][0]
+    return None
+
+
+_SOBRAS = re.compile(
+    r"\b(?:depois de amanh[ãa]|amanh[ãa]|hoje|(?:na |no |nesta |neste |pr[oó]xim[ao] )?"
+    r"(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?|"
+    r"(?:dia|em|para|no|na|pro)\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?|para|pra|"
+    r"(?:no|na|ao)\s+(?:meu\s+)?(?:google\s+)?(?:agenda|calend[aá]rio))\b", re.I)
+
+
+def _limpar_titulo(t: str) -> str:
+    t = _SOBRAS.sub(" ", t)
+    t = re.sub(r"^\s*(?:por favor,?|um|uma|o|a)\s+", "", " ".join(t.split()), flags=re.I)
+    t = re.sub(r"^\s*(?:[-–:,;.]|\be\b)\s*", "", t.strip())
+    t = re.sub(r"\s*(?:[-–:,;.]|\be\b)?\s*$", "", t)
+    t = re.sub(r"\s+(?:no|na)\s+(?:google\s+)?(?:agenda|calend[aá]rio)\b.*$", "", t, flags=re.I)
+    return t.strip(" \"'“”")
+
+
+def _eventos_da_frase(texto: str) -> list[tuple[int, int, int, int, str]]:
+    """[(h_ini, m_ini, h_fim, m_fim, título)]; título é o texto até o próximo horário."""
+    faixas = list(_FAIXA.finditer(texto))
+    saida = []
+    if faixas:
+        # Com um horário só, o nome pode vir antes ("agenda uma call das 14 às 15
+        # com o cliente"): junta o que vem antes (sem o verbo) e o que vem depois.
+        antes = _limpar_titulo(_CRIAR.sub(" ", texto[:faixas[0].start()], count=1)) if len(faixas) == 1 else ""
+        for i, m in enumerate(faixas):
+            fim_titulo = faixas[i + 1].start() if i + 1 < len(faixas) else len(texto)
+            h1, m1, h2, m2 = m.group(1), m.group(2), m.group(3), m.group(4)
+            depois = _limpar_titulo(texto[m.end():fim_titulo])
+            saida.append((int(h1), int(m1 or 0), int(h2), int(m2 or 0),
+                          _limpar_titulo(f"{antes} {depois}") if antes else depois))
+        return saida
+    m = _UMA.search(texto)
+    if m:
+        h, mi = (12, 0) if "meio" in m.group(0).lower() else (int(m.group(1)), int(m.group(2) or 0))
+        antes = _limpar_titulo(_CRIAR.sub(" ", texto[:m.start()], count=1))
+        depois = _limpar_titulo(texto[m.end():])
+        titulo = _limpar_titulo(f"{antes} {depois}")
+        fim = h * 60 + mi + 60
+        saida.append((h, mi, fim // 60, fim % 60, titulo))
+    return saida
+
+
+def criar_evento_direto(texto: str) -> tuple[str, bool] | None:
+    """Cria no Google Agenda o que a frase pede; None se não for esse pedido."""
+    menciona_agenda = re.search(r"agenda|calend[aá]rio|compromisso|reuni[aã]o|evento", texto, re.I)
+    eventos = _eventos_da_frase(texto)
+    # Só conversas de agenda ensinam "o dia de que estamos falando".
+    dia = _lembrar_dia(texto) if (menciona_agenda or eventos) else _dia_citado(texto)
+    if "?" in texto or not _CRIAR.search(texto):
+        return None
+    if not eventos or not (menciona_agenda or _dia_citado(texto) or dia):
+        return None
+    dia = dia or dt.date.today()
+    from zoneinfo import ZoneInfo
+    fuso = ZoneInfo("America/Sao_Paulo")
+    from actions.google_agenda import google_agenda
+    feitos, problemas = [], []
+    for h1, m1, h2, m2, titulo in eventos:
+        if not titulo:
+            problemas.append(f"faltou o nome do compromisso das {h1:02d}:{m1:02d}")
+            continue
+        try:
+            ini = dt.datetime.combine(dia, dt.time(h1, m1), fuso)
+            fim = dt.datetime.combine(dia, dt.time(h2 % 24, m2), fuso)
+        except ValueError:
+            problemas.append(f"horário inválido em \"{titulo}\"")
+            continue
+        if fim <= ini:
+            problemas.append(f"o término de \"{titulo}\" precisa ser depois do início")
+            continue
+        r = google_agenda({"action": "create", "title": titulo, "start": ini.isoformat(),
+                           "end": fim.isoformat(), "timezone": "America/Sao_Paulo"})
+        if str(r).startswith("status=done"):
+            feitos.append(f"{h1:02d}:{m1:02d} às {h2:02d}:{m2:02d}: {titulo}")
+        else:
+            motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", str(r))
+            problemas.append(f"\"{titulo}\" não entrou ({(motivo.group(1).strip('\"') if motivo else r)[:160]})")
+    quando = ("hoje" if dia == dt.date.today() else "amanhã" if dia == dt.date.today() + dt.timedelta(days=1)
+              else f"{_DIAS[dia.weekday()]}, {dia.strftime('%d/%m')}")
+    partes = []
+    if feitos:
+        partes.append(f"Coloquei no Google Agenda de {quando}:\n" + "\n".join(feitos))
+    if problemas:
+        partes.append("Não coloquei: " + "; ".join(problemas) + ".")
+    return "\n\n".join(partes), bool(feitos)
+
+
 def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
     r = registro_direto(texto)
     if r is not None:
         return r[0], (["central"] if r[1] else [])
+    e = criar_evento_direto(texto)
+    if e is not None:
+        return e[0], (["google_agenda"] if e[1] else [])
     a = agenda_direta(texto)
     if a is not None:
         return a, ["google_agenda"]

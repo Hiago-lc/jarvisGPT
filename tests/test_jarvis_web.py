@@ -592,7 +592,9 @@ class AgendaDiretaTests(_Base):
         self.assertIn("Não consegui ler o Google Agenda: A autorização do Google expirou", r["resposta"])
 
     def test_creating_an_event_still_goes_to_the_model(self):
-        for texto in ("marca uma reunião amanhã às 10h", "agenda uma call com o cliente sexta",
+        # Com horário, criar é feito pelo código (EventoDiretoTests); sem horário,
+        # falta informação e o modelo pergunta.
+        for texto in ("agenda uma call com o cliente sexta", "marca uma reunião com a Padaria Sol",
                       "quais demandas da central estão atrasadas?"):
             r, llm = self._pedir(texto)
             self.assertEqual(r["resposta"], "Resposta do modelo.", texto)
@@ -625,6 +627,68 @@ class RecusaTests(_Base):
         self.assertIn("whatsapp_draft", escolhidas)
         self.assertNotIn("send_message", escolhidas)
         self.assertIn("send_message", self.cerebro.escolher_acoes("manda no whats pro Pedro: oi"))
+
+
+class EventoDiretoTests(_Base):
+    """Criar compromissos no Google Agenda pelo que a frase diz, sem o modelo."""
+
+    def setUp(self):
+        super().setUp()
+        from haizen.central import atalhos
+        atalhos._ULTIMO_DIA.clear()
+        self.criados = []
+
+        def criar(params):
+            self.criados.append(params)
+            return "status=done action=google_agenda verified=true"
+        self.p = patch("actions.google_agenda.google_agenda", side_effect=criar)
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+        super().tearDown()
+
+    def _pedir(self, texto):
+        llm = FakeLLM([("Resposta do modelo.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            return self.cerebro.responder(texto), llm
+
+    def test_the_two_events_from_the_screenshot(self):
+        import datetime as dt
+        r, llm = self._pedir("para amanhã coloque de 9 as 10 Vídeo Café Empresarial da ACI de 11 as 12 - Estudos")
+        self.assertEqual(llm.pedidos, [])
+        amanha = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        self.assertEqual([(c["title"], c["start"][:16], c["end"][11:16]) for c in self.criados],
+                         [("Vídeo Café Empresarial da ACI", f"{amanha}T09:00", "10:00"),
+                          ("Estudos", f"{amanha}T11:00", "12:00")])
+        self.assertTrue(self.criados[0]["start"].endswith("-03:00"))
+        self.assertIn("Coloquei no Google Agenda de amanhã", r["resposta"])
+        self.assertEqual(r["acoes"], ["google_agenda"])
+
+    def test_follow_up_without_a_day_uses_the_day_just_mentioned(self):
+        import datetime as dt
+        self._pedir("o que tenho na agenda amanhã?")
+        self._pedir("coloque de 9 as 10 Vídeo Café Empresarial da ACI")
+        amanha = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        self.assertEqual(self.criados[-1]["title"], "Vídeo Café Empresarial da ACI")
+        self.assertTrue(self.criados[-1]["start"].startswith(amanha))
+
+    def test_single_time_and_title_before_it(self):
+        self._pedir("marca uma reunião com a Padaria Sol sexta às 15h")
+        self.assertEqual(self.criados[0]["title"], "reunião com a Padaria Sol")
+        self.assertIn("T15:00", self.criados[0]["start"])
+        self.assertIn("T16:00", self.criados[0]["end"])
+
+    def test_problems_are_told_not_hidden(self):
+        r, _ = self._pedir("coloca na agenda amanhã das 10 às 9 revisão")
+        self.assertIn("precisa ser depois do início", r["resposta"])
+        self.assertEqual(self.criados, [])
+
+    def test_other_requests_are_left_alone(self):
+        for t in ("me lembra às 15h de ligar pro cliente", "quais compromissos tenho amanhã?",
+                  "registre a receita de R$ 600 da Ninguém, descrição 2/2 Site"):
+            r, llm = self._pedir(t)
+            self.assertEqual(self.criados, [], t)
 
 
 class DatasTests(unittest.TestCase):

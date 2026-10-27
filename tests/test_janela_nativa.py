@@ -345,5 +345,39 @@ class PonteTests(unittest.TestCase):
         self.assertIn('id="abrir-ajustes"', html)
 
 
+class FerramentasPorPedidoTests(unittest.TestCase):
+    """A janela escolhe as ferramentas pelo pedido, como a web."""
+
+    def _motor(self):
+        from providers.engine_pipeline import PipelineEngine
+        registro = []
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai", "max_tools": 3, "max_tool_chars": None}
+        motor = PipelineEngine(LLM(), None, None, log=registro.append)
+        decls = [{"name": n, "description": n, "parameters": {"type": "OBJECT", "properties": {}}}
+                 for n in ("open_app", "computer_settings", "computer_control", "web_search",
+                           "google_agenda", "file_controller", "haizen")]
+        cfg = type("C", (), {"system_instruction": "s", "tools": [{"function_declarations": decls}]})()
+        motor._read_config(cfg)
+        return motor
+
+    def test_calendar_request_brings_the_calendar_tool(self):
+        import asyncio
+        from haizen.central.cerebro import escolher_acoes
+        motor = self._motor()
+        self.assertNotIn("google_agenda", motor.tool_names())
+        motor.tool_priority = lambda t: ["haizen", *escolher_acoes(t)]
+        motor._queue_generation = lambda: None
+        asyncio.run(motor.send_client_content(turns={"role": "user", "parts": [
+            {"text": "marca na agenda amanhã das 9 às 10 a reunião"}]}))
+        self.assertIn("google_agenda", motor.tool_names())
+        self.assertEqual(len(motor.tool_names()), 3)
+
+    def test_window_wires_the_choice(self):
+        fonte = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+        self.assertIn("engine.tool_priority = self._ferramentas_do_pedido", fonte)
+
+
 if __name__ == "__main__":
     unittest.main()
