@@ -63,6 +63,10 @@ LOCAL_TOOL_BUDGET = {"max_tools": "10", "max_tool_chars": "8000",
 # modelo lê ~7 mil tokens de instruções, e na primeira vez ainda carrega o
 # modelo na memória. Nas vezes seguintes o Ollama reaproveita essa leitura.
 LOCAL_TIMEOUT = "180"
+# Na nuvem cabe muito mais, mas mandar as 29 ferramentas com as descrições
+# longas em toda mensagem deixa cada resposta mais lenta. Com um limite, o
+# Jarvis escolhe as que combinam com o pedido (e usa as descrições curtas).
+NUVEM_TOOL_BUDGET = {"max_tools": "16", "max_tool_chars": "24000"}
 
 # O Ollama abre modelos com 4096 tokens de contexto por padrão, e só as
 # instruções e ferramentas do Jarvis passam de 7 mil. A API compatível com a
@@ -227,12 +231,17 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
         llm.update(base_url=OLLAMA_URL + "/v1", model=modelo, api_key="",
                    vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
                    **LOCAL_TOOL_BUDGET)
+        llm.pop("reasoning_effort", None)
     else:
         llm.update(base_url=GROQ_URL if perfil == "hibrido" else GEMINI_URL,
-                   model=modelo, vision=False, max_tools="0", max_tool_chars="0")
+                   model=modelo, vision=False, **NUVEM_TOOL_BUDGET)
         llm.pop("api_key", None)          # a chave só existe em memória
         llm.pop("history_chars", None)    # na nuvem há contexto de sobra
-        llm.pop("timeout", None)          # e a resposta vem em segundos
+        llm["timeout"] = "90"
+        if perfil == "gemini":
+            llm["reasoning_effort"] = "low"   # pensa menos antes de responder
+        else:
+            llm.pop("reasoning_effort", None)
 
     stt = creds.setdefault("whisper", {})
     if perfil in ("local", "gemini"):

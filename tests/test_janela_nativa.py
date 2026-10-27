@@ -379,5 +379,85 @@ class FerramentasPorPedidoTests(unittest.TestCase):
         self.assertIn("engine.tool_priority = self._ferramentas_do_pedido", fonte)
 
 
+class GeminiRespostaTests(unittest.TestCase):
+    """Perfil gemini: raciocínio curto, ferramentas escolhidas e nova tentativa."""
+
+    def _httpx_falso(self, falhas: int):
+        import types
+
+        class ReadTimeout(Exception):
+            pass
+
+        class ConnectTimeout(Exception):
+            pass
+        enviados = []
+
+        class Resposta:
+            status_code = 200
+
+            async def aiter_lines(self):
+                for linha in ('data: {"choices":[{"delta":{"content":"Oi, Hiago."}}]}', "data: [DONE]"):
+                    yield linha
+
+            async def aread(self):
+                return b""
+
+            async def aclose(self):
+                pass
+
+        class Cliente:
+            def __init__(self, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def build_request(self, metodo, url, headers=None, json=None):
+                return {"url": url, "json": json}
+
+            async def send(self, req, stream=False):
+                enviados.append(req)
+                if len(enviados) <= falhas:
+                    raise ReadTimeout("sem resposta")
+                return Resposta()
+        mod = types.SimpleNamespace(AsyncClient=Cliente, ReadTimeout=ReadTimeout,
+                                    ConnectTimeout=ConnectTimeout)
+        return mod, enviados
+
+    def _falar(self, falhas):
+        import asyncio
+        mod, enviados = self._httpx_falso(falhas)
+        with patch.dict(sys.modules, {"httpx": mod}):
+            from providers.llm_openai import OpenAICompatLLM
+            llm = OpenAICompatLLM({"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                                   "model": "gemini-flash-latest", "api_key": "k",
+                                   "reasoning_effort": "low", "timeout": "90"})
+
+            async def tudo():
+                return [ev async for ev in llm.chat([{"role": "user", "content": "oi"}])]
+            return asyncio.run(tudo()), enviados, mod
+
+    def test_one_silent_timeout_is_retried(self):
+        eventos, enviados, _ = self._falar(1)
+        self.assertEqual(eventos, [{"text": "Oi, Hiago."}])
+        self.assertEqual(len(enviados), 2)
+        self.assertEqual(enviados[0]["json"]["reasoning_effort"], "low")
+
+    def test_two_timeouts_are_reported(self):
+        with self.assertRaises(Exception) as ctx:
+            self._falar(2)
+        self.assertEqual(type(ctx.exception).__name__, "ReadTimeout")
+
+    def test_gemini_profile_settings(self):
+        cfg = start_local.montar_config({}, "gemini", "gemini-flash-latest")
+        llm = cfg["providers"]["creds"]["openai_compat"]
+        self.assertEqual((llm["reasoning_effort"], llm["timeout"], llm["max_tools"]), ("low", "90", "16"))
+        local = start_local.montar_config(cfg, "local", "qwen")["providers"]["creds"]["openai_compat"]
+        self.assertNotIn("reasoning_effort", local)
+
+
 if __name__ == "__main__":
     unittest.main()

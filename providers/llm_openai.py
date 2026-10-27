@@ -337,6 +337,9 @@ class OpenAICompatLLM:
         self.model = (cfg.get("model") or "").strip()
         self.key = (cfg.get("api_key") or "").strip()
         self.timeout = float(cfg.get("timeout") or 60.0)
+        # Gemini (e outros) pensam antes de responder; "low" encurta essa espera
+        # sem tirar a capacidade de usar ferramentas. Vazio = padrão do servidor.
+        self.reasoning_effort = (cfg.get("reasoning_effort") or "").strip()
 
         # A budget on a model running on your own hardware, unless the user
         # chose one themselves.
@@ -401,6 +404,8 @@ class OpenAICompatLLM:
             body["tool_choice"] = "auto"
         if temperature is not None:
             body["temperature"] = temperature
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         return body
 
     # -- one-shot, synchronous: this is what core/gemini.py's ladder uses ----
@@ -461,8 +466,20 @@ class OpenAICompatLLM:
                 return
 
             buf = _ToolCallBuffer()
-            async with cl.stream("POST", f"{self.base}/chat/completions",
-                                 headers=self._headers(), json=body) as r:
+            # Uma segunda tentativa quando o servidor não respondeu NADA a tempo
+            # (o Gemini gratuito às vezes engasga numa requisição): melhor que
+            # mostrar um erro para algo que, repetido, responde em segundos.
+            # Só antes do primeiro pedaço: depois disso, repetir duplicaria a fala.
+            for tentativa in (1, 2):
+                try:
+                    r = await cl.send(cl.build_request(
+                        "POST", f"{self.base}/chat/completions",
+                        headers=self._headers(), json=body), stream=True)
+                    break
+                except (self._httpx.ReadTimeout, self._httpx.ConnectTimeout):
+                    if tentativa == 2:
+                        raise
+            try:
                 if r.status_code >= 400:
                     detail = _terse((await r.aread()).decode("utf-8", "replace"))
                     raise RuntimeError(f"{r.status_code} {detail}")
@@ -483,6 +500,8 @@ class OpenAICompatLLM:
                         yield {"text": delta["content"]}
                     if delta.get("tool_calls"):
                         buf.feed(delta["tool_calls"])
+            finally:
+                await r.aclose()
 
             calls = buf.drain()
             if calls:
