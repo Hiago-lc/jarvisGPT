@@ -335,3 +335,27 @@ class LoginTests(unittest.TestCase):
         cdp.send.assert_called_with("Browser.setWindowBounds", {"windowId": 7, "bounds": {"windowState": "minimized"}})
         web.show_window(self.page, True)
         self.page.bring_to_front.assert_called_once()
+
+
+class AbrirConversaTests(unittest.TestCase):
+    """Layout novo do WhatsApp: abrir pela lista, nome com emoji, cabeçalho sem title."""
+
+    def test_listed_chat_is_clicked_directly_even_with_emoji(self):
+        stop = threading.Event()
+        page = MagicMock(url="https://web.whatsapp.com/")
+        estado = {"aberta": ""}
+        item = MagicMock()
+        item.get_attribute.side_effect = lambda a: "KHOTZ VIP ⚔️"
+        item.click.side_effect = lambda **k: estado.update(aberta="KHOTZ VIP")
+        lista = MagicMock()
+        lista.all.return_value = [item]
+        sem_title = MagicMock()
+        sem_title.all.return_value = []
+        header = MagicMock()
+        header.count.return_value = 1
+        header.first = header
+        header.inner_text.side_effect = lambda **k: f"{estado['aberta']}\nonline" if estado["aberta"] else ""
+        page.locator.side_effect = lambda sel: {"#pane-side span[title]": lista, "#main header [title]": sem_title,
+                                                "#main header": header}[sel]
+        web._open_chat(page, "KHOTZ VIP ⚔️", stop)
+        item.click.assert_called_once()

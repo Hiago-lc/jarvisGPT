@@ -97,6 +97,18 @@ _UNFINISHED_END = re.compile(
     re.IGNORECASE)
 
 
+# "Foram removidas com sucesso", "evento criado com sucesso"... sem ferramenta.
+_CLAIM_DONE = re.compile(
+    r"\b(?:fo(?:i|ram)\s+(?:\w+\s+)?(?:removid|exclu[ií]d|apagad|criad|adicionad|agendad|marcad|enviad|"
+    r"cancelad|remarcad|movid|registrad|atualizad|alterad)\w*|"
+    r"(?:removid|exclu[ií]d|apagad|criad|adicionad|agendad|marcad|enviad|cancelad|remarcad|movid|"
+    r"registrad|atualizad|alterad)\w*\s+com\s+sucesso)", re.IGNORECASE)
+
+
+def _claims_done(text: str) -> bool:
+    return bool(_CLAIM_DONE.search(text or "")) and not re.search(r"\bn[ãa]o\s+(?:fo(?:i|ram)|consegui)", text or "", re.I)
+
+
 def _unfinished(text: str) -> bool:
     return bool(_UNFINISHED_END.search((text or "").strip()))
 _VAD_MIN_SPEECH_MS = 250   # shorter than this is a cough, a click, a door
@@ -658,6 +670,16 @@ class PipelineEngine:
             self._tick("llm", time.monotonic() - t0, first_word, text)
             if text:
                 self._history.append({"role": "assistant", "content": text})
+            if text and self._rounds == 0 and _claims_done(text):
+                # Disse que fez sem chamar ferramenta nenhuma nesta vez. Não dá
+                # para "desdizer" o que já foi falado, mas dá para avisar, e o
+                # aviso entra no histórico para o modelo não acreditar em si mesmo.
+                aviso = ("Atenção: eu não executei essa ação, foi só uma resposta. "
+                         "Peça de novo dizendo o nome do compromisso ou o horário.")
+                self._history.append({"role": "assistant", "content": aviso})
+                self._log("SYS: o modelo disse que fez algo sem usar nenhuma ferramenta — avisei.")
+                await self._emit(Msg.said(aviso))
+                await self._speak(aviso)
 
             self._log(f"SYS: replied in {time.monotonic() - t0:.1f}s")
             self._print_timing()

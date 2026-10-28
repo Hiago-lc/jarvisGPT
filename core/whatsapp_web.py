@@ -39,10 +39,61 @@ def _check(stop):
         raise DraftError('cancelled', 'Operação interrompida. Confira o rascunho na janela aberta; nenhuma instrução de envio foi executada.')
 
 
+def _norm(text):
+    """Nome sem emoji, pontuação e caixa: o WhatsApp desenha emoji como imagem,
+    então o texto visível de "KHOTZ VIP ⚔️" é só "KHOTZ VIP"."""
+    return ' '.join(re.sub(r'[^\w\s]', ' ', (text or '').casefold()).split())
+
+
 def _header_matches(page, recipient):
     headers = page.locator('#main header [title]')
-    return any(item.is_visible() and (item.get_attribute('title') or '').strip().casefold() == recipient.casefold()
-               for item in headers.all())
+    if any(item.is_visible() and (item.get_attribute('title') or '').strip().casefold() == recipient.casefold()
+           for item in headers.all()):
+        return True
+    # Layout novo do WhatsApp: o nome no cabeçalho pode vir sem o atributo title.
+    try:
+        header = page.locator('#main header')
+        if header.count():
+            linhas = [l for l in (header.first.inner_text(timeout=1000) or '').splitlines() if l.strip()]
+            return bool(linhas) and _norm(linhas[0]) == _norm(recipient)
+    except Exception:
+        pass
+    return False
+
+
+_SEARCH_BOXES = ('#side [contenteditable="true"][role="textbox"]', '#side input[role="textbox"]',
+                 '#side input[type="text"]', 'input[aria-label*="esquis"]', 'input[aria-label*="Search"]',
+                 'div[contenteditable="true"][aria-label*="esquis"]', 'div[contenteditable="true"][aria-label*="Search"]')
+
+
+def _search_box(page):
+    for sel in _SEARCH_BOXES:
+        try:
+            box = page.locator(sel)
+            if box.count() == 1 and box.first.is_visible() is True:
+                return box
+        except Exception:
+            continue
+    return None
+
+
+def _exact_titles(page, recipient):
+    """As entradas da lista de conversas cujo nome é exatamente `recipient`."""
+    try:
+        alvo = _norm(recipient)
+        return [t for t in page.locator('#pane-side span[title]').all()
+                if _norm(t.get_attribute('title')) == alvo]
+    except Exception:
+        return []
+
+
+def _wait_header(page, recipient, stop):
+    until = time.monotonic() + 4
+    while not _header_matches(page, recipient):
+        _check(stop)
+        if time.monotonic() >= until:
+            raise DraftError('chat_not_verified', 'O cabeçalho da conversa não confirmou o contato escolhido. Nenhum texto foi digitado.')
+        stop.wait(.1)
 
 
 def _open_chat(page, recipient, stop):
@@ -50,31 +101,43 @@ def _open_chat(page, recipient, stop):
     _check(stop)
     if not page.url.startswith('https://web.whatsapp.com/'):
         raise DraftError('wrong_site', 'A janela não está no WhatsApp Web oficial; operação cancelada.')
-    if not _header_matches(page, recipient):
+    if _header_matches(page, recipient):
+        return
+    # 1) Está na lista de conversas? Clica direto, sem depender da busca.
+    direto = _exact_titles(page, recipient)
+    if len(direto) == 1:
+        _check(stop)
+        direto[0].click(timeout=3000)
+        _wait_header(page, recipient, stop)
+        return
+    # 2) Senão, procura pelo campo de busca (o layout dele muda com frequência).
+    search = _search_box(page)
+    if search is None:
         search = page.locator('#side [contenteditable="true"][role="textbox"]')
         try:
             search.first.wait_for(state='visible', timeout=5000)
         except Exception:
-            raise DraftError('login_or_ui', 'O WhatsApp Web não está pronto. Se a janela mostrar QR Code, vincule sua conta pelo celular. Se já estiver conectado, a interface pode ter mudado; nenhum rascunho foi alterado.') from None
+            raise DraftError('login_or_ui', 'Não achei o campo de busca do WhatsApp Web. Se a janela mostrar QR Code, conecte pelo celular; se já estiver conectado, o layout pode ter mudado: abra a conversa pela lista do Jarvis. Nenhum texto foi digitado.') from None
         if search.count() != 1:
             raise DraftError('ambiguous_search', 'Não foi encontrado um único campo de busca; nenhum rascunho foi alterado.')
-        _check(stop)
-        search.fill(recipient, timeout=3000)
-        candidates = page.locator('#pane-side span[title]').filter(has_text=re.compile(r'^\s*' + re.escape(recipient) + r'\s*$', re.IGNORECASE))
-        try:
-            candidates.first.wait_for(state='visible', timeout=5000)
-        except Exception:
-            raise DraftError('contact_not_found', 'Contato não encontrado pelo nome exato. Informe o nome completo como aparece no WhatsApp.') from None
-        if candidates.count() != 1 or (candidates.first.get_attribute('title') or '').strip().casefold() != recipient.casefold():
-            raise DraftError('ambiguous_contact', 'Mais de um resultado ou nome diferente. Informe um nome de contato único; nenhum rascunho foi alterado.')
-        _check(stop)
-        candidates.first.click(timeout=3000)
-        until = time.monotonic() + 3
-        while not _header_matches(page, recipient):
-            _check(stop)
-            if time.monotonic() >= until:
-                raise DraftError('chat_not_verified', 'O cabeçalho da conversa não confirmou o contato escolhido. Nenhum texto foi digitado.')
-            stop.wait(.1)
+    _check(stop)
+    search.fill(recipient, timeout=3000)
+    stop.wait(.8)
+    achados = _exact_titles(page, recipient)
+    if len(achados) == 1:
+        achados[0].click(timeout=3000)
+        _wait_header(page, recipient, stop)
+        return
+    candidates = page.locator('#pane-side span[title]').filter(has_text=re.compile(r'^\s*' + re.escape(recipient) + r'\s*$', re.IGNORECASE))
+    try:
+        candidates.first.wait_for(state='visible', timeout=5000)
+    except Exception:
+        raise DraftError('contact_not_found', 'Contato não encontrado pelo nome exato. Informe o nome completo como aparece no WhatsApp.') from None
+    if candidates.count() != 1 or (candidates.first.get_attribute('title') or '').strip().casefold() != recipient.casefold():
+        raise DraftError('ambiguous_contact', 'Mais de um resultado ou nome diferente. Informe um nome de contato único; nenhum rascunho foi alterado.')
+    _check(stop)
+    candidates.first.click(timeout=3000)
+    _wait_header(page, recipient, stop)
 
 
 def edit_draft(page, recipient, action, text, replace_existing, stop):

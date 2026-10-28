@@ -169,6 +169,8 @@ def agenda_direta(texto: str) -> str | None:
         from core.google_calendar_errors import CalendarSetupError, diagnose
         motivo = str(e) if isinstance(e, CalendarSetupError) else diagnose(e)[1]
         return f"Não consegui ler o Google Agenda: {motivo}"
+    from actions.google_agenda import lembrar_listados
+    lembrar_listados(itens)
     if not itens:
         return f"Você não tem nada no Google Agenda {nome}."
     varios_dias = (fim - ini).days > 1
@@ -324,7 +326,8 @@ _MOVER = re.compile(r"\b(mov|mud|remar[cq]|pass[ae]|adi[ae]|transf[ei]r|tro[cq]|
 _DESTINO = re.compile(r"\s(?:para|pra|pro)\s", re.I)
 _CONTEXTO_AGENDA = re.compile(r"agenda|calend[aá]rio|compromisso|reuni[aã]o|evento|call", re.I)
 _VAZIAS = {"o", "a", "os", "as", "de", "do", "da", "dos", "das", "meu", "minha", "um", "uma", "com",
-           "evento", "compromisso", "na", "no", "e", "que", "ta", "esta", "esse", "essa", "aquele", "aquela"}
+           "evento", "compromisso", "na", "no", "e", "que", "ta", "esta", "esse", "essa", "aquele", "aquela",
+           "eventos", "compromissos", "por", "favor", "todos", "todas", "tambem", "agora"}
 
 
 def _termos(texto: str) -> list[str]:
@@ -375,9 +378,66 @@ def _achar_evento(alvo: str) -> tuple[dict | None, str]:
     melhor = max(n for n, _ in notas)
     empatados = [ev for n, ev in notas if n == melhor]
     if len(empatados) > 1:
+        from actions.google_agenda import lembrar_listados
+        lembrar_listados(empatados)
         lista = "; ".join(f"{ev.get('summary', '(sem título)')} ({_quando_evento(ev)})" for ev in empatados[:5])
         return None, f"Achei mais de um: {lista}. Qual deles? Diga o dia para eu saber."
     return empatados[0], ""
+
+
+_PRONOME = re.compile(r"\b(elas?|eles?|ess[ae]s?|est[ae]s?|tod[ao]s|isso|aquel[ae]s?|ambas?|ambos)\b", re.I)
+_HORA_ALVO = re.compile(r"\b(?:d[ae]s?|[àa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
+
+
+def _alvos_sem_nome(texto: str) -> list[dict] | None:
+    """Compromissos a excluir quando a frase não diz o nome: "remove elas"
+    (os que acabaram de ser listados) ou "os das 14h de amanhã" (pelo horário)."""
+    from actions.google_agenda import recentes
+    hora = _HORA_ALVO.search(texto)
+    dia = _dia_citado(texto)
+    candidatos = recentes()
+    if hora:
+        h, m = int(hora.group(1)), int(hora.group(2) or 0)
+        if not candidatos or dia:
+            d = dia or dt.date.today()
+            try:
+                candidatos = _eventos_entre(d, d + dt.timedelta(days=1))
+            except Exception:  # noqa: BLE001
+                return None
+        no_horario = []
+        for ev in candidatos:
+            ini = (ev.get("start") or {}).get("dateTime")
+            if ini:
+                t = dt.datetime.fromisoformat(ini.replace("Z", "+00:00"))
+                if (t.hour, t.minute) == (h, m) and (not dia or t.date() == dia):
+                    no_horario.append(ev)
+        return no_horario
+    if _PRONOME.search(texto) and candidatos:
+        return candidatos
+    return None
+
+
+def _excluir_varios(eventos: list[dict]) -> tuple[str, bool]:
+    from core import confirm
+    if confirm.pending_title():
+        return "Já existe uma confirmação esperando na tela; responda a ela primeiro.", False
+    nomes = "; ".join(f"{e.get('summary', '(sem título)')} ({_quando_evento(e)})" for e in eventos)
+    if len(eventos) == 1:
+        from actions.google_agenda import google_agenda
+        r = str(google_agenda({"action": "delete", "event_id": eventos[0]["id"]}))
+        if "CONFIRMATION_PENDING" in r:
+            return f"Confirme na tela para eu excluir {nomes}.", True
+        return r, False
+
+    def _apagar():
+        from core.google_calendar import service
+        eventos_api = service().events()
+        for e in eventos:
+            eventos_api.delete(calendarId="primary", eventId=e["id"], sendUpdates="none").execute(num_retries=0)
+        return f"Excluí {len(eventos)} compromissos do Google Agenda."
+    confirm.request(key="agenda-delete-" + "-".join(e["id"] for e in eventos)[:80],
+                    title=f"Excluir {len(eventos)} compromissos do Google Agenda", detail=nomes[:300], run=_apagar)
+    return f"Confirme na tela para eu excluir {len(eventos)} compromissos: {nomes}.", True
 
 
 def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
@@ -387,8 +447,16 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto))
     excluir = _EXCLUIR.search(texto)
     mover = _MOVER.search(texto)
-    if excluir and tem_contexto and (not mover or excluir.start() < mover.start()):
+    if excluir and (not mover or excluir.start() < mover.start()):
         alvo = texto[excluir.end():]
+        if not _termos(_SOBRAS.sub(" ", _PRONOME.sub(" ", _HORA_ALVO.sub(" ", alvo)))) or not tem_contexto:
+            alvos = _alvos_sem_nome(alvo)
+            if alvos:
+                return _excluir_varios(alvos)
+            if alvos == [] and tem_contexto:
+                return "Não achei compromisso nesse horário.", False
+        if not tem_contexto:
+            return None
         ev, problema = _achar_evento(alvo)
         if ev is None:
             # "apaga o arquivo de amanhã" não é agenda: sem palavra de agenda, segue para o modelo.

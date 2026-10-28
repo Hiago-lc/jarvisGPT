@@ -40,6 +40,21 @@ def create_body(params):
     return body
 
 
+# Os eventos listados por último (pelo modelo ou pelos atalhos), para que
+# "remove elas" ou "exclui esses" saibam de quais compromissos se trata.
+ULTIMOS = {"quando": 0.0, "itens": []}
+
+
+def lembrar_listados(itens):
+    import time as _t
+    ULTIMOS["quando"], ULTIMOS["itens"] = _t.monotonic(), [dict(e) for e in itens if e.get("id")]
+
+
+def recentes(max_idade=900):
+    import time as _t
+    return list(ULTIMOS["itens"]) if _t.monotonic() - ULTIMOS["quando"] < max_idade else []
+
+
 def _event_when(event):
     start = (event.get('start') or {})
     return start.get('dateTime') or start.get('date') or ''
@@ -126,6 +141,7 @@ def google_agenda(parameters, response=None, player=None, session_memory=None):
                 raise CalendarSetupError('O Google não confirmou o evento solicitado.')
             return outcome.done('google_agenda', title=event.get('summary', body['summary']), start=body['start']['dateTime'], event_id=event['id'], link=event.get('htmlLink'), verified=True)
         result = events.list(calendarId=calendar_id, timeMin=start.isoformat(), timeMax=end.isoformat(), singleEvents=True, orderBy='startTime', maxResults=30).execute(num_retries=1)
+        lembrar_listados(result.get('items', []))
         rows = [{'event_id': e.get('id'), 'title': e.get('summary', '(sem título)'), 'start': e.get('start'), 'end': e.get('end')} for e in result.get('items', [])]
         return outcome.untrusted('google_calendar', json.dumps({'events': rows, 'more_available': bool(result.get('nextPageToken'))}, ensure_ascii=False))
     except (ValueError, TypeError, ZoneInfoNotFoundError) as error:

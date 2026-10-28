@@ -656,5 +656,41 @@ class ContextoTests(unittest.TestCase):
         self.assertEqual(enviados, [{"model": "jarvis-qwen3-4b-12k:latest", "keep_alive": 0}])
 
 
+
+class InvencaoNaJanelaTests(unittest.TestCase):
+    def _turno(self, resposta):
+        import asyncio
+        from providers.engine_pipeline import PipelineEngine
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai"}
+
+            async def chat(self, msgs, tools):
+                yield {"text": resposta}
+        motor = PipelineEngine(LLM(), None, None, log=lambda m: None)
+        ditos = []
+
+        async def falar(texto, **kw):
+            ditos.append(texto)
+        motor._speak = falar
+        motor._history.append({"role": "user", "content": "remove elas"})
+        asyncio.run(motor._generate())
+        return motor, ditos
+
+    def test_claim_without_tool_gets_a_spoken_warning(self):
+        motor, ditos = self._turno("As duas demandas para 14:00 foram removidas com sucesso.")
+        self.assertTrue(any("não executei" in d for d in ditos), ditos)
+        self.assertIn("não executei", motor._history[-1]["content"])
+
+    def test_normal_answer_is_left_alone(self):
+        motor, ditos = self._turno("Claro, quais compromissos você quer remover?")
+        self.assertFalse(any("não executei" in d for d in ditos))
+
+    def test_claim_detector(self):
+        from providers.engine_pipeline import _claims_done
+        self.assertTrue(_claims_done("Pronto, o evento foi criado."))
+        self.assertFalse(_claims_done("Os eventos não foram removidos."))
+
+
 if __name__ == "__main__":
     unittest.main()

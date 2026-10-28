@@ -787,6 +787,60 @@ class MudarEventoTests(_Base):
         self.assertEqual(r["resposta"], "Resposta do modelo.")
 
 
+class ExcluirSemNomeTests(_Base):
+    """'Remove elas' e 'exclui os das 14h': os compromissos certos, uma confirmação só."""
+
+    def setUp(self):
+        super().setUp()
+        import datetime as dt
+        hoje = dt.date.today().isoformat()
+        ev = lambda i, t, h: {"id": i, "summary": t, "start": {"dateTime": f"{hoje}T{h}:00-03:00"},
+                              "end": {"dateTime": f"{hoje}T{h[:2]}:59:00-03:00"}}
+        self.agenda = _AgendaFalsa([ev("b1", "Banners São Rafael", "14:00"), ev("b2", "Criativos São Rafael", "14:00"),
+                                    ev("b3", "Estudos", "16:00")])
+        self.p = patch("core.google_calendar.service", return_value=self.agenda)
+        self.p.start()
+        self.confirmacoes = []
+        from core import confirm
+        self.c = [patch.object(confirm, "request", side_effect=lambda **kw: (self.confirmacoes.append(kw), "[CONFIRMATION_PENDING] x")[1]),
+                  patch.object(confirm, "pending_title", return_value="")]
+        for c in self.c:
+            c.start()
+        import actions.google_agenda as ga
+        ga.ULTIMOS.update(quando=0.0, itens=[])
+
+    def tearDown(self):
+        for c in self.c:
+            c.stop()
+        self.p.stop()
+        super().tearDown()
+
+    def _pedir(self, texto):
+        llm = FakeLLM([("Resposta do modelo.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            return self.cerebro.responder(texto)
+
+    def test_by_time_today(self):
+        r = self._pedir("exclui os compromissos das 14h de hoje")
+        self.assertIn("2 compromissos", r["resposta"])
+        self.assertEqual(len(self.confirmacoes), 1)
+        self.confirmacoes[0]["run"]()
+        self.assertEqual(sorted(self.agenda.apagados), ["b1", "b2"])
+
+    def test_pronoun_uses_what_was_just_listed(self):
+        import actions.google_agenda as ga
+        ga.lembrar_listados([self.agenda.eventos["b1"], self.agenda.eventos["b2"]])
+        r = self._pedir("é para remover elas por favor")
+        self.assertIn("Confirme na tela", r["resposta"])
+        self.confirmacoes[0]["run"]()
+        self.assertEqual(sorted(self.agenda.apagados), ["b1", "b2"])
+
+    def test_pronoun_without_a_recent_list_goes_to_the_model(self):
+        r = self._pedir("é para remover elas por favor")
+        self.assertEqual(r["resposta"], "Resposta do modelo.")
+        self.assertEqual(self.confirmacoes, [])
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data
