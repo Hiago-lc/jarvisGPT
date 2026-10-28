@@ -178,6 +178,30 @@ class ProjetoTests(unittest.TestCase):
             novo = servicos.tentar_de_novo(t2["id"])
         self.assertEqual((novo["status"], novo["erro"]), ("na_fila", ""))
 
+    def test_reviewer_gets_trimmed_context_and_retries_once(self):
+        from haizen import executor, servicos, store
+        tamanhos = []
+        longo = "Linha de entrega comprida.\n" * 2000          # ~54 mil caracteres por entrega
+
+        def falso(prompt):
+            if "## Equipe disponível" in prompt:
+                return self.plano
+            if "Revise tudo." in prompt:
+                tamanhos.append(len(prompt))
+                if len(tamanhos) == 1:
+                    raise RuntimeError("o modelo local falhou: ReadTimeout")
+            return longo
+        with patch.object(executor, "executar_local", side_effect=falso), patch("haizen.worker.iniciar"):
+            pid = servicos.criar_projeto("Site e marca nova", "Padaria Sol")["projeto"]["id"]
+            self._rodar_fila()
+            servicos.aprovar(self._etapas(pid)["Conceito da marca"]["id"])
+            self._rodar_fila()
+        revisao = self._etapas(pid)["Revisão final"]
+        self.assertEqual(revisao["status"], "aguardando_aprovacao")
+        self.assertEqual(len(tamanhos), 2)
+        self.assertLess(tamanhos[0], executor.CONTEXTO_LOCAL + 4000)       # cabe no modelo local
+        self.assertLess(tamanhos[1], tamanhos[0])                          # a 2ª tentativa é menor
+
 
 if __name__ == "__main__":
     unittest.main()

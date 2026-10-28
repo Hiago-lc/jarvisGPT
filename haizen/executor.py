@@ -20,7 +20,11 @@ from pathlib import Path
 from . import agentes, store
 
 CLAUDE_TIMEOUT = int(os.environ.get("HAIZEN_CLAUDE_TIMEOUT", "900"))     # 15 min
-LOCAL_TIMEOUT_MS = int(os.environ.get("HAIZEN_LOCAL_TIMEOUT_MS", "300000"))
+LOCAL_TIMEOUT_MS = int(os.environ.get("HAIZEN_LOCAL_TIMEOUT_MS", "600000"))
+# Quanto das entregas anteriores cabe no prompt. O modelo local tem uma janela
+# de contexto pequena (12 mil tokens): com tudo junto, o revisor estourava.
+CONTEXTO_CLAUDE = 24000
+CONTEXTO_LOCAL = int(os.environ.get("HAIZEN_CONTEXTO_LOCAL", "9000"))
 
 _REGRAS = (
     "Regras da HAIZEN para qualquer entrega:\n"
@@ -34,16 +38,19 @@ _REGRAS = (
 )
 
 
-def contexto_projeto(t: dict) -> str:
-    """O pedido do projeto e as entregas das etapas de que esta depende."""
+def contexto_projeto(t: dict, limite: int = CONTEXTO_CLAUDE) -> str:
+    """O pedido do projeto e as entregas das etapas de que esta depende,
+    divididas por igual dentro de `limite` caracteres."""
     if not t.get("projeto_id"):
         return ""
     proj = store.projeto(t["projeto_id"])
     partes = []
     if proj and t.get("agente") != "gerente":
         partes += ["## Pedido do projeto", proj["pedido"].strip(), ""]
-    restante = 24000
-    for d in json.loads(t.get("depende_de") or "[]"):
+    deps = json.loads(t.get("depende_de") or "[]")
+    restante = limite
+    por_entrega = max(1500, limite // max(1, len(deps)))
+    for d in deps:
         dep = store.trabalho(d)
         if not dep or not dep.get("arquivo"):
             continue
@@ -51,7 +58,9 @@ def contexto_projeto(t: dict) -> str:
             texto = Path(dep["arquivo"]).read_text(encoding="utf-8").strip()
         except OSError:
             continue
-        corte = texto[:min(9000, restante)]
+        corte = texto[:min(9000, por_entrega, restante)]
+        if len(corte) < len(texto):
+            corte = corte.rsplit("\n", 1)[0] + "\n[... cortado para caber no modelo ...]"
         restante -= len(corte)
         nome = dep.get("titulo") or dep["agente"]
         partes += [f"## Entrega anterior: {nome} (agente {dep['agente']})", corte, ""]
@@ -163,18 +172,38 @@ def executar_claude(prompt: str, pasta: Path) -> str:
 
 
 def executar_local(prompt: str) -> str:
-    from core import gemini
-    texto = gemini.text(prompt, tier=gemini.SMART, timeout_ms=LOCAL_TIMEOUT_MS)
-    if not (texto or "").strip():
-        raise RuntimeError("o modelo local não respondeu")
-    return texto.strip()
+    """O modelo configurado no Jarvis (Ollama no perfil local). O motivo de uma
+    falha vai no erro, em vez de um "não respondeu" que não ajuda ninguém."""
+    try:
+        from haizen.central.cerebro import _limpar, _provedor
+        llm = _provedor("llm")
+    except Exception:  # noqa: BLE001 - sem pipeline configurado: o caminho antigo
+        from core import gemini
+        texto = gemini.text(prompt, tier=gemini.SMART, timeout_ms=LOCAL_TIMEOUT_MS)
+        if not (texto or "").strip():
+            raise RuntimeError("o modelo local não respondeu") from None
+        return texto.strip()
+    try:
+        texto, _ = llm.complete([{"role": "user", "content": prompt}], tools=None,
+                                timeout=LOCAL_TIMEOUT_MS / 1000)
+    except Exception as e:  # noqa: BLE001
+        motivo = f"{type(e).__name__}: {str(e)[:200]}"
+        if "timeout" in motivo.lower() or "timed out" in motivo.lower():
+            motivo = f"demorou mais de {LOCAL_TIMEOUT_MS // 60000} minutos ({motivo})"
+        raise RuntimeError(f"o modelo local falhou: {motivo}") from None
+    texto = _limpar(texto or "")
+    if not texto:
+        raise RuntimeError("o modelo local respondeu vazio (o pedido pode ter ficado grande demais para ele)")
+    return texto
 
 
 def executar(t: dict) -> Path:
     """Executa um trabalho já marcado como 'executando' e grava a entrega."""
     agente = agentes.carregar(t["agente"])
     cliente = store.cliente_por_id(t["cliente_id"])
-    prompt = montar_prompt(agente, cliente, t["pedido"], contexto_projeto(t))
+    local = t["executor"] != "claude" or claude_sem_login()
+    prompt = montar_prompt(agente, cliente, t["pedido"],
+                           contexto_projeto(t, CONTEXTO_LOCAL if local else CONTEXTO_CLAUDE))
     if t["executor"] == "claude" and not claude_sem_login():
         try:
             texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
@@ -185,12 +214,25 @@ def executar(t: dict) -> Path:
             import time
             _SEM_LOGIN["ate"] = time.monotonic() + 600
             print(f"[HAIZEN] {AVISO_LOGIN}")
-            texto = executar_local(prompt)
+            texto = _local_com_retentativa(agente, cliente, t)
             store.atualizar(t["id"], executor="local",
                             observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
     else:
         if t["executor"] == "claude":
             store.atualizar(t["id"], executor="local",
                             observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
-        texto = executar_local(prompt)
+        texto = _local_com_retentativa(agente, cliente, t, prompt)
     return store.gravar_entrega(t["id"], texto)
+
+
+def _local_com_retentativa(agente, cliente, t: dict, prompt: str | None = None) -> str:
+    """Modelo local; se falhar, uma segunda vez com metade do contexto."""
+    prompt = prompt or montar_prompt(agente, cliente, t["pedido"], contexto_projeto(t, CONTEXTO_LOCAL))
+    try:
+        return executar_local(prompt)
+    except RuntimeError as primeiro:
+        if not t.get("depende_de") or t.get("depende_de") == "[]":
+            raise
+        print(f"[HAIZEN] trabalho {t['id']}: {primeiro}; tentando de novo com menos contexto")
+        menor = montar_prompt(agente, cliente, t["pedido"], contexto_projeto(t, CONTEXTO_LOCAL // 2))
+        return executar_local(menor)
