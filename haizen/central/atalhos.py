@@ -654,15 +654,30 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     """Remarca ou exclui um compromisso; None se a frase não for esse pedido."""
     if "?" in texto:
         return None
-    for etapa in (_completar_pendente, editar_evento_direto, _pedir_valor):
-        feito = etapa(texto)
-        if feito is not None:
-            return feito
-    tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto))
     excluir = _EXCLUIR.search(texto)
     mover = _MOVER.search(texto)
-    if excluir and (not mover or excluir.start() < mover.start()):
+    pede_excluir = bool(excluir and (not mover or excluir.start() < mover.start()))
+    if not pede_excluir:
+        for etapa in (_completar_pendente, editar_evento_direto, _pedir_valor):
+            feito = etapa(texto)
+            if feito is not None:
+                return feito
+    from actions.google_agenda import recentes
+    listados = recentes()
+    tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto) or listados)
+    if pede_excluir:
         alvo = texto[excluir.end():]
+        # Colou a linha da lista ("14:00: Café da Tarde"): o título inteiro está no pedido.
+        citados = [e for e in listados if len(_plano(e.get("summary", ""))) >= 4
+                   and _plano(e.get("summary", "")) in _plano(alvo)]
+        if citados:
+            hora = re.search(r"\b(\d{1,2}):(\d{2})\b", alvo)
+            if hora and len(citados) > 1:
+                no_horario = [e for e in citados if (e.get("start") or {}).get("dateTime", "")[11:16]
+                              == f"{int(hora.group(1)):02d}:{hora.group(2)}"]
+                citados = no_horario or citados
+            maior = max(len(_plano(e.get("summary", ""))) for e in citados)
+            return _excluir_varios([e for e in citados if len(_plano(e.get("summary", ""))) == maior])
         if not _termos(_SOBRAS.sub(" ", _PRONOME.sub(" ", _HORA_ALVO.sub(" ", alvo)))) or not tem_contexto:
             alvos = _alvos_sem_nome(alvo)
             if alvos:

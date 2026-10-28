@@ -834,6 +834,20 @@ class MudarEventoTests(_Base):
         r = self._pedir("das 16 às 17:30")
         self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("16:00", "17:30"))
 
+    def test_delete_by_pasting_the_listed_line(self):
+        import actions.google_agenda as ga
+        self.agenda.eventos["e1"] = {"id": "e1", "summary": "preciso que ajuste o horário da demanda Banners São Rafael da ser",
+                                     "start": {"dateTime": f"{self.amanha}T14:00:00-03:00"},
+                                     "end": {"dateTime": f"{self.amanha}T15:00:00-03:00"}}
+        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+                                     "start": {"dateTime": f"{self.amanha}T09:00:00-03:00"},
+                                     "end": {"dateTime": f"{self.amanha}T10:00:00-03:00"}}
+        ga.lembrar_listados(list(self.agenda.eventos.values()))
+        r = self._pedir("preciso que exclua: 14:00: preciso que ajuste o horário da demanda Banners São Rafael da ser")
+        self.assertEqual(self.agenda.apagados, ["e1"])
+        self.assertIn("Excluí", r["resposta"])
+        ga.ULTIMOS.update(quando=0.0, itens=[])
+
     def test_my_name_is_saved(self):
         from unittest.mock import patch as _p
         with _p("memory.config_manager.save_assistant_config") as salvar, \

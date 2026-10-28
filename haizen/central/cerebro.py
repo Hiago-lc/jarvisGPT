@@ -49,7 +49,8 @@ ACOES = (
     ("desktop", "desktop_control", r"papel de parede|wallpaper|organiz[ae] a [aá]rea de trabalho"),
     ("flight_finder", "flight_finder", r"\bvoos?\b|passage(?:m|ns) a[eé]re"),
     ("game_updater", "game_updater", r"steam|epic|\bjogos?\b|\bgames?\b"),
-    ("google_agenda", "google_agenda", r"agenda|reuni[aã]o|evento|compromisso|calend[aá]rio|marc[ae] (?:uma|um)"),
+    ("google_agenda", "google_agenda", r"agenda|reuni[aã]o|evento|compromisso|calend[aá]rio|marc[ae] (?:uma|um)|"
+     r"demanda|remar[cq]|hor[aá]rio|\b\d{1,2}:\d{2}\b"),
     ("reminder", "reminder", r"lembr[ae]-?me|me lembr|lembrete|me avis|despert|alarme"),
     ("screen_task", "screen_task", r"na tela|da tela|olh[ae] a tela|v[eê] a tela|o que (?:est[aá]|tem) na tela"),
     ("send_message", "send_message", r"mensagem|whats|telegram|mand[ae] (?:pra|para)|envi[ae] (?:pra|para)"),
@@ -235,6 +236,14 @@ def escolher_acoes(texto: str, anteriores=()) -> list[str]:
     """Ações do PC para esta mensagem: as que combinam com o pedido, as da
     resposta anterior (para "faz de novo", "agora fecha") e as de sempre."""
     escolhidas = [nome for nome, rx in _PALAVRAS if rx.search(texto or "")]
+    try:
+        # Logo depois de listar a agenda, "exclui esse", "muda aquele" são sobre ela.
+        from actions.google_agenda import recentes
+        if recentes() and "google_agenda" not in escolhidas and re.search(
+                r"\b(?:exclu|apag|remov|cancel|tir[ae]|mud|mov|ajust|alter|remar|renome|troc|pass[ae])\w*", texto or "", re.I):
+            escolhidas.insert(0, "google_agenda")
+    except Exception:
+        pass
     if "whatsapp" in escolhidas:
         # No WhatsApp, enviar passa pela confirmação da ferramenta "whatsapp";
         # a antiga, que envia direto pelo app, nem entra na conversa.
