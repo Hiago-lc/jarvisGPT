@@ -212,6 +212,21 @@ def _do(page, payload, stop):
                       payload.get('replace_existing', False), stop)
 
 
+def _launch(driver, stop):
+    """The persistent WhatsApp Web window (the login lives in this profile)."""
+    profile = data_dir() / 'whatsapp-web-profile'
+    for channel in ('chrome', 'msedge', None):
+        _check(stop)
+        try:
+            options = {'headless': False, 'timeout': 7000}
+            if channel:
+                options['channel'] = channel
+            return driver.chromium.launch_persistent_context(str(profile), **options)
+        except Exception:
+            continue
+    raise DraftError('browser_unavailable', 'Não foi possível abrir Chrome/Edge. Feche outra instância do Jarvis que use esse perfil. Alternativamente, instale o Chromium com python -m playwright install chromium.')
+
+
 def _loop():
     global _active
     driver = context = page = None
@@ -227,32 +242,39 @@ def _loop():
                 except Exception:
                     raise DraftError('browser_dependency', 'Instale a dependência com python -m pip install playwright. O navegador precisa funcionar na sua sessão de desktop.') from None
             if context is None:
-                profile = data_dir() / 'whatsapp-web-profile'
-                for channel in ('chrome', 'msedge', None):
+                context = _launch(driver, stop)
+            for attempt in (1, 2):
+                started = False
+                try:
+                    if page is None or page.is_closed():
+                        page = context.pages[0] if context.pages else context.new_page()
+                        page.set_default_timeout(3000)
+                        page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
+                    if not page.url.startswith('https://web.whatsapp.com/'):
+                        page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
                     _check(stop)
+                    started = True
+                    actual = _do(page, payload, stop)
+                    break
+                except DraftError:
+                    raise
+                except Exception:
+                    # A janela do WhatsApp Web foi fechada: abre de novo (o login
+                    # fica guardado no perfil, sem QR Code) e tenta uma vez mais.
+                    # Nunca repetir um envio que já começou: duplicaria a mensagem.
+                    if attempt == 2 or (started and payload.get('op') == 'send'):
+                        raise
                     try:
-                        options = {'headless': False, 'timeout': 7000}
-                        if channel:
-                            options['channel'] = channel
-                        context = driver.chromium.launch_persistent_context(str(profile), **options)
-                        break
+                        context.close()
                     except Exception:
-                        continue
-                if context is None:
-                    raise DraftError('browser_unavailable', 'Não foi possível abrir Chrome/Edge. Feche outra instância do Jarvis que use esse perfil. Alternativamente, instale o Chromium com python -m playwright install chromium.')
-            if page is None or page.is_closed():
-                page = context.pages[0] if context.pages else context.new_page()
-                page.set_default_timeout(3000)
-                page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
-            if not page.url.startswith('https://web.whatsapp.com/'):
-                page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
-            _check(stop)
-            actual = _do(page, payload, stop)
+                        pass
+                    context = page = None
+                    context = _launch(driver, stop)
             future.set_result((True, 'verified', actual))
         except DraftError as error:
             future.set_result((False, error.code, str(error)))
         except Exception:
-            future.set_result((False, 'browser_error', 'A automação do navegador falhou. Confira a janela do WhatsApp Web; não foi possível confirmar o rascunho. Nenhum comando de envio é implementado neste fluxo.'))
+            future.set_result((False, 'browser_error', 'A automação do navegador falhou. Confira a janela do WhatsApp Web; não foi possível confirmar a operação.' + (' Veja na conversa se a mensagem saiu antes de tentar de novo.' if payload.get('op') == 'send' else '')))
             try:
                 if page is None or page.is_closed():
                     context = page = None

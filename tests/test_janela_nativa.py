@@ -226,7 +226,7 @@ class MicrofoneDiagnosticoTests(unittest.TestCase):
         async def tocar():
             for _ in range(5):
                 await motor.send_realtime_input(audio={"data": fala})
-            for _ in range(10):
+            for _ in range(20):                    # 2 s: mais que a pausa de fim de frase
                 await motor.send_realtime_input(audio={"data": silencio})
         with patch("providers.engine_pipeline._pcm_of", side_effect=lambda a: a["data"]):
             asyncio.run(tocar())

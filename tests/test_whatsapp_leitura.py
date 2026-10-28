@@ -171,3 +171,106 @@ class AtalhosTests(unittest.TestCase):
         with patch.object(web, "run_op", return_value=(True, "ok", [{"contato": "Ana", "nao_lidas": 1, "previa": "Oi"}])):
             self.assertIn("Ana (1): Oi", atalhos.whatsapp_direto("quais mensagens chegaram no whatsapp?"))
         self.assertIsNone(atalhos.whatsapp_direto("responde a Ana no whatsapp dizendo oi"))
+
+
+class ReaberturaTests(unittest.TestCase):
+    """Fechar a janela do WhatsApp Web não quebra: o Jarvis reabre sozinho."""
+
+    def _rodar(self, op, falhas_em_do):
+        import queue as q
+        chamadas = {"do": 0, "launch": 0}
+
+        def do(page, payload, stop):
+            chamadas["do"] += 1
+            if chamadas["do"] <= falhas_em_do:
+                raise RuntimeError("Target page, context or browser has been closed")
+            return "ok"
+
+        def launch(driver, stop):
+            chamadas["launch"] += 1
+            ctx = MagicMock()
+            pagina = MagicMock(url="https://web.whatsapp.com/")
+            pagina.is_closed.return_value = False
+            ctx.pages = [pagina]
+            return ctx
+        fake_pw = MagicMock()
+        with patch.object(web, "_do", side_effect=do), patch.object(web, "_launch", side_effect=launch), \
+             patch.dict("sys.modules", {"playwright": MagicMock(), "playwright.sync_api": MagicMock(sync_playwright=lambda: fake_pw)}), \
+             patch.object(web, "_JOBS", q.Queue()), patch.object(web, "_worker", None):
+            r = web.run_op({"op": op, "recipient": "Ana", "text": "Oi", "action": "read"}, timeout=10)
+        return r, chamadas
+
+    def test_closed_window_is_reopened_and_reading_works(self):
+        r, ch = self._rodar("unread", 1)
+        self.assertTrue(r[0])
+        self.assertEqual((ch["do"], ch["launch"]), (2, 2))
+
+    def test_a_send_that_already_started_is_never_repeated(self):
+        r, ch = self._rodar("send", 1)
+        self.assertFalse(r[0])
+        self.assertEqual(ch["do"], 1)
+        self.assertIn("Veja na conversa se a mensagem saiu", r[2])
+
+
+class FraseIncompletaTests(unittest.TestCase):
+    def _motor(self, falas):
+        import asyncio
+        from providers.engine_pipeline import PipelineEngine
+
+        class LLM:
+            caps = {"tools": True, "tool_format": "openai"}
+
+        class STT:
+            async def transcribe(self, pcm, rate):
+                return falas.pop(0)
+        motor = PipelineEngine(LLM(), STT(), None, log=lambda m: None)
+        enviados = []
+
+        async def emit(m):
+            pass
+
+        async def enviar(**kw):
+            enviados.append(kw["turns"]["parts"][0]["text"])
+        motor._emit = emit
+        motor.send_client_content = enviar
+        return motor, enviados, asyncio
+
+    def test_half_sentence_waits_and_joins_the_rest(self):
+        motor, enviados, asyncio = self._motor(["Coloca na agenda de amanhã uma reunião com", "a Padaria Sol às 10h"])
+
+        async def cena():
+            motor._mic, motor._mic_bytes = [b"\0\0" * 800], 1600
+            await motor.flush_microphone(by_pause=True)
+            self.assertEqual(enviados, [])                 # esperou o resto
+            motor._vad_started = True                      # voltou a falar
+            motor._partial_task.cancel()
+            motor._vad_started = False
+            motor._mic, motor._mic_bytes = [b"\0\0" * 800], 1600
+            await motor.flush_microphone(by_pause=True)
+        asyncio.run(cena())
+        self.assertEqual(enviados, ["Coloca na agenda de amanhã uma reunião com a Padaria Sol às 10h"])
+
+    def test_half_sentence_is_answered_if_nothing_follows(self):
+        import providers.engine_pipeline as ep
+        motor, enviados, asyncio = self._motor(["Abre o WhatsApp e"])
+
+        async def cena():
+            with patch.object(ep, "_UNFINISHED_WAIT_S", 0.05):
+                motor._mic, motor._mic_bytes = [b"\0\0" * 800], 1600
+                await motor.flush_microphone(by_pause=True)
+                await asyncio.sleep(0.2)
+        asyncio.run(cena())
+        self.assertEqual(enviados, ["Abre o WhatsApp e"])
+
+    def test_complete_sentence_goes_at_once(self):
+        motor, enviados, asyncio = self._motor(["Abre o WhatsApp"])
+
+        async def cena():
+            motor._mic, motor._mic_bytes = [b"\0\0" * 800], 1600
+            await motor.flush_microphone(by_pause=True)
+        asyncio.run(cena())
+        self.assertEqual(enviados, ["Abre o WhatsApp"])
+
+    def test_pause_default_is_longer(self):
+        import providers.engine_pipeline as ep
+        self.assertGreaterEqual(ep._VAD_SILENCE_MS, 1200)

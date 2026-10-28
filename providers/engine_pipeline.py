@@ -77,7 +77,28 @@ _DEFAULT_HISTORY_CHARS = 24_000
 # never triggers in a noisy room and never stops in a silent one — so the noise
 # floor is measured continuously from the quietest recent frames and speech is
 # whatever stands well above it.
-_VAD_SILENCE_MS = 700      # quiet for this long after speech = the turn ended
+# 700 ms cut people off mid-sentence: a pause to think, in Portuguese, easily
+# runs past it. 1.3 s still feels immediate, and JARVIS_PAUSA_MS tunes it.
+def _pausa_ms() -> float:
+    import os
+    try:
+        return max(500.0, min(4000.0, float(os.environ.get("JARVIS_PAUSA_MS") or 1300)))
+    except ValueError:
+        return 1300.0
+
+
+_VAD_SILENCE_MS = _pausa_ms()   # quiet for this long after speech = the turn ended
+# A sentence that stops on "e", "de", "para", "que", a comma or "..." is not over:
+# wait this much longer for the rest before answering.
+_UNFINISHED_WAIT_S = 2.2
+_UNFINISHED_END = re.compile(
+    r"(?:[,;:]|\.\.\.|…|\b(?:e|de|do|da|dos|das|o|a|os|as|para|pra|pro|com|que|em|no|na|nos|nas|"
+    r"um|uma|mas|ou|se|porque|quando|onde|como|meu|minha|tipo|então|ent[aã]o|a[ií]|pelo|pela|sobre|até))\s*$",
+    re.IGNORECASE)
+
+
+def _unfinished(text: str) -> bool:
+    return bool(_UNFINISHED_END.search((text or "").strip()))
 _VAD_MIN_SPEECH_MS = 250   # shorter than this is a cough, a click, a door
 _VAD_MAX_TURN_S = 30.0     # a runaway stream is flushed rather than kept for ever
 _VAD_FLOOR_MARGIN = 3.5    # speech is this many times the measured noise floor
@@ -318,6 +339,11 @@ class PipelineEngine:
             if self._vad_speech_ms >= _VAD_MIN_SPEECH_MS:
                 if not self._vad_started:
                     self._log("SYS: 🎤 ouvindo você…")
+                    # The rest of an unfinished sentence: do not answer the first half.
+                    task = getattr(self, "_partial_task", None)
+                    if task is not None:
+                        task.cancel()
+                        self._partial_task = None
                 self._vad_started = True
             return
 
@@ -335,7 +361,7 @@ class PipelineEngine:
         max_bytes = int(_a.MIC_RATE * _VAD_MAX_TURN_S) * _a.SAMPLE_WIDTH
         if self._vad_quiet_ms >= _VAD_SILENCE_MS or self._mic_bytes >= max_bytes:
             self._reset_vad()
-            await self.flush_microphone()
+            await self.flush_microphone(by_pause=True)
 
     def _reset_vad(self) -> None:
         self._vad_speech_ms = 0.0
@@ -811,7 +837,7 @@ class PipelineEngine:
         return content
 
     # ── speech recognition, at the end of a turn ─────────────────────────────
-    async def flush_microphone(self, sample_rate: int = 16000) -> str:
+    async def flush_microphone(self, sample_rate: int = 16000, *, by_pause: bool = False) -> str:
         """Recognise what has been buffered and start a turn with it.
 
         Called by whatever decides a turn has ended — push-to-talk releasing,
@@ -833,9 +859,36 @@ class PipelineEngine:
             self._report("speech recognition", self._stt, e)
             return ""
         self._timing["stt"] = time.monotonic() - t0
+        partial = getattr(self, "_partial", "")
+        if partial:
+            text = f"{partial} {text}".strip()
+            self._partial = ""
         if not text:
             self._log(f"SYS: ouvi {self._timing['heard_s']:.1f} s de áudio, mas não entendi "
                       "nenhuma palavra. Fale mais perto do microfone.")
+            return ""
+        if by_pause and _unfinished(text) and len(text) < 800:
+            # Probably a pause to think, not the end: hold it and wait a little.
+            self._partial = text
+            self._log("SYS: 🎤 esperando você terminar a frase…")
+            self._partial_task = asyncio.ensure_future(self._finish_partial(_UNFINISHED_WAIT_S))
+            return text
+        await self._deliver_heard(text)
+        return text
+
+    async def _finish_partial(self, wait: float) -> None:
+        """Nobody continued the sentence: answer what was said."""
+        try:
+            await asyncio.sleep(wait)
+        except asyncio.CancelledError:
+            return
+        if self._vad_started:
+            return                         # talking again; the next flush joins it
+        text, self._partial, self._partial_task = getattr(self, "_partial", ""), "", None
+        if text:
+            await self._deliver_heard(text)
+
+    async def _deliver_heard(self, text: str) -> None:
         if text:
             # THIS is what the user said, and the only thing that should reach
             # the activity log as "You:". Emitted here rather than in
@@ -851,7 +904,6 @@ class PipelineEngine:
             else:
                 await self.send_client_content(
                     turns={"role": "user", "parts": [{"text": text}]})
-        return text
 
     # ── answers that do not need the model ──────────────────────────────────
     # `interceptor(text) -> str | None` is set by the app. When it returns a
