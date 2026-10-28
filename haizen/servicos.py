@@ -232,6 +232,19 @@ def refazer(tid: int, ajuste: str) -> dict:
     return novo
 
 
+def tentar_de_novo(tid: int) -> dict:
+    """Um trabalho que deu erro volta para a fila, com o mesmo pedido."""
+    t = store.trabalho(tid)
+    if t is None:
+        raise KeyError(f"não existe o trabalho {tid}")
+    if t["status"] != "erro":
+        raise ValueError(f"o trabalho {tid} está {_NOMES_STATUS[t['status']]}, não com erro")
+    quem = t["executor"]
+    if quem == "claude" and not executor.claude_disponivel():
+        quem = "local"
+    return store.atualizar(tid, status="na_fila", erro="", executor=quem)
+
+
 def aprovar(tid: int, observacao: str = "") -> dict:
     t = store.trabalho(tid)
     if t is None:

@@ -684,7 +684,8 @@ async function abrirTrabalho(id, recarregar) {
     titulo: t.titulo ? `${t.titulo} (trabalho ${t.id}, ${t.agente})` : `Trabalho ${t.id}, ${t.agente}`,
     corpo: `<p class="sub" style="margin-top:0">${esc(t.cliente_nome || "Sem cliente")}, <span class="status-${t.status}">${esc(STATUS_TRAB[t.status] || t.status)}</span>, feito por ${t.executor === "claude" ? "Claude Code" : "modelo local"}</p>
       <p style="white-space:pre-wrap;margin:0 0 12px"><strong>Pedido:</strong> ${esc(t.pedido)}</p>
-      ${t.erro ? `<p class="erro">${esc(t.erro)}</p>` : ""}
+      ${t.erro ? `<p class="erro">${esc(t.erro)}</p>${/not logged in|\/login/i.test(t.erro) ? '<p class="sub">O Claude Code deste PC não está conectado à sua conta. Abra o Prompt de Comando, digite <code>claude</code>, Enter, depois <code>/login</code> e escolha a conta com assinatura. Depois clique em Tentar de novo (ou tente agora: sem a conexão, o agente usa o modelo local).</p>' : ""}` : ""}
+      ${t.observacao ? `<p class="sub">${esc(t.observacao)}</p>` : ""}
       ${t.entrega ? `<div class="entrega">${esc(t.entrega)}</div>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
       ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}</div>` : ""}`,
     acoes: pode ? [
@@ -695,7 +696,10 @@ async function abrirTrabalho(id, recarregar) {
       } },
       { texto: "Fechar", acao: () => {} },
       { texto: "Aprovar", classe: "primario", acao: async () => { await api("POST", `trabalhos/${t.id}/aprovar`, {}); avisar("Entrega aprovada"); recarregar(); } },
-    ] : [...excluir, { texto: "Fechar", acao: () => {} }],
+    ] : [...excluir,
+      ...(t.status === "erro" ? [{ texto: "Tentar de novo", classe: "primario", acao: async () => {
+        await api("POST", `trabalhos/${t.id}/tentar`, {}); avisar("De volta à fila"); recarregar(); } }] : []),
+      { texto: "Fechar", acao: () => {} }],
   });
 }
 
@@ -1070,7 +1074,7 @@ function balaoAgente(a) {
   const alvo = (t) => [t.titulo || t.pedido, t.cliente].filter(Boolean).join(" · ");
   if (a.estado === "trabalhando") return `Fazendo agora: ${alvo(a.atual)}`;
   if (a.estado === "esperando_voce") return `Terminei "${a.aprovar[0].titulo || a.aprovar[0].pedido.slice(0, 50)}". Pode conferir?`;
-  if (a.estado === "erro") return `Travei: ${a.erro.erro || "erro sem detalhe"}`;
+  if (a.estado === "erro") return /not logged in|\/login/i.test(a.erro.erro || "") ? "Travei: o Claude Code não está conectado à sua conta. Clique para ver como resolver." : `Travei: ${a.erro.erro || "erro sem detalhe"}`;
   if (a.estado === "na_fila") return `Próximo: ${alvo(a.proximo)}`;
   if (a.esperando) return `Aguardando a etapa anterior (${a.esperando})`;
   return a.ultimo ? `Livre. Último: ${alvo(a.ultimo)}` : "Livre";

@@ -96,8 +96,29 @@ def _candidatos_claude() -> list[Path]:
     return [pasta / n for pasta in pastas for n in nomes]
 
 
+# Quando o Claude Code responde "Not logged in", os trabalhos seguintes vão
+# direto para o modelo local por 10 minutos (depois disso tenta de novo: dá
+# tempo de a pessoa rodar "claude" e "/login" sem reiniciar o Jarvis).
+_SEM_LOGIN = {"ate": 0.0}
+AVISO_LOGIN = ("O Claude Code deste PC não está conectado à sua conta. Para conectar: abra o Prompt de "
+               "Comando, digite claude, Enter, e depois /login (escolha a conta com assinatura). "
+               "Enquanto isso, os agentes usam o modelo local.")
+
+
+def claude_sem_login() -> bool:
+    import time
+    return time.monotonic() < _SEM_LOGIN["ate"]
+
+
+def _erro_de_login(texto: str) -> bool:
+    t = (texto or "").lower()
+    return "not logged in" in t or "/login" in t or "invalid api key" in t or "please run /login" in t
+
+
 def claude_disponivel() -> str | None:
     """Caminho do Claude Code, ou None. HAIZEN_CLAUDE_PATH tem a palavra final."""
+    if claude_sem_login():
+        return None
     manual = os.environ.get("HAIZEN_CLAUDE_PATH", "").strip()
     if manual:
         return manual if Path(manual).is_file() else None
@@ -154,8 +175,22 @@ def executar(t: dict) -> Path:
     agente = agentes.carregar(t["agente"])
     cliente = store.cliente_por_id(t["cliente_id"])
     prompt = montar_prompt(agente, cliente, t["pedido"], contexto_projeto(t))
-    if t["executor"] == "claude":
-        texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
+    if t["executor"] == "claude" and not claude_sem_login():
+        try:
+            texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
+        except RuntimeError as e:
+            if not _erro_de_login(str(e)):
+                raise
+            # Sem login: não trava o escritório. Faz com o modelo local e avisa.
+            import time
+            _SEM_LOGIN["ate"] = time.monotonic() + 600
+            print(f"[HAIZEN] {AVISO_LOGIN}")
+            texto = executar_local(prompt)
+            store.atualizar(t["id"], executor="local",
+                            observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
     else:
+        if t["executor"] == "claude":
+            store.atualizar(t["id"], executor="local",
+                            observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
         texto = executar_local(prompt)
     return store.gravar_entrega(t["id"], texto)

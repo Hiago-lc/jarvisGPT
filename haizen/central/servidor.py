@@ -321,6 +321,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return store.apagar_trabalho(tid)
             if len(partes) == 2 and partes[1] == "aprovar" and metodo == "POST":
                 return _trabalho(servicos.aprovar(tid, self._corpo().get("observacao", "")))
+            if len(partes) == 2 and partes[1] == "tentar" and metodo == "POST":
+                t = servicos.tentar_de_novo(tid)
+                worker.iniciar()
+                return _trabalho(t)
             if len(partes) == 2 and partes[1] == "refazer" and metodo == "POST":
                 novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
                 worker.iniciar()

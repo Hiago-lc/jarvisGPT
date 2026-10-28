@@ -153,6 +153,31 @@ class ProjetoTests(unittest.TestCase):
         self.assertEqual(e["projetos"][0]["situacao"], "aguardando")
         self.assertEqual(e["projetos"][0]["progresso"], [1, 4])
 
+    def test_claude_not_logged_in_falls_back_to_local_and_retry(self):
+        from haizen import executor, servicos, store
+        self.p[1].stop()                                   # o Claude Code "existe"
+        executor._SEM_LOGIN["ate"] = 0.0
+        with patch.object(executor, "claude_disponivel", return_value="claude"), \
+             patch.object(executor, "executar_claude",
+                          side_effect=RuntimeError("o Claude Code falhou: Not logged in · Please run /login")) as cc, \
+             patch("haizen.worker.iniciar"):
+            t = servicos.delegar("comercial", "Proposta de site", "Padaria Sol")["trabalho"]
+            self.assertEqual(t["executor"], "claude")
+            self._rodar_fila()
+            feito = store.trabalho(t["id"])
+            self.assertEqual((feito["status"], feito["executor"]), ("aguardando_aprovacao", "local"))
+            self.assertIn("claude e /login", feito["observacao"])
+            # Os próximos nem tentam o Claude Code por um tempo.
+            t2 = servicos.delegar("comercial", "Outra proposta", "Padaria Sol")["trabalho"]
+            self._rodar_fila()
+            self.assertEqual(cc.call_count, 1)
+        executor._SEM_LOGIN["ate"] = 0.0
+        self.p[1].start()
+        store.atualizar(t2["id"], status="erro", erro="RuntimeError: qualquer")
+        with patch("haizen.worker.iniciar"):
+            novo = servicos.tentar_de_novo(t2["id"])
+        self.assertEqual((novo["status"], novo["erro"]), ("na_fila", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
