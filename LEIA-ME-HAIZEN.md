@@ -39,17 +39,17 @@ A fila faz um trabalho por vez (a placa de vídeo é uma só); o escritório mos
 | Agente | Faz | Executor |
 | --- | --- | --- |
 | gerente | Monta o plano do projeto e distribui | claude |
-| atendimento | Briefing do pedido e perguntas para o cliente | local |
+| atendimento | Briefing do pedido e perguntas para o cliente | claude |
 | comercial | Proposta comercial | claude |
 | designer | Conceito de identidade visual, paleta, tipografia | claude |
-| criativos | Legendas, roteiros, anúncios | local |
-| trafego | Plano de campanha de anúncios | local |
-| social | Linha editorial e calendário de posts | local |
+| criativos | Legendas, roteiros, anúncios | claude |
+| trafego | Plano de campanha de anúncios | claude |
+| social | Linha editorial e calendário de posts | claude |
 | dev | Mapa do site, textos, tecnologia, código de páginas | claude |
-| financeiro | Orçamento, cronograma de pagamento, cobrança | local |
-| revisor | Confere as entregas antes do cliente | local |
+| financeiro | Orçamento, cronograma de pagamento, cobrança | claude |
+| revisor | Confere as entregas antes do cliente | claude |
 
-Sem o Claude Code instalado, os agentes `claude` usam o modelo local.
+Todos os agentes trabalham pelo Claude Code, com a sua assinatura (sem custo por uso). O Claude Code precisa estar conectado à sua conta: rode `conectar-claude.bat` e digite `/login` uma vez. Se ele não estiver conectado, o trabalho para com essa instrução (o modelo local não é usado, porque divide a placa de vídeo com a voz do Jarvis). Para liberar o modelo local mesmo assim: `setx HAIZEN_PERMITIR_LOCAL 1`.
 
 Cada agente é um arquivo em `haizen/agentes/`. Para criar outro, peça ao Claude (abaixo) ou copie um arquivo e edite.
 

@@ -27,8 +27,8 @@ def _quem(a: agentes.Agente, forcado: str = "") -> tuple[str, str]:
     quem = (forcado or a.executor).lower()
     if quem not in agentes.EXECUTORES:
         raise ValueError(f"executor inválido: {quem}")
-    if quem == "claude" and not executor.claude_disponivel():
-        return "local", "O Claude Code não foi encontrado; usei o modelo local. "
+    if quem == "claude" and not executor.claude_disponivel() and executor.PERMITIR_LOCAL:
+        return "local", "O Claude Code não está disponível; usei o modelo local. "
     return quem, ""
 
 
@@ -239,9 +239,11 @@ def tentar_de_novo(tid: int) -> dict:
         raise KeyError(f"não existe o trabalho {tid}")
     if t["status"] != "erro":
         raise ValueError(f"o trabalho {tid} está {_NOMES_STATUS[t['status']]}, não com erro")
-    quem = t["executor"]
-    if quem == "claude" and not executor.claude_disponivel():
-        quem = "local"
+    try:
+        quem, _ = _quem(agentes.carregar(t["agente"]))    # o executor atual do agente
+    except KeyError:
+        quem = t["executor"]
+    executor._SEM_LOGIN["ate"] = 0.0                      # a pessoa pode ter acabado de fazer o /login
     return store.atualizar(tid, status="na_fila", erro="", executor=quem)
 
 

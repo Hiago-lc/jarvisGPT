@@ -41,8 +41,10 @@ class ProjetoTests(unittest.TestCase):
             if "## Equipe disponível" in prompt:
                 return self.plano
             return f"Entrega feita. ({len(self.prompts)})"
+        # Os testes rodam os agentes com o modelo falso no lugar do executor.
         self.p = [patch.object(executor, "executar_local", side_effect=falso),
-                  patch.object(executor, "claude_disponivel", return_value=None)]
+                  patch.object(executor, "claude_disponivel", return_value=None),
+                  patch.object(executor, "PERMITIR_LOCAL", True)]
         for x in self.p:
             x.start()
         self.plano = PLANO
@@ -153,30 +155,32 @@ class ProjetoTests(unittest.TestCase):
         self.assertEqual(e["projetos"][0]["situacao"], "aguardando")
         self.assertEqual(e["projetos"][0]["progresso"], [1, 4])
 
-    def test_claude_not_logged_in_falls_back_to_local_and_retry(self):
+    def test_claude_not_logged_in_stops_with_instructions_then_retry(self):
         from haizen import executor, servicos, store
         self.p[1].stop()                                   # o Claude Code "existe"
         executor._SEM_LOGIN["ate"] = 0.0
-        with patch.object(executor, "claude_disponivel", return_value="claude"), \
+        with patch.object(executor, "PERMITIR_LOCAL", False), \
+             patch.object(executor, "claude_disponivel", return_value="claude"), \
              patch.object(executor, "executar_claude",
-                          side_effect=RuntimeError("o Claude Code falhou: Not logged in · Please run /login")) as cc, \
+                          side_effect=RuntimeError("o Claude Code falhou: Not logged in · Please run /login")), \
              patch("haizen.worker.iniciar"):
             t = servicos.delegar("comercial", "Proposta de site", "Padaria Sol")["trabalho"]
             self.assertEqual(t["executor"], "claude")
-            self._rodar_fila()
-            feito = store.trabalho(t["id"])
-            self.assertEqual((feito["status"], feito["executor"]), ("aguardando_aprovacao", "local"))
-            self.assertIn("claude e /login", feito["observacao"])
-            # Os próximos nem tentam o Claude Code por um tempo.
-            t2 = servicos.delegar("comercial", "Outra proposta", "Padaria Sol")["trabalho"]
-            self._rodar_fila()
-            self.assertEqual(cc.call_count, 1)
+            alvo = store.pegar_proximo()
+            with self.assertRaises(RuntimeError) as erro:
+                executor.executar(alvo)
+            self.assertIn("conectar-claude.bat", str(erro.exception))
+            self.assertEqual(self.prompts, [])                     # o modelo local nem foi chamado
+            store.atualizar(t["id"], status="erro", erro=str(erro.exception))
+            novo = servicos.tentar_de_novo(t["id"])
+        self.assertEqual((novo["status"], novo["executor"]), ("na_fila", "claude"))
+        self.assertFalse(executor.claude_sem_login())              # tentar de novo testa o login outra vez
         executor._SEM_LOGIN["ate"] = 0.0
         self.p[1].start()
-        store.atualizar(t2["id"], status="erro", erro="RuntimeError: qualquer")
-        with patch("haizen.worker.iniciar"):
-            novo = servicos.tentar_de_novo(t2["id"])
-        self.assertEqual((novo["status"], novo["erro"]), ("na_fila", ""))
+
+    def test_all_agents_run_on_claude(self):
+        from haizen import agentes
+        self.assertEqual({a.executor for a in agentes.listar()}, {"claude"})
 
     def test_reviewer_gets_trimmed_context_and_retries_once(self):
         from haizen import executor, servicos, store

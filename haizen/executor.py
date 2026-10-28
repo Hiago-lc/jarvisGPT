@@ -109,9 +109,12 @@ def _candidatos_claude() -> list[Path]:
 # direto para o modelo local por 10 minutos (depois disso tenta de novo: dá
 # tempo de a pessoa rodar "claude" e "/login" sem reiniciar o Jarvis).
 _SEM_LOGIN = {"ate": 0.0}
-AVISO_LOGIN = ("O Claude Code deste PC não está conectado à sua conta. Para conectar: abra o Prompt de "
-               "Comando, digite claude, Enter, e depois /login (escolha a conta com assinatura). "
-               "Enquanto isso, os agentes usam o modelo local.")
+AVISO_LOGIN = ("O Claude Code deste PC não está conectado à sua conta. Para conectar: dê dois cliques em "
+               "conectar-claude.bat (na área de trabalho ou em C:\\JARVIS), digite /login e escolha a conta "
+               "com assinatura. Depois clique em Tentar de novo.")
+# Cair no modelo local quando o Claude Code falha só se a pessoa pedir: o modelo
+# local divide a placa de vídeo com a voz do Jarvis e estoura a memória.
+PERMITIR_LOCAL = os.environ.get("HAIZEN_PERMITIR_LOCAL", "").strip() == "1"
 
 
 def claude_sem_login() -> bool:
@@ -150,7 +153,8 @@ def _ambiente_assinatura() -> dict:
 def executar_claude(prompt: str, pasta: Path) -> str:
     exe = claude_disponivel()
     if not exe:
-        raise RuntimeError("o Claude Code não foi encontrado (comando 'claude' no PATH)")
+        raise RuntimeError("o Claude Code não foi encontrado neste PC. Instale pelo PowerShell com: "
+                           "irm https://claude.ai/install.ps1 | iex")
     pasta.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
         [exe, "-p", "Execute a tarefa descrita na entrada. Responda apenas com a entrega.",
@@ -210,14 +214,17 @@ def executar(t: dict) -> Path:
         except RuntimeError as e:
             if not _erro_de_login(str(e)):
                 raise
-            # Sem login: não trava o escritório. Faz com o modelo local e avisa.
             import time
-            _SEM_LOGIN["ate"] = time.monotonic() + 600
+            _SEM_LOGIN["ate"] = time.monotonic() + 120
             print(f"[HAIZEN] {AVISO_LOGIN}")
+            if not PERMITIR_LOCAL:
+                raise RuntimeError(AVISO_LOGIN) from None
             texto = _local_com_retentativa(agente, cliente, t)
             store.atualizar(t["id"], executor="local",
                             observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
     else:
+        if t["executor"] == "claude" and not PERMITIR_LOCAL:
+            raise RuntimeError(AVISO_LOGIN)
         if t["executor"] == "claude":
             store.atualizar(t["id"], executor="local",
                             observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")

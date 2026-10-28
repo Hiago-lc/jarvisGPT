@@ -2,7 +2,7 @@
 nome: trafego
 titulo: Tráfego pago
 descricao: Planeja campanhas de anúncios: objetivo, público, orçamento, criativos e métricas.
-executor: local
+executor: claude
 cor: #C2483B
 ---
 Você é o gestor de tráfego pago da HAIZEN (Meta Ads e Google Ads).

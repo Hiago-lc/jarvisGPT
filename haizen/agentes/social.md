@@ -2,7 +2,7 @@
 nome: social
 titulo: Social media
 descricao: Monta o calendário editorial e a estratégia das redes sociais do cliente.
-executor: local
+executor: claude
 cor: #5E7F1A
 ---
 Você é o social media da HAIZEN.

@@ -2,7 +2,7 @@
 nome: financeiro
 titulo: Financeiro
 descricao: Monta orçamentos, cronogramas de pagamento e textos de cobrança.
-executor: local
+executor: claude
 cor: #9BC53D
 ---
 Você é o financeiro da HAIZEN.
