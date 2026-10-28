@@ -243,6 +243,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._erro(HTTPStatus.NOT_FOUND, "rota inexistente")
         if isinstance(resultado, _Audio):
             return self._binario(resultado.dados, "audio/wav")
+        if isinstance(resultado, _Arquivo):
+            return self._binario(resultado.dados, resultado.tipo)
         self._json(resultado)
 
     def _api(self, metodo, partes, q):
@@ -321,6 +323,39 @@ class _Handler(BaseHTTPRequestHandler):
                 return store.apagar_trabalho(tid)
             if len(partes) == 2 and partes[1] == "aprovar" and metodo == "POST":
                 return _trabalho(servicos.aprovar(tid, self._corpo().get("observacao", "")))
+            if len(partes) == 2 and partes[1] == "arquivos" and metodo == "GET":
+                from haizen import executor
+                t = store.trabalho(tid)
+                if t is None:
+                    raise KeyError("trabalho não encontrado")
+                return {"pasta": t.get("pasta") or "", "arquivos": executor.arquivos_da_pasta(t.get("pasta") or "")}
+            if len(partes) == 2 and partes[1] == "arquivo" and metodo == "GET":
+                t = store.trabalho(tid)
+                if t is None or not t.get("pasta"):
+                    raise KeyError("arquivo não encontrado")
+                raiz = Path(t["pasta"]).resolve()
+                arq = (raiz / (q.get("nome") or "")).resolve()
+                if raiz not in arq.parents or not arq.is_file():
+                    raise KeyError("arquivo não encontrado")
+                if arq.stat().st_size > 200_000_000:
+                    raise ValueError("arquivo grande demais para mostrar aqui; abra a pasta")
+                return _Arquivo(arq.read_bytes(), _TIPOS_ENTREGA.get(arq.suffix.lower(), "application/octet-stream"))
+            if len(partes) == 2 and partes[1] == "abrir" and metodo == "POST":
+                t = store.trabalho(tid)
+                if t is None or not t.get("pasta"):
+                    raise KeyError("arquivo não encontrado")
+                raiz = Path(t["pasta"]).resolve()
+                arq = (raiz / str(self._corpo().get("nome") or "")).resolve()
+                if raiz not in arq.parents or not arq.is_file():
+                    raise KeyError("arquivo não encontrado")
+                _abrir_pasta(str(arq))            # abre com o programa padrão do Windows
+                return {"ok": True}
+            if len(partes) == 2 and partes[1] == "pasta" and metodo == "POST":
+                t = store.trabalho(tid)
+                if t is None or not t.get("pasta"):
+                    raise ValueError("este trabalho não tem pasta de arquivos")
+                _abrir_pasta(t["pasta"])
+                return {"ok": True}
             if len(partes) == 2 and partes[1] == "tentar" and metodo == "POST":
                 t = servicos.tentar_de_novo(tid)
                 worker.iniciar()
@@ -336,7 +371,7 @@ class _Handler(BaseHTTPRequestHandler):
             return [_projeto(p) for p in store.listar_projetos(30)]
         if not partes and metodo == "POST":
             c = self._corpo()
-            r = servicos.criar_projeto(c.get("pedido", ""), c.get("cliente", ""), c.get("titulo", ""))
+            r = servicos.criar_projeto(c.get("pedido", ""), c.get("cliente", ""), c.get("titulo", ""), c.get("marca", ""))
             worker.iniciar()
             return {"projeto": _projeto(r["projeto"]), "aviso": r["aviso"]}
         if len(partes) == 1:
@@ -540,7 +575,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy",
                          "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                         "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'")
+                         "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'")
         if arq.name == "sw.js":
             self.send_header("Service-Worker-Allowed", "/")
         self.end_headers()
@@ -553,6 +588,19 @@ _NAO_ACHOU = object()
 class _Audio:
     def __init__(self, dados: bytes):
         self.dados = dados
+
+
+class _Arquivo:
+    """Um arquivo produzido por um agente, para a página mostrar."""
+    def __init__(self, dados: bytes, tipo: str):
+        self.dados, self.tipo = dados, tipo
+
+
+_TIPOS_ENTREGA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+                  ".gif": "image/gif", ".svg": "image/svg+xml", ".mp4": "video/mp4", ".webm": "video/webm",
+                  ".mov": "video/quicktime", ".pdf": "application/pdf", ".md": "text/plain; charset=utf-8",
+                  ".txt": "text/plain; charset=utf-8", ".csv": "text/plain; charset=utf-8",
+                  ".html": "text/plain; charset=utf-8", ".mp3": "audio/mpeg"}
 _servidor: ThreadingHTTPServer | None = None
 _lock = threading.Lock()
 

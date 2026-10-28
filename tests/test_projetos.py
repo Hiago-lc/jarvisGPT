@@ -161,7 +161,7 @@ class ProjetoTests(unittest.TestCase):
         executor._SEM_LOGIN["ate"] = 0.0
         with patch.object(executor, "PERMITIR_LOCAL", False), \
              patch.object(executor, "claude_disponivel", return_value="claude"), \
-             patch.object(executor, "executar_claude",
+             patch.object(executor, "executar_producao",
                           side_effect=RuntimeError("o Claude Code falhou: Not logged in · Please run /login")), \
              patch("haizen.worker.iniciar"):
             t = servicos.delegar("comercial", "Proposta de site", "Padaria Sol")["trabalho"]
@@ -205,6 +205,124 @@ class ProjetoTests(unittest.TestCase):
         self.assertEqual(len(tamanhos), 2)
         self.assertLess(tamanhos[0], executor.CONTEXTO_LOCAL + 4000)       # cabe no modelo local
         self.assertLess(tamanhos[1], tamanhos[0])                          # a 2ª tentativa é menor
+
+
+class ProducaoTests(unittest.TestCase):
+    """Os agentes produzem arquivos na pasta do cliente (Claude Code simulado)."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        shutil.copytree(RAIZ / "haizen" / "agentes", base / "agentes")
+        self.env = patch.dict(os.environ, {"HAIZEN_DB": str(base / "haizen.db"),
+                                           "HAIZEN_AGENTES_DIR": str(base / "agentes"),
+                                           "HAIZEN_ENTREGAS_DIR": str(base / "entregas")})
+        self.env.start()
+        self.cliente_dir = base / "CLIENTES" / "10 - Loja Teste"
+        (self.cliente_dir / "00 - ID VISUAL").mkdir(parents=True)
+        (self.cliente_dir / "00 - ID VISUAL" / "LOGO.png").write_bytes(b"png")
+        (base / "CLIENTES" / "00 - HAIZEN").mkdir()
+        from haizen import store
+        from haizen.central import dados
+        cli = store.salvar_cliente("Loja Teste")
+        dados.criar("marcas", {"nome": "Loja Teste", "pasta": str(self.cliente_dir), "cliente_id": cli["id"]})
+        dados.criar("marcas", {"nome": "HAIZEN", "pasta": str(base / "CLIENTES" / "00 - HAIZEN")})
+        self.chamadas = []
+
+        def produzir(prompt, pasta, leitura):
+            self.chamadas.append({"prompt": prompt, "pasta": pasta, "leitura": leitura,
+                                  "claude_md": (pasta / "CLAUDE.md").read_text(encoding="utf-8")})
+            (pasta / "01 - Feed 1080x1350.png").write_bytes(b"\x89PNG fake")
+            (pasta / "fontes").mkdir(exist_ok=True)
+            (pasta / "fontes" / "feed.html").write_text("<html></html>", encoding="utf-8")
+            if "Reels" in prompt:
+                (pasta / "Reels.mp4").write_bytes(b"mp4")
+            return "## Entrega\n- 01 - Feed 1080x1350.png"
+
+        from haizen import executor
+        self.p = [patch.object(executor, "claude_disponivel", return_value="claude"),
+                  patch.object(executor, "executar_producao", side_effect=produzir),
+                  patch.object(executor, "executar_claude", return_value=PLANO_PRODUCAO),
+                  patch("haizen.worker.iniciar")]
+        for x in self.p:
+            x.start()
+
+    def tearDown(self):
+        for x in self.p:
+            x.stop()
+        self.env.stop()
+        self.dir.cleanup()
+
+    def _rodar(self):
+        from haizen import executor, servicos, store
+        while (t := store.pegar_proximo()) is not None:
+            executor.executar(t)
+            servicos.apos_entrega(t)
+
+    def test_files_go_to_the_client_review_folder_and_flow_to_next_step(self):
+        from haizen import servicos, store
+        r = servicos.criar_projeto("Criativos e reels da oferta de novembro", "Loja Teste")
+        self.assertEqual(r["projeto"]["marca_pasta"], str(self.cliente_dir))
+        self._rodar()
+        etapas = {t["titulo"]: t for t in store.trabalhos_do_projeto(r["projeto"]["id"])}
+        criativos = etapas["Criativos da oferta"]
+        pasta = Path(criativos["pasta"])
+        self.assertEqual(pasta.parent.parent, self.cliente_dir / "JARVIS - para revisar")
+        self.assertTrue(pasta.name.startswith("01 - Criativos da oferta"))
+        self.assertTrue((pasta / "01 - Feed 1080x1350.png").is_file())
+        self.assertTrue((pasta / "RELATORIO.md").is_file())
+        md = self.chamadas[0]["claude_md"]
+        self.assertIn(self.cliente_dir.as_posix(), md)
+        self.assertIn("ferramentas.py", md)
+        self.assertIn("00 - HAIZEN", md)
+        self.assertIn(self.cliente_dir, self.chamadas[0]["leitura"])
+        # A aprovação libera o vídeo, que recebe a lista de arquivos da etapa anterior.
+        servicos.aprovar(criativos["id"])
+        self._rodar()
+        self.assertIn("Arquivos produzidos nessa etapa", self.chamadas[1]["prompt"])
+        self.assertIn("- 01 - Feed 1080x1350.png", self.chamadas[1]["prompt"])
+        self.assertIn(pasta.parent, self.chamadas[1]["leitura"])          # a pasta do projeto
+        video = store.trabalho(etapas["Reels da oferta"]["id"])
+        self.assertTrue((Path(video["pasta"]) / "Reels.mp4").is_file())
+
+    def test_redo_gets_a_new_folder_version(self):
+        from haizen import servicos, store
+        r = servicos.criar_projeto("Criativos e reels da oferta de novembro", "Loja Teste")
+        self._rodar()
+        criativos = {t["titulo"]: t for t in store.trabalhos_do_projeto(r["projeto"]["id"])}["Criativos da oferta"]
+        novo = servicos.refazer(criativos["id"], "fundo mais escuro")
+        self._rodar()
+        self.assertTrue(store.trabalho(novo["id"])["pasta"].endswith(" v2"))
+
+    def test_server_lists_and_serves_only_files_inside_the_job_folder(self):
+        from haizen import servicos, store
+        from haizen.central import servidor
+        r = servicos.criar_projeto("Criativos e reels da oferta de novembro", "Loja Teste")
+        self._rodar()
+        t = {x["titulo"]: x for x in store.trabalhos_do_projeto(r["projeto"]["id"])}["Criativos da oferta"]
+        h = servidor._Handler.__new__(servidor._Handler)
+        lista = h._trabalhos("GET", [str(t["id"]), "arquivos"], {})
+        nomes = {a["nome"]: a for a in lista["arquivos"]}
+        self.assertIn("01 - Feed 1080x1350.png", nomes)
+        self.assertTrue(nomes["fontes/feed.html"]["fonte"])
+        self.assertNotIn("CLAUDE.md", nomes)
+        arq = h._trabalhos("GET", [str(t["id"]), "arquivo"], {"nome": "01 - Feed 1080x1350.png"})
+        self.assertEqual((arq.tipo, arq.dados), ("image/png", b"\x89PNG fake"))
+        with self.assertRaises(KeyError):
+            h._trabalhos("GET", [str(t["id"]), "arquivo"], {"nome": "../../00 - ID VISUAL/LOGO.png"})
+
+    def test_brand_cited_in_the_request_wins(self):
+        from haizen import store
+        self.assertEqual(store.pasta_da_marca(None, "vídeo para a Loja Teste"), str(self.cliente_dir))
+        self.assertEqual(store.pasta_da_marca(None, "algo sem marca"), "")
+
+
+PLANO_PRODUCAO = """```json
+{"titulo": "Oferta de novembro", "etapas": [
+ {"agente": "criativos", "titulo": "Criativos da oferta", "tarefa": "3 criativos de feed 1080x1350.", "depende_de": [], "aprovacao": true},
+ {"agente": "video", "titulo": "Reels da oferta", "tarefa": "Reels de 15 s 1080x1920.", "depende_de": [1], "aprovacao": false}
+]}
+```"""
 
 
 if __name__ == "__main__":

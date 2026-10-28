@@ -47,13 +47,17 @@ def _equipe() -> list[agentes.Agente]:
     return [a for a in agentes.listar() if a.nome != "gerente"]
 
 
-def criar_projeto(pedido: str, cliente: str = "", titulo: str = "") -> dict:
+def criar_projeto(pedido: str, cliente: str = "", titulo: str = "", marca: str = "") -> dict:
     """Abre o projeto e põe o gerente para montar o plano (a primeira etapa)."""
     pedido = (pedido or "").strip()
     if not pedido:
         raise ValueError("Diga o que o projeto precisa.")
     cli, aviso = _cliente(cliente)
-    proj = store.criar_projeto(titulo or pedido[:80], pedido, cli["id"] if cli else None)
+    pasta = store.pasta_da_marca(cli["id"] if cli else None, f"{pedido} {cliente}", marca)
+    if not pasta:
+        aviso += ("Não sei qual pasta de cliente usar: os arquivos vão para Documentos\\HAIZEN\\entregas. "
+                  "Escolha a marca no projeto para os agentes usarem o material do cliente. ")
+    proj = store.criar_projeto(titulo or pedido[:80], pedido, cli["id"] if cli else None, pasta)
     equipe = "\n".join(f"- {a.nome}: {a.titulo}. {a.descricao}" for a in _equipe())
     try:
         gerente = agentes.carregar("gerente")
@@ -108,7 +112,8 @@ _SERVICOS = (
     ("dev", "Site", r"\bsite|loja|e-?commerce|landing|p[áa]gina|sistema|app\b", False),
     ("trafego", "Plano de tráfego", r"tr[áa]fego|an[úu]ncio|campanha|ads\b|patrocinad", False),
     ("social", "Calendário de conteúdo", r"rede|instagram|social|post|conte[úu]do|tiktok", False),
-    ("criativos", "Criativos e textos", r"criativ|legenda|roteiro|reels|v[íi]deo|copy|texto", False),
+    ("criativos", "Criativos e textos", r"criativ|legenda|banner|post|arte|copy|an[úu]ncio", False),
+    ("video", "Vídeo", r"v[íi]deo|reels|motion|anima[çc]", False),
 )
 
 
@@ -119,7 +124,8 @@ def _plano_padrao(pedido: str) -> dict:
     nomes = {a.nome for a in _equipe()}
     for agente, titulo, padrao, aprova in _SERVICOS:
         if agente in nomes and re.search(padrao, pedido, re.I):
-            deps = [1] + [e["n"] for e in etapas if e["agente"] == "designer" and agente in ("dev", "criativos", "social")]
+            deps = [1] + [e["n"] for e in etapas if e["agente"] == "designer" and agente in ("dev", "criativos", "social", "video")]
+            deps += [e["n"] for e in etapas if e["agente"] == "criativos" and agente == "video"]
             deps += [e["n"] for e in etapas if e["agente"] == "trafego" and agente == "criativos"]
             etapas.append({"n": len(etapas) + 1, "agente": agente, "titulo": titulo, "depende_de": sorted(set(deps)),
                            "aprovacao": aprova, "tarefa": f"{titulo} para este projeto, conforme o pedido e o briefing."})

@@ -673,6 +673,47 @@ ROTAS.pipeline = async () => {
 // ── agentes ───────────────────────────────────────────────────────────────
 const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardando_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", rejeitado: "Refeito", erro: "Com erro", esperando: "Esperando etapas anteriores" };
 
+// Os arquivos que o agente produziu: miniaturas das imagens, vídeos e PDFs
+// (buscados com o cabeçalho da central e mostrados como blob).
+async function arquivoBlob(id, nome) {
+  const r = await fetch(`/api/trabalhos/${id}/arquivo?nome=${encodeURIComponent(nome)}`, { headers: { "X-Central": "1" } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || `Erro ${r.status}`);
+  return URL.createObjectURL(await r.blob());
+}
+
+async function galeriaTrabalho(t, caixa) {
+  let r;
+  try { r = await api("GET", `trabalhos/${t.id}/arquivos`); } catch (_) { return; }
+  if (!r.arquivos.length) { if (r.pasta) caixa.innerHTML = `<p class="sub">Pasta do trabalho: ${esc(r.pasta)} (ainda sem arquivos)</p>`; return; }
+  const finais = r.arquivos.filter((a) => !a.fonte && !["md", "html", "css", "js", "json"].includes(a.tipo));
+  const outros = r.arquivos.filter((a) => !finais.includes(a));
+  const img = ["png", "jpg", "jpeg", "webp", "gif", "svg"];
+  caixa.innerHTML = `<h3 class="galeria-titulo">Arquivos produzidos <span class="sub">(${finais.length})</span></h3>
+    <div class="galeria">${finais.map((a, i) => `<figure class="peca" data-i="${i}">
+      ${img.includes(a.tipo) ? '<div class="peca-img carregando-img"></div>' : `<button type="button" class="peca-tipo" data-abrir-arq="${i}">${a.tipo === "mp4" || a.tipo === "mov" || a.tipo === "webm" ? "▶ Vídeo" : a.tipo.toUpperCase()}</button>`}
+      <figcaption title="${esc(a.nome)}">${esc(a.nome)}</figcaption></figure>`).join("")}</div>
+    ${outros.length ? `<details class="fontes"><summary>Arquivos-fonte e relatório (${outros.length})</summary><ul>${outros.map((a) => `<li>${esc(a.nome)}</li>`).join("")}</ul></details>` : ""}
+    <p class="sub galeria-pasta">${esc(r.pasta)}</p>`;
+  finais.forEach(async (a, i) => {
+    const fig = $(`.peca[data-i="${i}"]`, caixa);
+    if (img.includes(a.tipo)) {
+      try {
+        const url = await arquivoBlob(t.id, a.nome);
+        fig.querySelector(".peca-img").outerHTML = `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${esc(a.nome)}"></a>`;
+      } catch (_) { fig.querySelector(".peca-img").textContent = "não abriu"; }
+    }
+  });
+  $$("[data-abrir-arq]", caixa).forEach((b) => b.addEventListener("click", async () => {
+    const a = finais[+b.dataset.abrirArq];
+    b.disabled = true; b.textContent = "Abrindo…";
+    try {
+      const url = await arquivoBlob(t.id, a.nome);
+      if (["mp4", "webm", "mov"].includes(a.tipo)) b.outerHTML = `<video src="${url}" controls autoplay muted playsinline></video>`;
+      else { URL.revokeObjectURL(url); await api("POST", `trabalhos/${t.id}/abrir`, { nome: a.nome }); b.disabled = false; b.textContent = a.tipo.toUpperCase(); }
+    } catch (e) { avisar(e.message); b.disabled = false; b.textContent = "Tentar abrir"; }
+  }));
+}
+
 async function abrirTrabalho(id, recarregar) {
   const t = await api("GET", `trabalhos/${id}`);
   const pode = t.status === "aguardando_aprovacao";
@@ -686,10 +727,13 @@ async function abrirTrabalho(id, recarregar) {
       <p style="white-space:pre-wrap;margin:0 0 12px"><strong>Pedido:</strong> ${esc(t.pedido)}</p>
       ${t.erro ? `<p class="erro">${esc(t.erro)}</p>${/not logged in|\/login/i.test(t.erro) ? '<p class="sub">O Claude Code deste PC não está conectado à sua conta. Abra o Prompt de Comando, digite <code>claude</code>, Enter, depois <code>/login</code> e escolha a conta com assinatura. Depois clique em Tentar de novo (ou tente agora: sem a conexão, o agente usa o modelo local).</p>' : ""}` : ""}
       ${t.observacao ? `<p class="sub">${esc(t.observacao)}</p>` : ""}
-      ${t.entrega ? `<div class="entrega">${esc(t.entrega)}</div>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
+      <div id="galeria-trabalho"></div>
+      ${t.entrega ? `<details class="relatorio"${t.pasta ? "" : " open"}><summary>Relatório do agente</summary><div class="entrega">${esc(t.entrega)}</div></details>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
       ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}</div>` : ""}`,
+    aoAbrir: () => galeriaTrabalho(t, $("#galeria-trabalho")),
     acoes: pode ? [
       ...excluir,
+      ...(t.pasta ? [{ texto: "Abrir pasta", acao: async () => { await api("POST", `trabalhos/${t.id}/pasta`, {}); return false; } }] : []),
       { texto: "Pedir nova versão", acao: async (v) => {
         if (!v.ajuste.trim()) throw new Error("Escreva o que deve mudar na nova versão.");
         await api("POST", `trabalhos/${t.id}/refazer`, { ajuste: v.ajuste }); avisar("Nova versão na fila"); recarregar();
@@ -697,6 +741,7 @@ async function abrirTrabalho(id, recarregar) {
       { texto: "Fechar", acao: () => {} },
       { texto: "Aprovar", classe: "primario", acao: async () => { await api("POST", `trabalhos/${t.id}/aprovar`, {}); avisar("Entrega aprovada"); recarregar(); } },
     ] : [...excluir,
+      ...(t.pasta ? [{ texto: "Abrir pasta", acao: async () => { await api("POST", `trabalhos/${t.id}/pasta`, {}); return false; } }] : []),
       ...(t.status === "erro" ? [{ texto: "Tentar de novo", classe: "primario", acao: async () => {
         await api("POST", `trabalhos/${t.id}/tentar`, {}); avisar("De volta à fila"); recarregar(); } }] : []),
       { texto: "Fechar", acao: () => {} }],
@@ -1103,11 +1148,16 @@ function cartaoProjeto(p, cores) {
 }
 
 function novoProjeto(recarregar) {
+  api("GET", "marcas").then((ms) => {
+    const sel = $("#np-marca");
+    if (sel) sel.insertAdjacentHTML("beforeend", ms.filter((m) => m.pasta).map((m) => `<option value="${esc(m.nome)}">${esc(m.nome)}${m.cliente_nome ? ` (${esc(m.cliente_nome)})` : ""}</option>`).join(""));
+  }).catch(() => {});
   dialogo({
     titulo: "Novo projeto",
     corpo: `<p class="sub" style="margin-top:0">Descreva o que o cliente precisa. O gerente monta o plano, distribui as etapas para a equipe e te chama para aprovar nos pontos importantes.</p>
       <div class="campos">
         ${campo({ nome: "cliente", rotulo: "Cliente", tipo: "select", opcoes: [["", "Sem cliente"], ...OPCOES.clientes.map((c) => [c.nome, c.nome])], largo: true })}
+        <label class="largo">Pasta do cliente (onde estão logos e fotos, e onde os arquivos serão salvos)<select name="marca" id="np-marca"><option value="">Automático (pela marca citada ou pelo cliente)</option></select></label>
         ${campo({ nome: "pedido", rotulo: "O que o projeto precisa", tipo: "textarea", largo: true, obrig: true })}
       </div>`,
     acoes: [
@@ -1115,6 +1165,7 @@ function novoProjeto(recarregar) {
       { texto: "Começar projeto", classe: "primario", enviar: true, acao: async (v) => {
         if (!v.pedido.trim()) throw new Error("Descreva o que o projeto precisa.");
         const r = await api("POST", "projetos", v);
+        if (r.aviso) avisar(r.aviso);
         avisar(`${r.aviso ? `${r.aviso} ` : ""}Projeto aberto: o gerente está montando o plano`);
         recarregar();
       } },

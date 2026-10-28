@@ -34,6 +34,17 @@ Um **projeto** junta vários serviços. Clique em **Novo projeto** ou diga: "Jar
 
 A fila faz um trabalho por vez (a placa de vídeo é uma só); o escritório mostra os outros esperando.
 
+## Os agentes produzem arquivos
+
+Cada trabalho ganha uma pasta dentro da pasta do cliente:
+`CLIENTES\<cliente>\JARVIS - para revisar\<projeto>\<etapa>`. Ali o agente grava as peças prontas (PNG no tamanho exato, PDF, MP4, site), os arquivos-fonte em `fontes\` (HTML, para ajustes) e o `RELATORIO.md`. Ele lê o material da pasta do cliente (logo, fotos de produto, fontes, peças antigas) sem alterar nada lá. Você revisa as peças na tela do trabalho (miniaturas, vídeos, "Abrir pasta") e aprova.
+
+A pasta do cliente vem da tela Clientes (marcas e pastas). No Novo projeto dá para escolher a marca; no automático, vale a marca citada no pedido ou a única marca do cliente.
+
+Uma vez, rode `instalar-producao.bat` (instala o ffmpeg para os vídeos e confere o navegador que gera as imagens).
+
+Não há gerador de imagens por IA: os agentes montam as peças com as fotos reais do cliente; quando falta uma foto, avisam em Pendências.
+
 ## Agentes incluídos
 
 | Agente | Faz | Executor |
@@ -47,7 +58,8 @@ A fila faz um trabalho por vez (a placa de vídeo é uma só); o escritório mos
 | social | Linha editorial e calendário de posts | claude |
 | dev | Mapa do site, textos, tecnologia, código de páginas | claude |
 | financeiro | Orçamento, cronograma de pagamento, cobrança | claude |
-| revisor | Confere as entregas antes do cliente | claude |
+| video | Vídeos curtos (reels, stories, anúncios) com clipes, fotos e textos animados | claude |
+| revisor | Confere os arquivos antes do cliente | claude |
 
 Todos os agentes trabalham pelo Claude Code, com a sua assinatura (sem custo por uso). O Claude Code precisa estar conectado à sua conta: rode `conectar-claude.bat` e digite `/login` uma vez. Se ele não estiver conectado, o trabalho para com essa instrução (o modelo local não é usado, porque divide a placa de vídeo com a voz do Jarvis). Para liberar o modelo local mesmo assim: `setx HAIZEN_PERMITIR_LOCAL 1`.
 

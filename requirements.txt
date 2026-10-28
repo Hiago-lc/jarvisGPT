@@ -148,3 +148,4 @@ tzdata>=2024.1
 # ── HAIZEN: o Claude cria e gerencia os agentes (MCP) ────────────────────────
 # Só o servidor MCP precisa dele; o Jarvis funciona sem. Veja LEIA-ME-HAIZEN.md.
 mcp>=1.2,<3
+imageio-ffmpeg                # agentes da HAIZEN: vídeos (ffmpeg sem instalar nada no sistema)

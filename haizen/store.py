@@ -181,7 +181,9 @@ _COLUNAS_NOVAS = {
         "titulo": "TEXT NOT NULL DEFAULT ''",
         "depende_de": "TEXT NOT NULL DEFAULT '[]'",
         "aprovacao": "INTEGER NOT NULL DEFAULT 1",
+        "pasta": "TEXT NOT NULL DEFAULT ''",          # onde o agente grava os arquivos
     },
+    "projetos": {"marca_pasta": "TEXT NOT NULL DEFAULT ''"},
 }
 
 
@@ -318,7 +320,7 @@ def listar_trabalhos(status: str | None = None, limite: int = 20) -> list[dict]:
 def atualizar(tid: int, **campos) -> dict:
     if "status" in campos and campos["status"] not in STATUS:
         raise ValueError(f"status inválido: {campos['status']}")
-    permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de"}
+    permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de", "pasta"}
     if isinstance(campos.get("depende_de"), list):
         campos["depende_de"] = json.dumps([int(x) for x in campos["depende_de"]])
     sets = {k: v for k, v in campos.items() if k in permitidos}
@@ -391,14 +393,15 @@ def gravar_entrega(tid: int, conteudo: str) -> Path:
 
 
 # ── projetos ───────────────────────────────────────────────────────────────
-def criar_projeto(titulo: str, pedido: str, cliente_id: int | None = None) -> dict:
+def criar_projeto(titulo: str, pedido: str, cliente_id: int | None = None, marca_pasta: str = "") -> dict:
     if not (pedido or "").strip():
         raise ValueError("o projeto precisa de um pedido")
     agora = time.time()
     with conexao() as con:
-        cur = con.execute("INSERT INTO projetos(titulo, pedido, cliente_id, criado_em, atualizado_em)"
-                          " VALUES(?,?,?,?,?)",
-                          ((titulo or pedido).strip()[:120], pedido.strip(), cliente_id, agora, agora))
+        cur = con.execute("INSERT INTO projetos(titulo, pedido, cliente_id, criado_em, atualizado_em, marca_pasta)"
+                          " VALUES(?,?,?,?,?,?)",
+                          ((titulo or pedido).strip()[:120], pedido.strip(), cliente_id, agora, agora,
+                           (marca_pasta or "").strip()))
         return dict(con.execute("SELECT * FROM projetos WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -435,6 +438,39 @@ def apagar_projeto(pid: int) -> dict:
     with conexao() as con:
         con.execute("DELETE FROM projetos WHERE id=?", (int(pid),))
     return {"id": pid, "etapas_apagadas": len(etapas)}
+
+
+# ── marcas (pastas dos clientes) ────────────────────────────────────────────
+def marcas() -> list[dict]:
+    with conexao() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM marcas ORDER BY nome COLLATE NOCASE")]
+
+
+def pasta_da_marca(cliente_id: int | None, texto: str = "", marca: str = "") -> str:
+    """A pasta do cliente onde os agentes leem o material e gravam o trabalho.
+
+    Ordem: a marca escolhida; uma marca citada no pedido ("vídeo da Stylle
+    Turismo"); a única marca do cliente. Sem nada disso, vazio."""
+    todas = [m for m in marcas() if (m.get("pasta") or "").strip()]
+    if marca:
+        k = chave(marca)
+        for m in todas:
+            if chave(m["nome"]) == k or m["pasta"] == marca:
+                return m["pasta"]
+    plano = f" {chave(texto)} "
+    citadas = [m for m in todas if len(chave(m["nome"])) >= 3 and f" {chave(m['nome'])} " in plano]
+    if citadas:
+        return max(citadas, key=lambda m: len(m["nome"]))["pasta"]
+    do_cliente = [m for m in todas if cliente_id is not None and m.get("cliente_id") == cliente_id]
+    if len(do_cliente) == 1:
+        return do_cliente[0]["pasta"]
+    if cliente_id is not None:
+        cli = cliente_por_id(cliente_id)
+        if cli:
+            mesmas = [m for m in todas if chave(m["nome"]) == chave(cli["nome"])]
+            if len(mesmas) == 1:
+                return mesmas[0]["pasta"]
+    return ""
 
 
 # ── conversa do Jarvis (web e janela de voz no mesmo histórico) ─────────────

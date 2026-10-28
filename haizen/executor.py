@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from . import agentes, store
@@ -64,9 +66,28 @@ def contexto_projeto(t: dict, limite: int = CONTEXTO_CLAUDE) -> str:
         restante -= len(corte)
         nome = dep.get("titulo") or dep["agente"]
         partes += [f"## Entrega anterior: {nome} (agente {dep['agente']})", corte, ""]
+        arquivos = arquivos_da_pasta(dep.get("pasta") or "")
+        if arquivos:
+            partes += [f"Arquivos produzidos nessa etapa (em {dep['pasta']}):",
+                       *[f"- {a['nome']}" for a in arquivos[:40]], ""]
         if restante <= 0:
             break
     return "\n".join(partes).strip()
+
+
+def arquivos_da_pasta(pasta: str) -> list[dict]:
+    """Os arquivos que um trabalho produziu (sem os de controle)."""
+    if not pasta or not Path(pasta).is_dir():
+        return []
+    raiz = Path(pasta)
+    out = []
+    for f in sorted(raiz.rglob("*")):
+        if not f.is_file() or f.name in (".trabalho", "CLAUDE.md", "desktop.ini") or ".claude" in f.parts:
+            continue
+        rel = f.relative_to(raiz).as_posix()
+        out.append({"nome": rel, "tamanho": f.stat().st_size, "tipo": f.suffix.lower().lstrip("."),
+                    "fonte": rel.startswith("fontes/")})
+    return out
 
 
 def montar_prompt(agente: agentes.Agente, cliente: dict | None, pedido: str,
@@ -150,17 +171,33 @@ def _ambiente_assinatura() -> dict:
     return env
 
 
-def executar_claude(prompt: str, pasta: Path) -> str:
+PRODUCAO_TIMEOUT = int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT", "2700"))     # 45 min
+FERRAMENTAS = Path(__file__).resolve().parent / "producao" / "ferramentas.py"
+# O que o Claude Code pode usar ao produzir: ler/escrever arquivos (só nas
+# pastas liberadas com --add-dir e na pasta do trabalho) e rodar o Python do
+# Jarvis (as ferramentas), o ffmpeg e o Node (sites). Nada de apagar fora.
+PERMISSOES = ("Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch",
+              "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)", "Bash(ffmpeg:*)", "Bash(ffprobe:*)",
+              "Bash(node:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(mkdir:*)", "Bash(ls:*)", "Bash(dir:*)",
+              "Bash(cp:*)", "Bash(copy:*)", "Bash(mv:*)", "Bash(cd:*)")
+
+
+def _python_console() -> str:
+    """O Python do Jarvis em modo console (pythonw não mostra a saída)."""
+    exe = Path(sys.executable)
+    console = exe.with_name("python.exe") if exe.name.lower() == "pythonw.exe" else exe
+    return str(console if console.is_file() else exe)
+
+
+def _rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: dict | None = None) -> str:
     exe = claude_disponivel()
     if not exe:
         raise RuntimeError("o Claude Code não foi encontrado neste PC. Instale pelo PowerShell com: "
                            "irm https://claude.ai/install.ps1 | iex")
     pasta.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
-        [exe, "-p", "Execute a tarefa descrita na entrada. Responda apenas com a entrega.",
-         "--output-format", "json", "--permission-mode", "dontAsk"],
-        input=prompt, capture_output=True, text=True, encoding="utf-8",
-        cwd=str(pasta), env=_ambiente_assinatura(), timeout=CLAUDE_TIMEOUT)
+        [exe, *args], input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(pasta), env=env or _ambiente_assinatura(), timeout=timeout)
     saida = (proc.stdout or "").strip()
     try:
         dados = json.loads(saida.splitlines()[-1]) if saida else {}
@@ -173,6 +210,127 @@ def executar_claude(prompt: str, pasta: Path) -> str:
     if not texto:
         raise RuntimeError("o Claude Code terminou sem entrega")
     return texto
+
+
+def executar_claude(prompt: str, pasta: Path) -> str:
+    """Só texto (o plano do gerente, por exemplo)."""
+    return _rodar_claude(["-p", "Execute a tarefa descrita na entrada. Responda apenas com a entrega.",
+                          "--output-format", "json", "--permission-mode", "dontAsk"],
+                         prompt, pasta, CLAUDE_TIMEOUT)
+
+
+def executar_producao(prompt: str, pasta: Path, leitura: list[Path]) -> str:
+    """O agente produz os arquivos na `pasta` do trabalho, lendo o material das
+    pastas em `leitura` (a do cliente, a do projeto). Devolve o relatório."""
+    env = _ambiente_assinatura()
+    env["PATH"] = str(Path(_python_console()).parent) + os.pathsep + env.get("PATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    args = ["-p", "Siga o CLAUDE.md desta pasta e faça a tarefa descrita na entrada. Grave os arquivos "
+                  "nesta pasta. No fim, responda só com o relatório da entrega.",
+            "--output-format", "json", "--permission-mode", "acceptEdits"]
+    for d in leitura:
+        args += ["--add-dir", str(d)]
+    args += ["--allowedTools", ",".join(PERMISSOES)]
+    return _rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env)
+
+
+# ── a pasta de cada trabalho ────────────────────────────────────────────────
+def _nome_seguro(nome: str) -> str:
+    n = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", nome or "")
+    return " ".join(n.split()).strip(" .")[:70] or "trabalho"
+
+
+def pastas_do_trabalho(t: dict) -> tuple[Path, Path | None, Path | None]:
+    """(onde gravar, pasta da marca para ler, pasta do projeto).
+
+    Com a pasta do cliente: CLIENTES\\<cliente>\\JARVIS - para revisar\\<projeto>\\<etapa>.
+    Sem ela: Documentos\\HAIZEN\\entregas\\<trabalho>."""
+    proj = store.projeto(t["projeto_id"]) if t.get("projeto_id") else None
+    marca = (proj or {}).get("marca_pasta") if proj else store.pasta_da_marca(t.get("cliente_id"), t.get("pedido", ""))
+    marca_p = Path(marca) if marca and Path(marca).is_dir() else None
+    base = (marca_p / "JARVIS - para revisar") if marca_p else store.pasta_entregas()
+    if proj:
+        raiz = base / _nome_seguro(f"{proj['id']:03d} - {proj['titulo']}")
+        nome = _nome_seguro(f"{t.get('etapa') or 0:02d} - {t.get('titulo') or t['agente']}")
+    else:
+        raiz = None
+        nome = _nome_seguro(f"{t['id']:04d} - {t.get('titulo') or t['agente']}")
+    pai = raiz or base
+    pasta = pai / nome
+    # Uma nova versão (refazer) não mistura arquivos com a anterior: v2, v3...
+    n = 2
+    while (pasta / ".trabalho").is_file() and (pasta / ".trabalho").read_text(encoding="utf-8").strip() != str(t["id"]):
+        pasta = pai / f"{nome} v{n}"
+        n += 1
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / ".trabalho").write_text(str(t["id"]), encoding="utf-8")
+    return pasta, marca_p, raiz
+
+
+def pasta_haizen() -> Path | None:
+    """O material da própria agência (logo, cores), para propostas e orçamentos."""
+    for m in store.marcas():
+        if store.chave(m["nome"]) == "haizen" and m.get("pasta") and Path(m["pasta"]).is_dir():
+            return Path(m["pasta"])
+    return None
+
+
+def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None) -> str:
+    """O CLAUDE.md que o agente lê ao começar: onde está o material, onde gravar,
+    as ferramentas e o padrão de qualidade da HAIZEN."""
+    f = FERRAMENTAS.as_posix()
+    linhas = [
+        "# Trabalho da HAIZEN",
+        "",
+        "Você é um profissional da agência HAIZEN produzindo arquivos de verdade para um cliente.",
+        "",
+        "## Onde",
+        f"- Grave tudo nesta pasta: `{pasta.as_posix()}`.",
+    ]
+    if marca:
+        linhas += [f"- Material do cliente (só leitura; nunca altere, mova ou apague nada lá fora desta pasta): "
+                   f"`{marca.as_posix()}`. Logos, fotos de produto, fontes, peças antigas e vídeos estão ali."]
+    else:
+        linhas += ["- Este cliente não tem pasta cadastrada: use só o que estiver no pedido e diga no relatório "
+                   "o material que faltou."]
+    if projeto:
+        linhas += [f"- Etapas anteriores deste projeto (para ler e reaproveitar): `{projeto.as_posix()}`."]
+    agencia = pasta_haizen()
+    if agencia and agencia != marca:
+        linhas += [f"- Material da HAIZEN (logo e identidade da agência, para propostas e documentos): `{agencia.as_posix()}`."]
+    linhas += [
+        "",
+        "## Ferramentas (rode no terminal)",
+        f'- Ver o material do cliente: `python "{f}" inventario "<pasta do cliente>"`',
+        f'- Cores de um logo ou peça: `python "{f}" cores "<imagem>"`',
+        f'- HTML para PNG/JPG no tamanho exato: `python "{f}" render peca.html "01 - Feed 1080x1440.png" --largura 1080 --altura 1440`',
+        f'- HTML para PDF (propostas, planos, apresentações): `python "{f}" render doc.html doc.pdf --largura 1240 --altura 1754`',
+        f'- HTML com animação CSS para vídeo MP4: `python "{f}" animar anima.html video.mp4 --largura 1080 --altura 1920 --segundos 10 [--musica m.mp3]`',
+        f'- Juntar imagens e clipes num vídeo: `python "{f}" video saida.mp4 --entradas a.png b.mp4 --largura 1080 --altura 1920 --zoom [--musica m.mp3]`',
+        f'- Se algo falhar: `python "{f}" verificar` mostra o que está faltando no PC.',
+        "",
+        "## Como produzir",
+        "- Peças gráficas (criativos, banners, posts, carrosséis, capas): monte em HTML/CSS com o logo, as cores, as fontes e as fotos "
+        "reais do cliente (caminhos absolutos para as imagens da pasta do cliente) e exporte com `render`. Use os mesmos tamanhos "
+        "das peças antigas do cliente; sem referência: feed 1080x1350, stories/reels 1080x1920, quadrado 1080x1080.",
+        "- Guarde os HTMLs-fonte em `fontes/` (para ajustes depois); as peças finais ficam na raiz desta pasta, com nomes claros: "
+        "`01 - Feed 1080x1350 - Oferta camisas.png`.",
+        "- Depois de exportar, ABRA cada PNG com a ferramenta de leitura e confira: texto cortado, sobreposição, contraste, logo. "
+        "Corrija e exporte de novo até ficar no padrão de uma agência.",
+        "- Vídeos: use os clipes e fotos do cliente; textos animados em HTML com `animar`; música só se houver na pasta do cliente.",
+        "- Sites e landing pages: código completo nesta pasta (index.html + assets), responsivo; tire um PNG da página com `render "
+        "--pagina-inteira` para a revisão.",
+        "- Documentos (briefing, roteiro, proposta, plano, calendário): escreva em HTML bem diagramado e exporte para PDF; tabelas "
+        "também em .csv quando forem planilhas.",
+        "- Não existe gerador de imagens por IA aqui: não invente fotos. Se faltar uma foto ou um dado, use o que existe e liste em "
+        "Pendências.",
+        "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento: o que faltar vai em Pendências.",
+        "",
+        "## Relatório (sua resposta final)",
+        "Em Markdown: o que foi feito; a lista de arquivos gerados (nome e tamanho em pixels/segundos); as decisões de design; "
+        "Pendências e perguntas para o cliente.",
+    ]
+    return "\n".join(linhas) + "\n"
 
 
 def executar_local(prompt: str) -> str:
@@ -210,7 +368,16 @@ def executar(t: dict) -> Path:
                            contexto_projeto(t, CONTEXTO_LOCAL if local else CONTEXTO_CLAUDE))
     if t["executor"] == "claude" and not claude_sem_login():
         try:
-            texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
+            if t["agente"] == "gerente":
+                texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
+            else:
+                pasta, marca, projeto = pastas_do_trabalho(t)
+                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto), encoding="utf-8")
+                store.atualizar(t["id"], pasta=str(pasta))
+                leitura = [p for p in (marca, projeto, pasta_haizen()) if p is not None]
+                leitura = list(dict.fromkeys(leitura))
+                texto = executar_producao(prompt, pasta, leitura)
+                (pasta / "RELATORIO.md").write_text(texto.strip() + "\n", encoding="utf-8")
         except RuntimeError as e:
             if not _erro_de_login(str(e)):
                 raise
