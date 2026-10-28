@@ -374,6 +374,8 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ValueError("informe o contato")
             n = max(1, min(40, int(q.get("n") or 15)))
             msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=60))
+            from core import transcrever
+            msgs = transcrever.com_transcricoes(msgs)
             cli = store.buscar_cliente(contato)
             return {"contato": contato, "mensagens": msgs,
                     "cliente": {"id": cli["id"], "nome": cli["nome"]} if cli else None}
@@ -384,6 +386,13 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ValueError("informe o contato e o texto")
             _ou_erro(*whatsapp_web.run_op({"op": "send", "recipient": contato, "text": texto}, timeout=45))
             return {"ok": True}
+        if rota == "transcrever" and metodo == "POST":
+            from core import transcrever
+            c = self._corpo()
+            contato, mid = str(c.get("contato") or "").strip(), str(c.get("id") or "").strip()
+            if not contato or not mid:
+                raise ValueError("informe o contato e a mensagem")
+            return {"id": mid, "texto": transcrever.transcrever_mensagem(contato, mid)}
         if rota == "sugerir" and metodo == "POST":
             from haizen.central import whatsapp_ia
             c = self._corpo()
@@ -467,6 +476,12 @@ class _Handler(BaseHTTPRequestHandler):
                     "pid": os.getpid()}
         if rota == "reiniciar" and metodo == "POST":
             reiniciar()
+            return {"ok": True}
+        if rota == "desligar" and metodo == "POST":
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            if host not in _HOSTS:
+                raise ValueError("só pelo próprio PC")
+            threading.Thread(target=desligar, daemon=True).start()
             return {"ok": True}
         if rota == "sair" and metodo == "POST":
             # Só de dentro do PC: é assim que uma cópia nova pede a vez.
@@ -581,6 +596,28 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
     if abrir_navegador:
         webbrowser.open(url())
     return url()
+
+
+def desligar(espera: float = 0.4) -> None:
+    """Desliga o Jarvis inteiro: WhatsApp escondido, central, janela e voz.
+    O que estava sendo feito pelos agentes volta à fila na próxima vez."""
+    import time as _time
+    _time.sleep(espera)                 # a resposta chega à página (ou é falada) antes
+    try:
+        from core import whatsapp_web
+        whatsapp_web.fechar()
+    except Exception:  # noqa: BLE001
+        pass
+    from haizen.central import janela
+    ponte = janela.ponte()
+    if ponte is not None and hasattr(ponte, "desligar"):
+        try:
+            ponte.desligar()            # a janela fecha e encerra o processo
+            _time.sleep(5)
+        except Exception:  # noqa: BLE001
+            pass
+    parar()
+    os._exit(0)
 
 
 def _retomar_fila() -> None:

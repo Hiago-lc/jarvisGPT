@@ -288,19 +288,100 @@ def show_window(page, show=True):
         return False
 
 
+_AUDIO_BOTAO = ('[data-icon="audio-play"], [data-icon="ptt-play"], [data-icon="audio-download"], '
+                'button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i]')
+_HORA_RE = re.compile(r'\b(\d{1,2}:\d{2})\b')
+
+
 def read_chat(page, recipient, stop, count=15):
-    """The last `count` messages of a conversation (opening it marks it read)."""
+    """The last `count` messages of a conversation (opening it marks it read).
+
+    Mensagens de voz vêm como {'tipo': 'audio', 'id': ...}: o texto delas sai
+    por transcrição (op 'audio'), que só roda quando pedida."""
     _require_login(page, stop)
     _open_chat(page, recipient, stop)
-    items = page.locator('#main [data-pre-plain-text]').all()[-count:]
+    linhas = [r for r in page.locator('#main [data-id]').all()
+              if re.match(r'^(true|false)_', r.get_attribute('data-id') or '')][-count:]
+    if not linhas:      # layout sem data-id: só os textos, como antes
+        out = []
+        for item in page.locator('#main [data-pre-plain-text]').all()[-count:]:
+            meta = parse_meta(item.get_attribute('data-pre-plain-text'))
+            mine = item.locator('xpath=ancestor::div[contains(@class, "message-out")]').count() > 0
+            out.append({**meta, 'de': 'eu' if mine else 'contato', 'texto': (item.inner_text() or '').strip(), 'tipo': 'texto'})
+        return out
     out = []
-    for item in items:
+    for linha in linhas:
         _check(stop)
-        meta = parse_meta(item.get_attribute('data-pre-plain-text'))
-        text = (item.inner_text() or '').strip()
-        mine = item.locator('xpath=ancestor::div[contains(@class, "message-out")]').count() > 0
-        out.append({**meta, 'de': 'eu' if mine else 'contato', 'texto': text})
+        mid = linha.get_attribute('data-id') or ''
+        de = 'eu' if mid.startswith('true_') else 'contato'
+        texto_el = linha.locator('[data-pre-plain-text]')
+        if texto_el.count():
+            item = texto_el.first
+            meta = parse_meta(item.get_attribute('data-pre-plain-text'))
+            out.append({**meta, 'de': de, 'texto': (item.inner_text() or '').strip(), 'tipo': 'texto', 'id': mid})
+            continue
+        bruto = (linha.inner_text() or '').strip()
+        # Cada pedaço de texto separado: duração ("0:07") e hora ("09:11").
+        horas = linha.evaluate(
+            "el => [...el.querySelectorAll('*')].filter(e => !e.childElementCount)"
+            ".map(e => (e.textContent || '').trim()).filter(t => /^\\d{1,2}:\\d{2}$/.test(t))") or _HORA_RE.findall(bruto)
+        if linha.locator(_AUDIO_BOTAO).count():
+            duracao = horas[0] if len(horas) > 1 else ''
+            out.append({'hora': horas[-1] if horas else '', 'data': '', 'autor': '', 'de': de, 'tipo': 'audio',
+                        'id': mid, 'duracao': duracao, 'texto': '[mensagem de voz]'})
+        elif bruto:
+            out.append({'hora': horas[-1] if horas else '', 'data': '', 'autor': '', 'de': de, 'tipo': 'midia',
+                        'id': mid, 'texto': '[foto, vídeo ou arquivo]'})
     return out
+
+
+_CAPTURAR_AUDIO = """async (id) => {
+  if (!window.__jarvisPlay) {
+    window.__jarvisPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      if (window.__jarvisCaptura) { const f = window.__jarvisCaptura; window.__jarvisCaptura = null; f(this); return Promise.resolve(); }
+      return window.__jarvisPlay.apply(this, arguments);
+    };
+  }
+  const linha = [...document.querySelectorAll('#main [data-id]')].find((e) => e.getAttribute('data-id') === id);
+  if (!linha) return { erro: 'nao_achou' };
+  linha.scrollIntoView({ block: 'center' });
+  const icone = linha.querySelector('[data-icon="audio-play"], [data-icon="ptt-play"], [data-icon="audio-download"]');
+  const botao = (icone && icone.closest('button, [role="button"]')) ||
+    linha.querySelector('button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i]');
+  if (!botao) return { erro: 'sem_botao' };
+  const src = await new Promise((ok) => {
+    const limite = setTimeout(() => { window.__jarvisCaptura = null; ok(''); }, 20000);
+    window.__jarvisCaptura = (el) => {
+      const ver = (n) => { const s = el.currentSrc || el.src; if (s) { clearTimeout(limite); ok(s); } else if (n > 0) setTimeout(() => ver(n - 1), 100); };
+      ver(100);
+    };
+    botao.click();
+  });
+  const pausa = linha.querySelector('[data-icon="audio-pause"], [data-icon="ptt-pause"]');
+  if (pausa) (pausa.closest('button, [role="button"]') || pausa).click();
+  if (!src) return { erro: 'sem_audio' };
+  const resp = await fetch(src);
+  const buf = new Uint8Array(await resp.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return { b64: btoa(bin), tipo: resp.headers.get('content-type') || '' };
+}"""
+
+
+def baixar_audio(page, recipient, msg_id, stop):
+    """Os bytes de uma mensagem de voz: aperta o play (sem tocar) e pega o
+    arquivo que o WhatsApp Web prepara para o player."""
+    import base64
+    _require_login(page, stop)
+    _open_chat(page, recipient, stop)
+    r = page.evaluate(_CAPTURAR_AUDIO, msg_id)
+    if r.get('erro') == 'nao_achou':
+        raise DraftError('audio_missing', 'Essa mensagem de voz não está mais entre as últimas da conversa.')
+    if r.get('erro'):
+        raise DraftError('audio_failed', 'Não consegui baixar a mensagem de voz pelo WhatsApp Web '
+                         f'({r["erro"]}). Ouça pelo celular.')
+    return {'audio': base64.b64decode(r['b64']), 'tipo': r.get('tipo', '')}
 
 
 def send_message(page, recipient, text, stop):
@@ -348,6 +429,8 @@ def _do(page, payload, stop):
         return unread_chats(page, stop, payload.get('limit', 25))
     if op == 'read':
         return read_chat(page, payload['recipient'], stop, payload.get('count', 15))
+    if op == 'audio':
+        return baixar_audio(page, payload['recipient'], payload['id'], stop)
     if op == 'send':
         return send_message(page, payload['recipient'], payload['text'], stop)
     return edit_draft(page, payload['recipient'], payload['action'], payload.get('text', ''),
@@ -397,6 +480,17 @@ def _loop():
     while True:
         payload, stop, future = _JOBS.get()
         _active = stop
+        if payload.get('op') == 'fechar':
+            # Fecha o navegador escondido e o Playwright (ao desligar o Jarvis).
+            for fechar in (lambda: context and context.close(), lambda: driver and driver.stop()):
+                try:
+                    fechar()
+                except Exception:
+                    pass
+            driver = context = page = None
+            future.set_result((True, 'closed', True))
+            _active = None
+            continue
         try:
             _check(stop)
             if driver is None:
@@ -456,6 +550,13 @@ def _loop():
 def run(recipient, action, text='', replace_existing=False):
     return run_op(dict(op='draft', recipient=recipient, action=action, text=text,
                        replace_existing=replace_existing))
+
+
+def fechar(timeout=8):
+    """Fecha o WhatsApp Web escondido, se estiver aberto (sem abrir só para fechar)."""
+    if _worker is None or not _worker.is_alive():
+        return True
+    return run_op({'op': 'fechar'}, timeout=timeout)[0]
 
 
 def run_op(payload, timeout=35):

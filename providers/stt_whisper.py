@@ -93,6 +93,8 @@ class WhisperSTT:
         self.initial_prompt = (cfg.get("initial_prompt") or "").strip() or None
         self._model = None
         self._load_lock = asyncio.Lock()
+        global ATUAL
+        ATUAL = self      # core/transcrever.py reaproveita o modelo já carregado
         # Set by each recognition: the language Whisper heard, as a code like
         # "tr". Empty until something has been said.
         self.detected_language = ""
@@ -329,6 +331,9 @@ def sem_alucinacao(texto: str) -> str:
     limpo = _ALUCINACOES.sub(" ", texto or "")
     limpo = " ".join(limpo.split()).strip(" .,;:-–!")
     return limpo if re.search(r"\w{2,}", limpo) else ""
+
+
+ATUAL: "WhisperSTT | None" = None       # a instância da voz do Jarvis, se houver
 
 
 def _make(cfg: dict) -> WhisperSTT:

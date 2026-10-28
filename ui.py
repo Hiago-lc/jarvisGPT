@@ -7543,3 +7543,19 @@ class _PonteJanela:
 
     def abrir(self, nome: str) -> None:
         self._na_interface(lambda: self._ui._win._abrir_ajuste(nome))
+
+    def desligar(self) -> None:
+        """O botão Desligar da interface: fecha a janela e encerra o Jarvis."""
+        import os as _os
+        import threading as _threading
+
+        def _fim():
+            try:
+                self._ui._win.close()
+            except Exception:
+                pass
+            from PyQt6.QtWidgets import QApplication
+            QApplication.quit()
+        self._na_interface(_fim)
+        # Linhas de voz e da fila podem segurar o processo: encerra de vez.
+        _threading.Timer(2.5, lambda: _os._exit(0)).start()

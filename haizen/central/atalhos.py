@@ -1106,7 +1106,24 @@ def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     return _responder_um(texto)
 
 
+_DESLIGAR = re.compile(r"^\W*(?:jarvis\W+)?(?:pode\s+)?(?:desliga|desligar|desligue|encerra|encerrar|encerre)"
+                       r"(?:\s+(?:o\s+)?(?:jarvis|sistema|tudo|voc[eê]))?(?:\s+(?:por\s+favor|a[ií]|agora))?\W*$", re.I)
+
+
+def desligar_direto(texto: str) -> str | None:
+    """"Jarvis, desliga" / "desliga o Jarvis": fala a despedida e encerra tudo."""
+    if not _DESLIGAR.search(texto or ""):
+        return None
+    import threading
+    from haizen.central import servidor
+    threading.Thread(target=servidor.desligar, kwargs={"espera": 3.5}, daemon=True).start()
+    return "Desligando o Jarvis. Até mais!"
+
+
 def _responder_um(texto: str) -> tuple[str, list[str]] | None:
+    d = desligar_direto(texto)
+    if d is not None:
+        return d, ["sistema"]
     n = nome_direto(texto)
     if n is not None:
         return n, ["central"]

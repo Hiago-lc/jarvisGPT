@@ -1559,6 +1559,15 @@ ROTAS.whatsapp = async () => {
   await conferir();
 };
 
+function msgWa(m) {
+  if (m.tipo === "audio") {
+    return `<div class="msg ${m.de === "eu" ? "eu" : "ele"} audio"><p><span class="msg-voz" aria-hidden="true">🎤</span> Mensagem de voz${m.duracao ? ` · ${esc(m.duracao)}` : ""}</p>
+      ${m.transcricao ? `<p class="msg-transcricao">${esc(m.transcricao)}</p>` : `<button class="botao mini" type="button" data-ouvir="${esc(m.id)}">Transcrever</button>`}
+      <span class="msg-acoes">${esc(m.hora)}</span></div>`;
+  }
+  return `<div class="msg ${m.de === "eu" ? "eu" : "ele"}${m.tipo === "midia" ? " midia" : ""}"><p>${esc(m.texto)}</p><span class="msg-acoes">${esc(m.hora)}</span></div>`;
+}
+
 async function abrirConversaWa(contato) {
   const caixa = $("#wa-conversa");
   caixa.innerHTML = `<p class="carregando">Abrindo a conversa com ${esc(contato)}…</p>`;
@@ -1574,7 +1583,8 @@ function desenharConversaWa() {
   if (!c || !caixa) return;
   caixa.innerHTML = `
     <header class="wa-topo"><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</header>
-    <div class="wa-msgs" id="wa-msgs">${c.mensagens.map((m) => `<div class="msg ${m.de === "eu" ? "eu" : "ele"}"><p>${esc(m.texto)}</p><span class="msg-acoes">${esc(m.hora)}</span></div>`).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
+    <div class="wa-msgs" id="wa-msgs">${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
+    ${c.mensagens.some((m) => m.tipo === "audio" && !m.transcricao) ? '<p class="wa-audios-aviso"><button class="botao" type="button" id="wa-ouvir-todos">Transcrever todos os áudios</button> <span class="sub">O áudio é transcrito aqui no PC, sem sair dele.</span></p>' : ""}
     <div class="wa-acoes">
       <button class="botao" type="button" id="wa-sugerir">Sugerir resposta</button>
       <button class="botao" type="button" id="wa-tarefa">Criar tarefa</button>
@@ -1587,6 +1597,24 @@ function desenharConversaWa() {
     </form>`;
   const msgs = $("#wa-msgs");
   msgs.scrollTop = msgs.scrollHeight;
+  const transcrever = async (b) => {
+    const m = c.mensagens.find((x) => x.id === b.dataset.ouvir);
+    if (!m || m.transcricao) return;
+    b.disabled = true; b.textContent = "Ouvindo…";
+    try {
+      const r = await api("POST", "whatsapp/transcrever", { contato: c.contato, id: m.id });
+      Object.assign(m, { transcricao: r.texto, texto: `[áudio] ${r.texto}` });
+      b.closest(".msg").outerHTML = msgWa(m);
+      ligarOuvir();
+    } catch (e) { avisar(e.message); b.disabled = false; b.textContent = "Transcrever"; }
+  };
+  const ligarOuvir = () => $$("[data-ouvir]", msgs).forEach((b) => { if (!b.dataset.ligado) { b.dataset.ligado = "1"; b.addEventListener("click", () => transcrever(b)); } });
+  ligarOuvir();
+  $("#wa-ouvir-todos")?.addEventListener("click", async (ev) => {
+    ev.currentTarget.disabled = true;
+    for (const b of $$("[data-ouvir]", msgs)) await transcrever(b);
+    ev.currentTarget.closest("p")?.remove();
+  });
   const dele = c.mensagens.filter((m) => m.de !== "eu").map((m) => m.texto);
   const resumo = dele.slice(-3).join("\n");
   $("#wa-sugerir").addEventListener("click", async (ev) => {
@@ -1842,6 +1870,23 @@ async function jarvisNativo() {
   NATIVO = pintar;
   pintar(e);
 }
+
+$("#desligar-jarvis").addEventListener("click", async () => {
+  const d = document.createElement("dialog");
+  d.className = "confirmar";
+  d.innerHTML = `<p><strong>Desligar o Jarvis?</strong></p><p class="sub">A janela, a voz, a central, o WhatsApp e os agentes param. O que um agente estiver fazendo volta para a fila quando você abrir de novo pelo atalho da área de trabalho.</p>
+    <div class="dialogo-acoes"><button class="botao" value="nao">Cancelar</button><button class="botao perigo" value="sim">Desligar</button></div>`;
+  document.body.appendChild(d);
+  const sim = await new Promise((ok) => {
+    d.addEventListener("click", (e) => { const v = e.target.closest("button")?.value; if (v) { d.close(); ok(v === "sim"); } });
+    d.addEventListener("close", () => { d.remove(); ok(false); });
+    d.showModal();
+  });
+  if (!sim) return;
+  try { await api("POST", "sistema/desligar"); } catch (e) { avisar(e.message); return; }
+  clearInterval(navegar.timer);
+  document.body.innerHTML = `<main class="desligado"><div><h1>Jarvis desligado</h1><p>Para ligar de novo, use o atalho <strong>Jarvis HAIZEN</strong> na área de trabalho.</p></div></main>`;
+});
 
 async function iniciar() {
   try { await api("GET", "janela/estado"); PONTE = true; } catch (_) { PONTE = false; }

@@ -516,3 +516,16 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
   .ag-mes-grade { grid-auto-rows: minmax(76px, 1fr); }
   .ag-linha { font-size: 11px; }
 }
+
+/* ── desligar e áudios do WhatsApp ── */
+.trilho-botao.desligar { margin-top: 6px; }
+.trilho-botao.desligar:hover { color: #F2B8B1; }
+.desligado { min-height: 100vh; display: grid; place-items: center; background: var(--petroleo); color: #E8EEED; text-align: center; padding: 24px; grid-column: 1 / -1; }
+.desligado h1 { font: 600 28px/1.2 var(--display); margin: 0 0 8px; }
+.desligado p { color: #B9C6C5; margin: 0; }
+.msg.audio p:first-child { font-weight: 600; }
+.msg-voz { margin-right: 2px; }
+.msg-transcricao { font-style: italic; border-left: 3px solid rgba(11, 29, 35, .2); padding-left: 8px; margin-top: 4px !important; }
+.msg.midia p { color: var(--cinza); font-style: italic; }
+.botao.mini { font-size: 12.5px; padding: 3px 10px; margin-top: 4px; }
+.wa-audios-aviso { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 0; }
