@@ -188,7 +188,12 @@ def agenda_direta(texto: str) -> str | None:
 
 
 # ── Google Agenda: criar eventos com horário ────────────────────────────────
-_CRIAR = re.compile(r"\b(colo[cq]u?|adicion|mar[cq]u?|agend|cri[ae]|bot[ae]|inclu|anot|p[oõ]e|ponha|lan[cç]|lanqu)\w*", re.I)
+# "agenda" sozinho é o substantivo ("da agenda", "na agenda"); só é o verbo
+# no começo da frase ou depois de "Jarvis,", "por favor", "me" ("agenda uma call...").
+_CRIAR = re.compile(r"\b(?:colo[cq]u?|adicion|mar[cq]u?|agend(?!a\b)|cri[ae]|bot[ae]|inclu|anot|p[oõ]e|ponha|lan[cç]|lanqu)\w*"
+                    r"|(?:^|[,.!;:]|\bjarvis|\bfavor|\bme|\bvoc[eê])\s*agenda\b", re.I)
+# Pedido de mudar algo que já existe: nunca vira compromisso novo.
+_JA_EXISTE = re.compile(r"\b(?:ajust|alter|mud|remar[cq]|corri[gj]|modific|reagend|troc|renome|reprogram|acert|exclu|apag|remov|cancel)\w*", re.I)
 _HORA = r"(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?"
 _FAIXA = re.compile(r"(?:\b(?:d[ae]s?|das)\s+)?" + _HORA + r"\s*(?:[àa]s?|at[ée]|-|–|a)\s+" + _HORA, re.I)
 _UMA = re.compile(r"\b(?:[àa]s|ao meio[- ]dia)\s*" + _HORA, re.I)
@@ -281,7 +286,7 @@ def criar_evento_direto(texto: str) -> tuple[str, bool] | None:
     eventos = _eventos_da_frase(texto)
     # Só conversas de agenda ensinam "o dia de que estamos falando".
     dia = _lembrar_dia(texto) if (menciona_agenda or eventos) else _dia_citado(texto)
-    if "?" in texto or not _CRIAR.search(texto):
+    if "?" in texto or not _CRIAR.search(texto) or _JA_EXISTE.search(texto):
         return None
     if not eventos or not (menciona_agenda or _dia_citado(texto) or dia):
         return None
@@ -322,13 +327,14 @@ def criar_evento_direto(texto: str) -> tuple[str, bool] | None:
 
 # ── Google Agenda: remarcar e excluir ───────────────────────────────────────
 _EXCLUIR = re.compile(r"\b(exclu|apag|cancel|desmar[cq]|remov|tir[ae])\w*", re.I)
-_MOVER = re.compile(r"\b(mov|mud|remar[cq]|pass[ae]|adi[ae]|transf[ei]r|tro[cq]|reagend|empurr|jog[ua])\w*", re.I)
+_MOVER = re.compile(r"\b(mov|mud|remar[cq]|pass[ae]|adi[ae]|transf[ei]r|tro[cq]|reagend|empurr|jog[ua]|ajust|alter|modific|reprogram|acert)\w*", re.I)
 _DESTINO = re.compile(r"\s(?:para|pra|pro)\s", re.I)
 _CONTEXTO_AGENDA = re.compile(r"agenda|calend[aá]rio|compromisso|reuni[aã]o|evento|call", re.I)
 _VAZIAS = {"o", "a", "os", "as", "de", "do", "da", "dos", "das", "meu", "minha", "um", "uma", "com",
            "evento", "compromisso", "na", "no", "e", "que", "ta", "esta", "esse", "essa", "aquele", "aquela",
            "eventos", "compromissos", "por", "favor", "todos", "todas", "tambem", "agora",
-           "horario", "inicio", "hora"}
+           "horario", "inicio", "hora", "agenda", "calendario", "google", "demanda", "demandas", "tarefa",
+           "tarefas", "dessa", "desse", "desta", "deste", "isso", "disso", "ela", "ele", "ser", "preciso", "quero"}
 
 
 def _termos(texto: str) -> list[str]:
@@ -354,6 +360,16 @@ def _quando_evento(ev: dict) -> str:
     return f"{_DIAS[d.weekday()]} {d.strftime('%d/%m')}, dia todo"
 
 
+_ULTIMO_EVENTO: dict = {}        # o compromisso de que se falou por último
+_REFERENCIA = re.compile(r"\b(?:dess[ae]|dest[ae]|ess[ae]|est[ae]|del[ae]|nel[ae]|ela|ele|isso|disso)\b", re.I)
+
+
+def _lembrar_evento(ev: dict) -> dict:
+    import time as _t
+    _ULTIMO_EVENTO.update(ev=ev, quando=_t.monotonic())
+    return ev
+
+
 _HORA_ALVO_ACHAR = re.compile(r"\b(?:d[ae]s?|[àa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
 
 
@@ -362,6 +378,10 @@ def _achar_evento(alvo: str) -> tuple[dict | None, str]:
     dia = _dia_citado(alvo)
     hora = _HORA_ALVO_ACHAR.search(alvo)
     termos = _termos(_SOBRAS.sub(" ", _HORA_ALVO_ACHAR.sub(" ", alvo)))
+    import time as _t
+    if (not termos and not hora and _REFERENCIA.search(alvo) and _ULTIMO_EVENTO
+            and _t.monotonic() - _ULTIMO_EVENTO["quando"] < 900):
+        return _ULTIMO_EVENTO["ev"], ""      # "dessa tarefa": a de que acabamos de falar
     if not termos and hora:
         termos = ["*"]               # só pelo horário: "a reunião das 15h"
     if not termos:
@@ -379,7 +399,7 @@ def _achar_evento(alvo: str) -> tuple[dict | None, str]:
         if no_horario:
             itens = no_horario
             if termos == ["*"] and len(itens) == 1:
-                return itens[0], ""
+                return _lembrar_evento(itens[0]), ""
     notas = []
     for ev in itens:
         titulo = set(_termos(ev.get("summary", "")))
@@ -397,7 +417,7 @@ def _achar_evento(alvo: str) -> tuple[dict | None, str]:
         lembrar_listados(empatados)
         lista = "; ".join(f"{ev.get('summary', '(sem título)')} ({_quando_evento(ev)})" for ev in empatados[:5])
         return None, f"Achei mais de um: {lista}. Qual deles? Diga o dia para eu saber."
-    return empatados[0], ""
+    return _lembrar_evento(empatados[0]), ""
 
 
 _PRONOME = re.compile(r"\b(elas?|eles?|ess[ae]s?|est[ae]s?|tod[ao]s|isso|aquel[ae]s?|ambas?|ambos)\b", re.I)
@@ -457,7 +477,7 @@ def _excluir_varios(eventos: list[dict]) -> tuple[str, bool]:
 
 
 # ── Google Agenda: editar (nome, horário, duração, descrição, local) ────────
-_VERBO_EDITAR = r"(?:mud|troc|alter|atualiz|coloc|adicion|bot|p[oõ]e|ponha|defin|edit|corri[gj]|acrescent|inclu)\w*"
+_VERBO_EDITAR = r"(?:mud|troc|alter|atualiz|coloc|adicion|bot|p[oõ]e|ponha|defin|edit|corri[gj]|acrescent|inclu|ajust|acert|modific|reprogram)\w*"
 _CAMPOS = {
     "nome": r"nome|t[ií]tulo",
     "local": r"local|endere[çc]o|lugar",
@@ -469,7 +489,7 @@ _CAMPOS = {
 _SEP = r"(?:\s+(?:para|pra|por|como)\s+|\s*:\s*|\s*,\s*|\s+(?:dizendo|que\s+diz)\s+)"
 _EDITAR = re.compile(
     r"\b" + _VERBO_EDITAR + r"\s+(?:(?:o|a|os|as|um|uma)\s+)?(?:(?:no|na|nos|nas)\s+)?(?P<campo>"
-    + "|".join(f"(?P<{k}>{v})" for k, v in _CAMPOS.items()) + r")\s+(?:d[oae]s?|n[oae]s?|em|de)\s+(?P<alvo>.+?)"
+    + "|".join(f"(?P<{k}>{v})" for k, v in _CAMPOS.items()) + r")\s+(?P<alvo>(?:d[oae]s?|n[oae]s?|em|de|dess[ae]|dest[ae]|del[ae]|ness[ae])(?:\s+.+?)?)"
     + _SEP + r"(?P<novo>.+)$", re.I | re.S)
 _RENOMEAR = re.compile(r"\brenome\w*\s+(?P<alvo>.+?)\s+(?:para|pra|como)\s+(?P<novo>.+)$", re.I | re.S)
 _ESTENDER = re.compile(r"\b(?:estend|prorrog|aument|estic|encurt|diminu|reduz)\w*\s+(?P<alvo>.+?)\s+(?:at[ée]|para|pra)\s+"
@@ -530,6 +550,52 @@ def editar_evento_direto(texto: str) -> tuple[str, bool] | None:
     ev, problema = _achar_evento(alvo)
     if ev is None:
         return (problema, False) if tem_contexto else None
+    return _aplicar_edicao(ev, campo, novo, alvo)
+
+
+# "ajusta o horário dessa tarefa de amanhã" (sem dizer o novo): pergunta e guarda.
+_PENDENTE: dict = {}
+_EDITAR_SEM_VALOR = re.compile(
+    r"\b" + _VERBO_EDITAR + r"\s+(?:(?:o|a|os|as)\s+)?(?P<campo>"
+    + "|".join(f"(?P<{k}>{v})" for k, v in _CAMPOS.items()) + r")\s+(?P<alvo>(?:d[oae]s?|de|dess[ae]|dest[ae]|del[ae])(?:\s+.+?)?)\s*[.!]?$", re.I | re.S)
+_PERGUNTA = {"nome": "Qual é o nome novo de", "local": "Qual é o local de", "descricao": "O que coloco na descrição de",
+             "fim": "Para que horário fica o término de", "duracao": "Quanto tempo deve durar",
+             "inicio": "Para que horário mudo"}
+
+
+def _pedir_valor(texto: str) -> tuple[str, bool] | None:
+    m = _EDITAR_SEM_VALOR.search(texto)
+    if not m:
+        return None
+    campo = next(k for k in _CAMPOS if m.group(k))
+    ev, problema = _achar_evento(m.group("alvo"))
+    if ev is None:
+        return (problema, False) if (_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto)) else None
+    import time as _t
+    _PENDENTE.update(ev=ev, campo=campo, quando=_t.monotonic())
+    return f"{_PERGUNTA[campo]} \"{ev.get('summary', '(sem título)')}\" ({_quando_evento(ev)})?", False
+
+
+def _completar_pendente(texto: str) -> tuple[str, bool] | None:
+    """A resposta à pergunta acima: "de 14 às 15", "para as 16h", "Revisão final"."""
+    import time as _t
+    if not _PENDENTE or _t.monotonic() - _PENDENTE["quando"] > 300:
+        return None
+    campo, ev = _PENDENTE["campo"], _PENDENTE["ev"]
+    if campo in ("inicio", "fim"):
+        if not (_FAIXA.search(texto) or _hora_em(texto)):
+            return None
+    elif campo == "duracao":
+        if not _minutos(texto):
+            return None
+    elif "?" in texto or len(texto) > 160 or _JA_EXISTE.search(texto) or _CRIAR.search(texto):
+        return None
+    _PENDENTE.clear()
+    novo = re.sub(r"^\s*(?:para|pra|ser|fica|que seja|seja|:)\s+", "", texto.strip(), flags=re.I)
+    return _aplicar_edicao(ev, campo, novo, "")
+
+
+def _aplicar_edicao(ev: dict, campo: str, novo: str, alvo: str) -> tuple[str, bool]:
     from zoneinfo import ZoneInfo
     fuso = ZoneInfo("America/Sao_Paulo")
     nome = ev.get("summary", "(sem título)")
@@ -588,9 +654,10 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     """Remarca ou exclui um compromisso; None se a frase não for esse pedido."""
     if "?" in texto:
         return None
-    editado = editar_evento_direto(texto)
-    if editado is not None:
-        return editado
+    for etapa in (_completar_pendente, editar_evento_direto, _pedir_valor):
+        feito = etapa(texto)
+        if feito is not None:
+            return feito
     tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto))
     excluir = _EXCLUIR.search(texto)
     mover = _MOVER.search(texto)
@@ -744,8 +811,31 @@ def whatsapp_direto(texto: str) -> str | None:
     return resumo_nao_lidas(r) if ok else f"Não consegui ler o WhatsApp: {r}"
 
 
+_MEU_NOME = re.compile(r"(?:\bmeu\s+nome\s+(?:é|e|eh)|\bme\s+chamo|\b(?:pode\s+)?me\s+cham(?:a|e|ar)\s+de)\s+"
+                       r"(?P<nome>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'-]{1,30})", re.I)
+
+
+def nome_direto(texto: str) -> str | None:
+    """"Meu nome é Hiago": guarda o nome (vale para as próximas conversas também)."""
+    m = _MEU_NOME.search(texto)
+    if not m or "?" in texto[m.start():]:
+        return None
+    nome = m.group("nome").capitalize()
+    if _plano(nome) in {"nao", "sim", "voce", "jarvis", "o", "a"}:
+        return None
+    try:
+        from memory.config_manager import get_assistant_name, save_assistant_config
+        save_assistant_config(get_assistant_name(), nome)
+    except Exception as erro:  # noqa: BLE001
+        return f"Entendi, {nome}, mas não consegui guardar o nome: {erro}"
+    return f"Anotado, {nome}. Vou te chamar assim daqui para frente."
+
+
 def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
+    n = nome_direto(texto)
+    if n is not None:
+        return n, ["central"]
     r = registro_direto(texto)
     if r is not None:
         return r[0], (["central"] if r[1] else [])

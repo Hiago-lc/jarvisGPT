@@ -484,7 +484,8 @@ def _sistema(canal: str) -> str:
     dias = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
     return _SISTEMA.format(
         nome=nome if nome.upper() != "JARVIS" else "Jarvis",
-        usuario=f" Você fala com {usuario}." if usuario else "",
+        usuario=(f" Você fala com {usuario}." if usuario else
+                 " Você não sabe o nome do usuário: não invente um."),
         hoje=f"{dias[hoje.weekday()]}, {hoje.strftime('%d/%m/%Y')}",
         canal=canal,
         memoria=f"\nO que você sabe sobre o usuário:\n{mem}" if mem.strip() else "")

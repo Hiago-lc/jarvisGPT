@@ -1181,7 +1181,8 @@ class JarvisLive:
             f"{_addr}\n\n"
         )
         if _local:
-            identity_ctx = (f"O usuário se chama {_user_name}.\n\n" if _user_name else "")
+            identity_ctx = (f"O usuário se chama {_user_name}.\n\n" if _user_name
+                            else "Você ainda não sabe o nome do usuário: não invente um.\n\n")
 
         # Everything the model is told about *itself* is derived here, not
         # written into prompt.txt: the name comes from config, the platform from

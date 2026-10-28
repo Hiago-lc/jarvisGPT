@@ -818,6 +818,30 @@ class MudarEventoTests(_Base):
         self._pedir("remarca o compromisso das 11h de amanhã para as 8h")
         self.assertEqual(self.agenda.eventos["a2"]["start"]["dateTime"][11:16], "08:00")
 
+    def test_conversation_from_the_screenshot(self):
+        import datetime as dt
+        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+                                     "start": {"dateTime": f"{self.amanha}T09:00:00-03:00"},
+                                     "end": {"dateTime": f"{self.amanha}T10:00:00-03:00"}}
+        r = self._pedir("preciso que ajuste o horário da demanda Banners São Rafael da agenda para ser de 14 as 15")
+        ev = self.agenda.eventos["b1"]
+        self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("14:00", "15:00"))
+        self.assertEqual(len(self.agenda.eventos), 4)          # nada foi criado
+        self.assertIn("Banners São Rafael", r["resposta"])
+        # "dessa tarefa", sem dizer o horário: pergunta, e a resposta seguinte completa.
+        r = self._pedir("ajuste o horário dessa tarefa de amanhã")
+        self.assertIn("Para que horário mudo \"Banners São Rafael\"", r["resposta"])
+        r = self._pedir("das 16 às 17:30")
+        self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("16:00", "17:30"))
+
+    def test_my_name_is_saved(self):
+        from unittest.mock import patch as _p
+        with _p("memory.config_manager.save_assistant_config") as salvar, \
+             _p("memory.config_manager.get_assistant_name", return_value="Jarvis"):
+            r = self._pedir("vitor? meu nome é HIAGO")
+        salvar.assert_called_once_with("Jarvis", "Hiago")
+        self.assertIn("Hiago", r["resposta"])
+
     def test_unrelated_rename_goes_to_the_model(self):
         r = self._pedir("renomeia o arquivo relatório para final")
         self.assertEqual(r["resposta"], "Resposta do modelo.")
