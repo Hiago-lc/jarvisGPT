@@ -692,5 +692,19 @@ class InvencaoNaJanelaTests(unittest.TestCase):
         self.assertFalse(_claims_done("Os eventos não foram removidos."))
 
 
+
+class AlucinacaoWhisperTests(unittest.TestCase):
+    def test_subtitle_phrases_from_silence_are_dropped(self):
+        from providers.stt_whisper import sem_alucinacao
+        self.assertEqual(sem_alucinacao("Legendas pela comunidade de Amara.org Legendas pela comunidade de Amara.org"), "")
+        self.assertEqual(sem_alucinacao("Obrigado por assistir!"), "")
+        self.assertEqual(sem_alucinacao("exclui o Estudos. Legendas pela comunidade de Amara.org"), "exclui o Estudos")
+
+    def test_real_speech_is_kept(self):
+        from providers.stt_whisper import sem_alucinacao
+        for frase in ("coloca as legendas por favor no vídeo", "Jarvis, o que tenho na agenda amanhã?"):
+            self.assertEqual(sem_alucinacao(frase), frase)
+
+
 if __name__ == "__main__":
     unittest.main()
