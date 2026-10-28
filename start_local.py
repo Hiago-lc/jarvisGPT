@@ -453,6 +453,13 @@ if __name__ == "__main__":
         _log.parent.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = open(_log, "a", encoding="utf-8", buffering=1)
     a = _args()
+    try:
+        # O atalho da área de trabalho (Jarvis.vbs) abre com este mesmo Python.
+        _pyw = Path(sys.executable).with_name("pythonw.exe")
+        (Path(__file__).resolve().parent / "config" / "python_local.txt").write_text(
+            str(_pyw if _pyw.is_file() else Path(sys.executable)), encoding="utf-8")
+    except OSError:
+        pass
     if a.iniciar_com_windows or a.nao_iniciar_com_windows:
         print(iniciar_com_windows(a.perfil, a.iniciar_com_windows))
         sys.exit(0)

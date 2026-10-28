@@ -58,3 +58,4 @@ memory/*.db-*
 # ── Exportações do Base44 (têm senhas em texto puro) ──
 importar_base44/
 *_export*.csv
+config/python_local.txt
