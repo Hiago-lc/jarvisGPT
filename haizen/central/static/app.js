@@ -739,6 +739,282 @@ ROTAS.agentes = async (param) => {
   }
 };
 
+// ── agenda (Google Agenda dentro do sistema) ──────────────────────────────
+// Dia, semana e mês desenhados a partir dos eventos do Google Agenda. Clique
+// num horário vazio para criar, num evento para editar; arraste para mover
+// e puxe a borda de baixo para mudar o fim.
+const AG_HORA = 48;                       // altura de uma hora na grade, em px
+const AG_DIAS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+const AG_CORES = [["", "Padrão"], ["7", "Pavão"], ["9", "Mirtilo"], ["1", "Lavanda"], ["3", "Uva"], ["4", "Flamingo"],
+  ["11", "Tomate"], ["6", "Tangerina"], ["5", "Banana"], ["2", "Sálvia"], ["10", "Manjericão"], ["8", "Grafite"]];
+const AG = { vista: lembrar("central.agenda.vista", window.innerWidth < 600 ? "dia" : "semana"), ancora: new Date(), eventos: [] };
+
+const agIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const agHm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const agDia = (iso) => { const [a, m, d] = iso.slice(0, 10).split("-").map(Number); return new Date(a, m - 1, d); };
+const agMais = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const agTextoCor = (hex) => { const n = parseInt(hex.slice(1), 16); const l = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; return l > 0.66 ? "#1F1F1F" : "#fff"; };
+
+function agIntervalo() {
+  const a = new Date(AG.ancora.getFullYear(), AG.ancora.getMonth(), AG.ancora.getDate());
+  if (AG.vista === "dia") return [a, agMais(a, 1)];
+  if (AG.vista === "semana") { const ini = agMais(a, -a.getDay()); return [ini, agMais(ini, 7)]; }
+  const primeiro = new Date(a.getFullYear(), a.getMonth(), 1);
+  const ini = agMais(primeiro, -primeiro.getDay());
+  return [ini, agMais(ini, 42)];
+}
+
+function agTitulo() {
+  const [ini, fim] = agIntervalo();
+  const ultimo = agMais(fim, -1);
+  if (AG.vista === "dia") return ini.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  if (AG.vista === "mes") return `${MESES_LONGOS[AG.ancora.getMonth()]} de ${AG.ancora.getFullYear()}`;
+  const mesmoMes = ini.getMonth() === ultimo.getMonth();
+  return `${ini.getDate()}${mesmoMes ? "" : ` de ${MESES[ini.getMonth()]}`} a ${ultimo.getDate()} de ${MESES[ultimo.getMonth()]} de ${ultimo.getFullYear()}`;
+}
+
+// Pedaços de cada evento por dia (um evento que vira a meia-noite aparece nos dois dias).
+function agPedacos(dias) {
+  const porDia = Object.fromEntries(dias.map((d) => [agIso(d), { todo: [], hora: [] }]));
+  for (const ev of AG.eventos) {
+    if (ev.dia_todo) {
+      for (let d = agDia(ev.inicio); d < agDia(ev.fim); d = agMais(d, 1)) if (porDia[agIso(d)]) porDia[agIso(d)].todo.push(ev);
+      continue;
+    }
+    const ini = new Date(ev.inicio), fim = new Date(ev.fim);
+    for (let d = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate()); d < fim; d = agMais(d, 1)) {
+      const k = agIso(d);
+      if (!porDia[k]) continue;
+      const a = Math.max(0, (ini - d) / 6e4), b = Math.min(1440, (fim - d) / 6e4);
+      if (b > a) porDia[k].hora.push({ ev, a, b });
+    }
+  }
+  for (const k in porDia) {               // lado a lado quando se sobrepõem
+    const lista = porDia[k].hora.sort((x, y) => x.a - y.a || y.b - x.b);
+    let grupo = [], fimGrupo = -1;
+    const fechar = () => { const cols = []; for (const p of grupo) { let c = cols.findIndex((f) => f <= p.a); if (c < 0) { c = cols.length; cols.push(0); } cols[c] = p.b; p.col = c; } grupo.forEach((p) => { p.ncols = cols.length; }); };
+    for (const p of lista) { if (p.a >= fimGrupo && grupo.length) { fechar(); grupo = []; } grupo.push(p); fimGrupo = Math.max(fimGrupo, p.b); }
+    if (grupo.length) fechar();
+  }
+  return porDia;
+}
+
+function agEventoHtml(p) {
+  const { ev } = p, h = ((p.b - p.a) / 60) * AG_HORA;
+  const larg = 100 / p.ncols, esq = p.col * larg;
+  const ini = new Date(ev.inicio), fim = new Date(ev.fim);
+  const curto = h < 34;
+  return `<div class="ag-ev${curto ? " curto" : ""}${ev.editavel ? "" : " so-ler"}" data-ev="${esc(ev.id)}" tabindex="0"
+      style="top:${(p.a / 60) * AG_HORA}px;height:${Math.max(h - 2, 16)}px;left:calc(${esq}% + 1px);width:calc(${p.col === p.ncols - 1 ? larg : larg * 1.15}% - 3px);--c:${ev.cor};color:${agTextoCor(ev.cor)}"
+      title="${esc(`${ev.titulo}\n${agHm(ini)} – ${agHm(fim)}${ev.local ? `\n${ev.local}` : ""}`)}">
+    <strong>${esc(ev.titulo)}</strong>${curto ? `<span>, ${agHm(ini)}</span>` : `<span>${agHm(ini)} – ${agHm(fim)}</span>`}
+    ${ev.editavel ? '<i class="ag-alca" aria-hidden="true"></i>' : ""}</div>`;
+}
+
+function agGrade(dias) {
+  const porDia = agPedacos(dias), hoje = agIso(new Date()), agora = new Date();
+  const temTodo = dias.some((d) => porDia[agIso(d)].todo.length);
+  const horas = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * AG_HORA}px">${h ? `${String(h).padStart(2, "0")}:00` : ""}</span>`).join("");
+  return `<div class="ag-semana" style="--dias:${dias.length};--hora:${AG_HORA}px">
+    <div class="ag-cab"><div></div>${dias.map((d) => `<button class="ag-dia-cab${agIso(d) === hoje ? " hoje" : ""}" data-ir-dia="${agIso(d)}"><span>${AG_DIAS[d.getDay()]}</span><b>${d.getDate()}</b></button>`).join("")}</div>
+    ${temTodo ? `<div class="ag-todo"><div class="ag-rot">dia todo</div>${dias.map((d) => `<div class="ag-todo-dia" data-novo-dia="${agIso(d)}">${porDia[agIso(d)].todo.map((ev) => `<div class="ag-chip" data-ev="${esc(ev.id)}" tabindex="0" style="--c:${ev.cor};color:${agTextoCor(ev.cor)}">${esc(ev.titulo)}</div>`).join("")}</div>`).join("")}</div>` : ""}
+    <div class="ag-corpo" id="ag-corpo">
+      <div class="ag-horas">${horas}</div>
+      ${dias.map((d) => { const k = agIso(d); const min = agora.getHours() * 60 + agora.getMinutes();
+        return `<div class="ag-col${k === hoje ? " hoje" : ""}" data-dia="${k}">${porDia[k].hora.map(agEventoHtml).join("")}${k === hoje ? `<div class="ag-agora" style="top:${(min / 60) * AG_HORA}px"></div>` : ""}</div>`; }).join("")}
+    </div></div>`;
+}
+
+function agMes() {
+  const [ini] = agIntervalo(), dias = Array.from({ length: 42 }, (_, i) => agMais(ini, i));
+  const porDia = agPedacos(dias), hoje = agIso(new Date()), mes = AG.ancora.getMonth();
+  return `<div class="ag-mes"><div class="ag-mes-cab">${AG_DIAS.map((d) => `<span>${d}</span>`).join("")}</div>
+    <div class="ag-mes-grade">${dias.map((d) => { const k = agIso(d), p = porDia[k];
+      const itens = [...p.todo.map((ev) => ({ ev, todo: true })), ...p.hora.filter((x) => x.a === Math.max(0, (new Date(x.ev.inicio) - d) / 6e4)).map((x) => ({ ev: x.ev }))];
+      const vis = itens.slice(0, 3);
+      return `<div class="ag-mes-dia${d.getMonth() !== mes ? " fora" : ""}${k === hoje ? " hoje" : ""}" data-novo-dia="${k}">
+        <button class="ag-mes-num" data-ir-dia="${k}">${d.getDate()}</button>
+        ${vis.map(({ ev, todo }) => todo ? `<div class="ag-chip" data-ev="${esc(ev.id)}" tabindex="0" style="--c:${ev.cor};color:${agTextoCor(ev.cor)}">${esc(ev.titulo)}</div>`
+          : `<div class="ag-linha" data-ev="${esc(ev.id)}" tabindex="0"><i style="background:${ev.cor}"></i>${agHm(new Date(ev.inicio))} ${esc(ev.titulo)}</div>`).join("")}
+        ${itens.length > 3 ? `<button class="ag-mais" data-ir-dia="${k}">+${itens.length - 3} mais</button>` : ""}</div>`; }).join("")}</div></div>`;
+}
+
+function agFormulario(ev, padrao) {
+  const e = ev || padrao;
+  const todo = !!e.dia_todo;
+  const ini = todo ? null : new Date(e.inicio), fim = todo ? null : new Date(e.fim);
+  const data = todo ? e.inicio.slice(0, 10) : agIso(ini);
+  const dataFim = todo ? agIso(agMais(agDia(e.fim), -1)) : agIso(fim);
+  return `<div class="campos">
+    ${campo({ nome: "titulo", rotulo: "Título", valor: ev ? ev.titulo : "", largo: true, obrig: true })}
+    ${campo({ nome: "dia_todo", rotulo: "Dia inteiro", tipo: "checkbox", valor: todo, largo: true })}
+    ${campo({ nome: "data", rotulo: "Data", tipo: "date", valor: data })}
+    <label class="ag-so-todo">Até<input type="date" name="data_fim" value="${dataFim}"></label>
+    <label class="ag-so-hora">Início<input type="time" name="hora_ini" value="${ini ? agHm(ini) : "09:00"}" step="300"></label>
+    <label class="ag-so-hora">Fim<input type="time" name="hora_fim" value="${fim ? agHm(fim) : "10:00"}" step="300"></label>
+    ${campo({ nome: "local", rotulo: "Local", valor: e.local || "", largo: true })}
+    ${campo({ nome: "descricao", rotulo: "Descrição", tipo: "textarea", valor: e.descricao || "", largo: true })}
+    ${campo({ nome: "cor_id", rotulo: "Cor", tipo: "select", opcoes: AG_CORES, valor: e.cor_id || "" })}
+  </div>`;
+}
+
+function agLerFormulario(v) {
+  if (!v.titulo.trim()) throw new Error("Dê um nome ao evento.");
+  const base = { titulo: v.titulo.trim(), local: v.local, descricao: v.descricao, cor_id: v.cor_id, dia_todo: v.dia_todo };
+  if (v.dia_todo) return { ...base, inicio: v.data, fim: agIso(agMais(agDia(v.data_fim || v.data), 1)) };
+  let dataFim = v.data;
+  if (v.hora_fim <= v.hora_ini) dataFim = agIso(agMais(agDia(v.data), 1));     // passa da meia-noite
+  return { ...base, inicio: `${v.data}T${v.hora_ini}`, fim: `${dataFim}T${v.hora_fim}` };
+}
+
+function agAlternarCampos(corpo) {
+  const caixa = $('[name="dia_todo"]', corpo);
+  const aplicar = () => { corpo.classList.toggle("ag-todo-on", caixa.checked); };
+  caixa.addEventListener("change", aplicar); aplicar();
+}
+
+function agNovo(padrao, recarregar) {
+  dialogo({
+    titulo: "Novo evento", corpo: agFormulario(null, padrao), aoAbrir: agAlternarCampos,
+    acoes: [{ texto: "Cancelar", acao: () => {} },
+      { texto: "Criar no Google Agenda", classe: "primario", enviar: true, acao: async (v) => {
+        await api("POST", "agenda/eventos", agLerFormulario(v)); avisar("Evento criado"); recarregar(); } }],
+  });
+}
+
+function agAbrir(ev, recarregar) {
+  if (!ev.editavel) {
+    dialogo({ titulo: ev.titulo, corpo: `<p class="sub" style="margin-top:0">${ev.dia_todo ? "Dia inteiro" : `${agHm(new Date(ev.inicio))} – ${agHm(new Date(ev.fim))}`} · Feriado nacional (somente leitura)</p>`,
+      acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] });
+    return;
+  }
+  dialogo({
+    titulo: ev.titulo,
+    corpo: `${ev.recorrente ? '<p class="sub" style="margin-top:0">Evento recorrente: a mudança vale só para esta ocorrência.</p>' : ""}${agFormulario(ev)}`,
+    aoAbrir: agAlternarCampos,
+    acoes: [
+      { texto: "Excluir", classe: "perigo esquerda", acao: async () => {
+        if (!(await confirmarExclusao(`Excluir "${ev.titulo}" do Google Agenda?`))) return false;
+        await api("DELETE", `agenda/eventos/${encodeURIComponent(ev.id)}`); avisar("Evento excluído"); recarregar(); } },
+      ...(ev.link ? [{ texto: "Abrir no Google", acao: () => { window.open(ev.link, "_blank"); return false; } }] : []),
+      { texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+        await api("PATCH", `agenda/eventos/${encodeURIComponent(ev.id)}`, agLerFormulario(v)); avisar("Evento atualizado"); recarregar(); } },
+    ],
+  });
+}
+
+// Arrastar: mover (o evento inteiro) ou esticar (a alça de baixo). Passos de 15 min.
+function agArrastar(recarregar) {
+  const corpo = $("#ag-corpo");
+  if (!corpo) return;
+  $$(".ag-ev", corpo).forEach((el) => el.addEventListener("pointerdown", (e) => {
+    const ev = AG.eventos.find((x) => x.id === el.dataset.ev);
+    if (!ev || !ev.editavel || e.button !== 0) return;
+    const esticar = e.target.classList.contains("ag-alca");
+    const cols = $$(".ag-col", corpo), y0 = e.clientY, x0 = e.clientX, topo0 = el.offsetTop, alt0 = el.offsetHeight;
+    const col0 = cols.indexOf(el.parentElement);
+    let mexeu = false, dMin = 0, dDia = 0;
+    el.setPointerCapture(e.pointerId);
+    const mover = (m) => {
+      if (!mexeu && Math.abs(m.clientY - y0) + Math.abs(m.clientX - x0) < 5) return;
+      mexeu = true; el.classList.add("arrastando");
+      dMin = Math.round(((m.clientY - y0) / AG_HORA) * 60 / 15) * 15;
+      if (esticar) { el.style.height = `${Math.max(alt0 + (dMin / 60) * AG_HORA, AG_HORA / 4)}px`; return; }
+      el.style.top = `${topo0 + (dMin / 60) * AG_HORA}px`;
+      const alvo = cols.findIndex((c) => { const r = c.getBoundingClientRect(); return m.clientX >= r.left && m.clientX < r.right; });
+      dDia = alvo < 0 ? dDia : alvo - col0;
+      el.style.transform = `translateX(${dDia * (cols[0].getBoundingClientRect().width)}px)`;
+    };
+    const soltar = async () => {
+      el.removeEventListener("pointermove", mover); el.removeEventListener("pointerup", soltar);
+      if (!mexeu) { agAbrir(ev, recarregar); return; }
+      const ini = new Date(ev.inicio), fim = new Date(ev.fim);
+      let nIni = ini, nFim = new Date(fim.getTime() + dMin * 6e4);
+      if (!esticar) { nIni = new Date(ini.getTime() + dMin * 6e4); nIni.setDate(nIni.getDate() + dDia); nFim = new Date(nIni.getTime() + (fim - ini)); }
+      if (nFim <= nIni) nFim = new Date(nIni.getTime() + 15 * 6e4);
+      try {
+        await api("PATCH", `agenda/eventos/${encodeURIComponent(ev.id)}`, { inicio: `${agIso(nIni)}T${agHm(nIni)}`, fim: `${agIso(nFim)}T${agHm(nFim)}`, dia_todo: false });
+        avisar(esticar ? `"${ev.titulo}" agora termina às ${agHm(nFim)}` : `"${ev.titulo}" movido para ${nIni.toLocaleDateString("pt-BR", { weekday: "short", day: "numeric" })}, ${agHm(nIni)}`);
+      } catch (err) { avisar(err.message); }
+      recarregar();
+    };
+    el.addEventListener("pointermove", mover); el.addEventListener("pointerup", soltar);
+  }));
+}
+
+ROTAS.agenda = async () => {
+  main.innerHTML = `<div class="ag">
+    <div class="ag-barra">
+      <div class="ag-nav"><button class="botao" id="ag-hoje">Hoje</button>
+        <button class="botao-icone" id="ag-ant" aria-label="Anterior">‹</button><button class="botao-icone" id="ag-prox" aria-label="Próximo">›</button>
+        <h1 id="ag-titulo"></h1></div>
+      <div class="ag-acoes"><div class="grupo filtros" role="group" aria-label="Visão">${[["dia", "Dia"], ["semana", "Semana"], ["mes", "Mês"]].map(([v, t]) => `<button type="button" data-vista="${v}" aria-pressed="${AG.vista === v}">${t}</button>`).join("")}</div>
+        <button class="botao primario" id="ag-novo">Novo evento</button></div>
+    </div>
+    <div id="ag-area" class="ag-area"><p class="sub">Carregando o Google Agenda…</p></div></div>`;
+  let rolagem = null;
+  const desenhar = async () => {
+    const [ini, fim] = agIntervalo();
+    $("#ag-titulo").textContent = agTitulo();
+    $$("[data-vista]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.vista === AG.vista)));
+    try {
+      const r = await api("GET", `agenda/eventos?de=${agIso(ini)}&ate=${agIso(fim)}`);
+      AG.eventos = r.eventos;
+    } catch (e) {
+      $("#ag-area").innerHTML = `<div class="bloco"><p class="erro" style="margin-top:0">Não consegui ler o Google Agenda: ${esc(e.message)}</p>
+        <p class="sub">Se a conexão com o Google expirou, reconecte no PC: na pasta do Jarvis, rode <code>python connect_google_calendar.py</code> e autorize no navegador.</p></div>`;
+      return;
+    }
+    const antiga = $("#ag-corpo");
+    if (antiga) rolagem = antiga.scrollTop;
+    const dias = Array.from({ length: Math.round((fim - ini) / 864e5) }, (_, i) => agMais(ini, i));
+    $("#ag-area").innerHTML = AG.vista === "mes" ? agMes() : agGrade(dias);
+    const corpo = $("#ag-corpo");
+    if (corpo) {
+      const agora = new Date();
+      corpo.scrollTop = rolagem ?? Math.max(0, (dias.some((d) => agIso(d) === agIso(agora)) ? agora.getHours() - 2 : 7) * AG_HORA);
+      corpo.addEventListener("click", (e) => {
+        const col = e.target.closest(".ag-col");
+        if (!col || e.target.closest(".ag-ev")) return;
+        const min = Math.floor(((e.clientY - col.getBoundingClientRect().top) / AG_HORA) * 2) * 30;
+        const ini = new Date(agDia(col.dataset.dia).getTime() + min * 6e4);
+        agNovo({ inicio: ini.toISOString(), fim: new Date(ini.getTime() + 36e5).toISOString() }, desenhar);
+      });
+      agArrastar(desenhar);
+    }
+    $$("#ag-area [data-ev]:not(.ag-ev)").forEach((el) => {
+      const abrir = (e) => { e.stopPropagation(); agAbrir(AG.eventos.find((x) => x.id === el.dataset.ev), desenhar); };
+      el.addEventListener("click", abrir);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") abrir(e); });
+    });
+    $$("#ag-area .ag-ev").forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") agAbrir(AG.eventos.find((x) => x.id === el.dataset.ev), desenhar); }));
+    $$("#ag-area [data-ir-dia]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); AG.ancora = agDia(b.dataset.irDia); AG.vista = "dia"; guardar("central.agenda.vista", "dia"); rolagem = null; desenhar(); }));
+    $$("#ag-area [data-novo-dia]").forEach((c) => c.addEventListener("click", (e) => {
+      if (e.target !== c) return;
+      const d = agDia(c.dataset.novoDia);
+      if (c.classList.contains("ag-todo-dia")) agNovo({ dia_todo: true, inicio: c.dataset.novoDia, fim: agIso(agMais(d, 1)) }, desenhar);
+      else agNovo({ inicio: new Date(d.getTime() + 9 * 36e5).toISOString(), fim: new Date(d.getTime() + 10 * 36e5).toISOString() }, desenhar);
+    }));
+  };
+  const andar = (n) => {
+    const a = AG.ancora;
+    AG.ancora = AG.vista === "mes" ? new Date(a.getFullYear(), a.getMonth() + n, 1) : agMais(a, n * (AG.vista === "dia" ? 1 : 7));
+    rolagem = null; desenhar();
+  };
+  $("#ag-hoje").addEventListener("click", () => { AG.ancora = new Date(); rolagem = null; desenhar(); });
+  $("#ag-ant").addEventListener("click", () => andar(-1));
+  $("#ag-prox").addEventListener("click", () => andar(1));
+  $$("[data-vista]").forEach((b) => b.addEventListener("click", () => { AG.vista = b.dataset.vista; guardar("central.agenda.vista", AG.vista); rolagem = null; desenhar(); }));
+  $("#ag-novo").addEventListener("click", () => {
+    const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+    agNovo({ inicio: d.toISOString(), fim: new Date(d.getTime() + 36e5).toISOString() }, desenhar);
+  });
+  await desenhar();
+  clearInterval(navegar.timer);
+  navegar.timer = setInterval(() => { if (!$("#dialogo").open && !document.hidden && !$(".ag-ev.arrastando")) desenhar().catch(() => {}); }, 60000);
+};
+
 // ── escritório ────────────────────────────────────────────────────────────
 // A equipe de agentes como um escritório: cada um na sua mesa, com o que está
 // fazendo agora num balão. Atualiza sozinho a cada poucos segundos.

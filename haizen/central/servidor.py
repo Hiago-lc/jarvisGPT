@@ -397,6 +397,16 @@ class _Handler(BaseHTTPRequestHandler):
         if rota == "livre" and metodo == "GET":
             dia = _dt.date.fromisoformat(q.get("dia") or _dt.date.today().isoformat())
             return atalhos.horarios_livres(dia)
+        if rota == "eventos":
+            from haizen.central import agenda_web
+            if len(partes) == 1 and metodo == "GET":
+                return agenda_web.listar(q.get("de", ""), q.get("ate", ""))
+            if len(partes) == 1 and metodo == "POST":
+                return agenda_web.criar(self._corpo())
+            if len(partes) == 2 and metodo == "PATCH":
+                return agenda_web.editar(partes[1], self._corpo())
+            if len(partes) == 2 and metodo == "DELETE":
+                return agenda_web.excluir(partes[1])
         if rota == "evento" and metodo == "POST":
             from zoneinfo import ZoneInfo
             from actions.google_agenda import google_agenda
