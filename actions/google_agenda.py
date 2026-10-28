@@ -68,10 +68,20 @@ def _change_body(event, params):
     for key in ('description', 'location'):
         if isinstance(params.get(key), str):
             patch[key] = params[key][:8000 if key == 'description' else 1000]
-    if params.get('start') or params.get('end'):
+    if params.get('date') and not (params.get('start') or params.get('end')):
+        # Compromisso de dia inteiro: muda só o dia, mantendo quantos dias ele dura.
+        dia = datetime.fromisoformat(str(params['date'])[:10]).date()
+        old = (event.get('start') or {}).get('date')
+        old_end = (event.get('end') or {}).get('date')
+        dias = ((datetime.fromisoformat(old_end) - datetime.fromisoformat(old)).days if old and old_end else 1) or 1
+        patch['start'] = {'date': dia.isoformat(), 'dateTime': None}
+        patch['end'] = {'date': (dia + timedelta(days=dias)).isoformat(), 'dateTime': None}
+    elif params.get('start') or params.get('end'):
         zone = str(params.get('timezone') or (event.get('start') or {}).get('timeZone') or 'America/Sao_Paulo')
         old_start = (event.get('start') or {}).get('dateTime')
         old_end = (event.get('end') or {}).get('dateTime')
+        if not params.get('start') and not old_start:
+            raise ValueError('Esse compromisso é de dia inteiro: diga o horário de início.')
         start = _datetime(params['start']) if params.get('start') else _datetime(old_start)
         if params.get('end'):
             end = _datetime(params['end'])
@@ -83,8 +93,10 @@ def _change_body(event, params):
             raise ValueError('O término precisa ser posterior ao início.')
         patch['start'] = {'dateTime': start.isoformat(), 'timeZone': zone}
         patch['end'] = {'dateTime': end.isoformat(), 'timeZone': zone}
+        if 'date' in (event.get('start') or {}):
+            patch['start']['date'] = patch['end']['date'] = None   # deixa de ser de dia inteiro
     if not patch:
-        raise ValueError('Diga o que mudar: novo horário, novo dia ou novo título.')
+        raise ValueError('Diga o que mudar: horário, dia, duração, título, descrição ou local.')
     return patch
 
 
@@ -106,16 +118,10 @@ def google_agenda(parameters, response=None, player=None, session_memory=None):
                                        sendUpdates='none').execute(num_retries=0)
                 return outcome.done('google_agenda', changed=True, title=changed.get('summary', title),
                                     start=_event_when(changed), event_id=event_id, verified=True)
-            # Excluir não tem volta: passa pelo aviso de confirmação na tela.
-            from core import confirm
-            if confirm.pending_title():
-                return outcome.ask('google_agenda', 'Já existe uma confirmação esperando na tela; responda a ela primeiro.')
-
-            def _delete():
-                events.delete(calendarId=calendar_id, eventId=event_id, sendUpdates='none').execute(num_retries=0)
-                return f'Excluí "{title}" do Google Agenda.'
-            return confirm.request(key=f'agenda-delete-{event_id}', title=f'Excluir "{title}" do Google Agenda',
-                                   detail=_event_when(event)[:16].replace('T', ' '), run=_delete)
+            # O usuário pediu para excluir: exclui direto, sem tela de confirmação.
+            events.delete(calendarId=calendar_id, eventId=event_id, sendUpdates='none').execute(num_retries=0)
+            return outcome.done('google_agenda', deleted=True, title=title, start=_event_when(event),
+                                event_id=event_id, verified=True)
         if action == 'create':
             body = create_body(params)  # Validate before auth or a network write.
         elif action == 'list':
@@ -163,12 +169,13 @@ def google_agenda(parameters, response=None, player=None, session_memory=None):
 
 TOOL = {
     'name': 'google_agenda',
-    'description': 'Create, list, change (move, rename) or delete events in the user-connected Google Calendar. Use this API tool instead of clicking the Calendar website. To change or delete: list first, then pass that event_id with action=update (new start/end/title; moving only the start keeps the duration) or action=delete (the user confirms on screen). Only create when the user requests it; ask for missing date, time or duration. Convert natural language to offset-aware ISO 8601 using current local date. Timezone defaults to America/Sao_Paulo. Never invite guests or infer their emails.',
-    'brief': 'Google Agenda: criar, listar, mover/alterar (update com event_id) e excluir (delete com event_id) eventos. Horários ISO 8601 com -03:00.',
+    'description': 'Create, list, change or delete events in the user-connected Google Calendar. Use this API tool instead of clicking the Calendar website. To change or delete: list first, then pass that event_id with action=update (any of: new start, new end, title, description, location; date=YYYY-MM-DD moves an all-day event; moving only the start keeps the duration) or action=delete (deletes immediately, so only when the user asked to delete that event). Only create when the user requests it; ask for missing date, time or duration. Convert natural language to offset-aware ISO 8601 using current local date. Timezone defaults to America/Sao_Paulo. Never invite guests or infer their emails.',
+    'brief': 'Google Agenda: criar, listar, alterar horário/título/descrição/local (update com event_id) e excluir (delete com event_id, exclui na hora) eventos. Horários ISO 8601 com -03:00.',
     'parameters': {'type': 'OBJECT', 'properties': {
         'action': {'type': 'STRING', 'enum': ['create', 'list', 'update', 'delete']},
         'event_id': {'type': 'STRING', 'description': 'From action=list; required for update and delete.'},
-        'title': {'type': 'STRING'}, 'start': {'type': 'STRING', 'description': 'ISO 8601 timestamp with UTC offset'},
+        'title': {'type': 'STRING'}, 'date': {'type': 'STRING', 'description': 'YYYY-MM-DD, only to move an all-day event'},
+        'start': {'type': 'STRING', 'description': 'ISO 8601 timestamp with UTC offset'},
         'end': {'type': 'STRING', 'description': 'ISO 8601 timestamp with UTC offset'},
         'timezone': {'type': 'STRING', 'description': 'IANA timezone, default America/Sao_Paulo'},
         'description': {'type': 'STRING'}, 'location': {'type': 'STRING'},

@@ -16,7 +16,6 @@ import time
 from core.data_paths import data_dir
 
 _JOBS = queue.Queue()
-_HIDDEN = {}            # o contexto cuja janela já foi minimizada
 _WORKER_LOCK = threading.Lock()
 _worker = None
 _active = None
@@ -117,7 +116,7 @@ def _open_chat(page, recipient, stop):
         try:
             search.first.wait_for(state='visible', timeout=5000)
         except Exception:
-            raise DraftError('login_or_ui', 'Não achei o campo de busca do WhatsApp Web. Se a janela mostrar QR Code, conecte pelo celular; se já estiver conectado, o layout pode ter mudado: abra a conversa pela lista do Jarvis. Nenhum texto foi digitado.') from None
+            raise DraftError('login_or_ui', 'Não consegui abrir essa conversa no WhatsApp. Confira se o nome está igual ao da lista de conversas do Jarvis; se a tela do WhatsApp pedir QR Code, conecte pelo celular. Nenhum texto foi digitado.') from None
         if search.count() != 1:
             raise DraftError('ambiguous_search', 'Não foi encontrado um único campo de busca; nenhum rascunho foi alterado.')
     _check(stop)
@@ -233,7 +232,7 @@ def _require_login(page, stop):
     if state == 'qr':
         raise DraftError('login_qr', 'O WhatsApp Web está pedindo o QR Code. Abra a tela WhatsApp do Jarvis e escaneie pelo celular (WhatsApp > Aparelhos conectados).')
     if state != 'ok':
-        raise DraftError('login_or_ui', 'O WhatsApp Web não terminou de carregar em 40 segundos. Tente de novo; se continuar, use "Mostrar janela do WhatsApp" para ver o que aparece.')
+        raise DraftError('login_or_ui', 'O WhatsApp Web não terminou de carregar em 40 segundos. Tente de novo; se continuar, reinicie o Jarvis.')
 
 
 def _chat_rows(page):
@@ -355,19 +354,41 @@ def _do(page, payload, stop):
                       payload.get('replace_existing', False), stop)
 
 
+def _janela_visivel():
+    """JARVIS_WHATSAPP_VISIVEL=1 mostra a janela do navegador (só para conferir algo)."""
+    return bool(os.environ.get('JARVIS_WHATSAPP_VISIVEL'))
+
+
 def _launch(driver, stop):
-    """The persistent WhatsApp Web window (the login lives in this profile)."""
+    """O WhatsApp Web roda escondido, sem janela nem aba: o QR Code e as conversas
+    aparecem só dentro do Jarvis. O login fica guardado neste perfil."""
     profile = data_dir() / 'whatsapp-web-profile'
     for channel in ('chrome', 'msedge', None):
         _check(stop)
         try:
-            options = {'headless': False, 'timeout': 7000}
+            options = {'headless': not _janela_visivel(), 'timeout': 15000, 'locale': 'pt-BR',
+                       'viewport': {'width': 1280, 'height': 900}}
             if channel:
                 options['channel'] = channel
             return driver.chromium.launch_persistent_context(str(profile), **options)
         except Exception:
             continue
     raise DraftError('browser_unavailable', 'Não foi possível abrir Chrome/Edge. Feche outra instância do Jarvis que use esse perfil. Alternativamente, instale o Chromium com python -m playwright install chromium.')
+
+
+def _disfarcar(page):
+    """O navegador escondido se apresenta como "HeadlessChrome", e o WhatsApp Web
+    recusa esse nome ("atualize o navegador"). Usa o nome normal do mesmo Chrome."""
+    if _janela_visivel():
+        return
+    try:
+        cdp = page.context.new_cdp_session(page)
+        agente = cdp.send('Browser.getVersion').get('userAgent', '')
+        if 'Headless' in agente:
+            cdp.send('Network.setUserAgentOverride', {'userAgent': agente.replace('HeadlessChrome', 'Chrome'),
+                                                      'acceptLanguage': 'pt-BR,pt;q=0.9', 'platform': 'Windows'})
+    except Exception:
+        pass
 
 
 def _loop():
@@ -392,15 +413,10 @@ def _loop():
                     if page is None or page.is_closed():
                         page = context.pages[0] if context.pages else context.new_page()
                         page.set_default_timeout(3000)
+                        _disfarcar(page)
                         page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
                     if not page.url.startswith('https://web.whatsapp.com/'):
                         page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
-                    if _HIDDEN.get('ctx') is not context:
-                        # A janela fica minimizada: o QR Code e as conversas aparecem
-                        # dentro do Jarvis. JARVIS_WHATSAPP_VISIVEL=1 deixa à mostra.
-                        if not os.environ.get('JARVIS_WHATSAPP_VISIVEL'):
-                            show_window(page, False)
-                        _HIDDEN['ctx'] = context
                     _check(stop)
                     started = True
                     actual = _do(page, payload, stop)

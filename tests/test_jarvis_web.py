@@ -707,14 +707,16 @@ class _AgendaFalsa:
 
     def list(self, **kw):
         ini, fim = kw["timeMin"][:10], kw["timeMax"][:10]
-        itens = [e for e in self.eventos.values() if ini <= e["start"]["dateTime"][:10] < fim]
-        return type("R", (), {"execute": lambda _s, **k: {"items": sorted(itens, key=lambda e: e["start"]["dateTime"])}})()
+        quando = lambda e: e["start"].get("dateTime") or e["start"].get("date")
+        itens = [e for e in self.eventos.values() if ini <= quando(e)[:10] < fim]
+        return type("R", (), {"execute": lambda _s, **k: {"items": sorted(itens, key=quando)}})()
 
     def get(self, calendarId, eventId):
         return type("R", (), {"execute": lambda _s, **k: dict(self.eventos[eventId])})()
 
     def patch(self, calendarId, eventId, body, sendUpdates):
-        self.eventos[eventId].update(body)
+        for k, v in body.items():   # null apaga o campo, como no Google
+            self.eventos[eventId][k] = {a: b for a, b in v.items() if b is not None} if isinstance(v, dict) else v
         return type("R", (), {"execute": lambda _s, **k: dict(self.eventos[eventId])})()
 
     def delete(self, calendarId, eventId, sendUpdates):
@@ -766,14 +768,59 @@ class MudarEventoTests(_Base):
         self.assertEqual(dia.weekday(), 4)
         self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("10:00", "11:30"))
 
-    def test_delete_asks_for_confirmation_first(self):
+    def test_delete_happens_right_away(self):
         r = self._pedir("exclui o vídeo café da agenda de amanhã")
-        self.assertEqual(self.agenda.apagados, [])
-        self.assertEqual(len(self.confirmacoes), 1)
-        self.assertIn("Vídeo Café Empresarial da ACI", self.confirmacoes[0]["title"])
-        self.assertIn("Confirme na tela", r["resposta"])
-        self.confirmacoes[0]["run"]()
         self.assertEqual(self.agenda.apagados, ["a1"])
+        self.assertEqual(self.confirmacoes, [])
+        self.assertIn("Excluí do Google Agenda Vídeo Café Empresarial da ACI", r["resposta"])
+
+    def test_rename(self):
+        r = self._pedir("muda o nome do Estudos de amanhã para Revisão de inglês")
+        self.assertEqual(self.agenda.eventos["a2"]["summary"], "Revisão de inglês")
+        self.assertIn('Renomeei "Estudos"', r["resposta"])
+        self._pedir("renomeia a reunião com a Padaria Sol para Call Padaria Sol")
+        self.assertEqual(self.agenda.eventos["a3"]["summary"], "Call Padaria Sol")
+
+    def test_change_start_keeps_duration(self):
+        r = self._pedir("muda o horário do Estudos de amanhã para as 16h")
+        ev = self.agenda.eventos["a2"]
+        self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("16:00", "17:00"))
+        self.assertIn("das 16:00 às 17:00", r["resposta"])
+
+    def test_change_end_and_duration(self):
+        self._pedir("muda o término da reunião com a Padaria Sol para as 17h30")
+        self.assertEqual(self.agenda.eventos["a3"]["end"]["dateTime"][11:16], "17:30")
+        self._pedir("muda a duração do Estudos de amanhã para 2 horas")
+        self.assertEqual(self.agenda.eventos["a2"]["end"]["dateTime"][11:16], "13:00")
+        self._pedir("estende o vídeo café de amanhã até 10:45")
+        self.assertEqual(self.agenda.eventos["a1"]["end"]["dateTime"][11:16], "10:45")
+
+    def test_description_and_location(self):
+        r = self._pedir("coloca na descrição da reunião com a Padaria Sol: levar as fotos do cardápio")
+        self.assertEqual(self.agenda.eventos["a3"]["description"], "levar as fotos do cardápio")
+        self.assertIn("descrição", r["resposta"])
+        self._pedir("muda o local da reunião com a Padaria Sol para Rua das Flores, 120")
+        self.assertEqual(self.agenda.eventos["a3"]["location"], "Rua das Flores, 120")
+
+    def test_all_day_event_moves_by_day(self):
+        import datetime as dt
+        amanha = dt.date.fromisoformat(self.amanha)
+        self.agenda.eventos["d1"] = {"id": "d1", "summary": "Feriado interno", "start": {"date": self.amanha},
+                                     "end": {"date": (amanha + dt.timedelta(days=1)).isoformat()}}
+        r = self._pedir("passa o feriado interno de amanhã para sexta")
+        ev = self.agenda.eventos["d1"]
+        self.assertEqual(dt.date.fromisoformat(ev["start"]["date"]).weekday(), 4)
+        self.assertIn("Remarquei", r["resposta"])
+
+    def test_event_found_by_its_current_time(self):
+        self._pedir("muda o horário da reunião de amanhã das 15h para as 17h")
+        self.assertEqual(self.agenda.eventos["a3"]["start"]["dateTime"][11:16], "17:00")
+        self._pedir("remarca o compromisso das 11h de amanhã para as 8h")
+        self.assertEqual(self.agenda.eventos["a2"]["start"]["dateTime"][11:16], "08:00")
+
+    def test_unrelated_rename_goes_to_the_model(self):
+        r = self._pedir("renomeia o arquivo relatório para final")
+        self.assertEqual(r["resposta"], "Resposta do modelo.")
 
     def test_not_found_and_ambiguous_are_explained(self):
         r = self._pedir("cancela a reunião com o dentista amanhã")
@@ -822,17 +869,15 @@ class ExcluirSemNomeTests(_Base):
 
     def test_by_time_today(self):
         r = self._pedir("exclui os compromissos das 14h de hoje")
-        self.assertIn("2 compromissos", r["resposta"])
-        self.assertEqual(len(self.confirmacoes), 1)
-        self.confirmacoes[0]["run"]()
+        self.assertIn("Excluí do Google Agenda: Banners São Rafael", r["resposta"])
+        self.assertEqual(self.confirmacoes, [])
         self.assertEqual(sorted(self.agenda.apagados), ["b1", "b2"])
 
     def test_pronoun_uses_what_was_just_listed(self):
         import actions.google_agenda as ga
         ga.lembrar_listados([self.agenda.eventos["b1"], self.agenda.eventos["b2"]])
         r = self._pedir("é para remover elas por favor")
-        self.assertIn("Confirme na tela", r["resposta"])
-        self.confirmacoes[0]["run"]()
+        self.assertIn("Excluí", r["resposta"])
         self.assertEqual(sorted(self.agenda.apagados), ["b1", "b2"])
 
     def test_pronoun_without_a_recent_list_goes_to_the_model(self):

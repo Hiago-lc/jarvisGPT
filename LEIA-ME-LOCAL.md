@@ -99,7 +99,9 @@ Sem ele, o Jarvis abre no visual clássico, como antes. Para preferir sempre o c
 
 ## WhatsApp
 
-A tela **WhatsApp** (na barra lateral) usa o WhatsApp Web numa janela do navegador que fica minimizada. Na primeira vez, o **QR Code aparece na própria tela do Jarvis**: escaneie pelo celular (WhatsApp, Aparelhos conectados, Conectar um aparelho). O login fica guardado. **Mostrar janela do WhatsApp** traz a janela para a tela, se precisar conferir algo; para deixá-la sempre visível: `setx JARVIS_WHATSAPP_VISIVEL 1`.
+Na agenda, o Jarvis cria, remarca, muda nome, horário de início ou fim, duração, descrição e local, e exclui na hora quando você pede ("exclui o Estudos de amanhã", "remove elas", "exclui os das 14h"), sem tela de confirmação.
+
+A tela **WhatsApp** (na barra lateral) usa o WhatsApp Web rodando escondido, sem janela nem aba: tudo aparece só dentro do Jarvis. Na primeira vez, o **QR Code aparece na própria tela do Jarvis**: escaneie pelo celular (WhatsApp, Aparelhos conectados, Conectar um aparelho). O login fica guardado. Só para diagnóstico, `setx JARVIS_WHATSAPP_VISIVEL 1` mostra a janela do navegador.
 
 - **Não lidas**: lista quem mandou mensagem e a prévia, sem abrir as conversas (nada é marcado como lido).
 - Ao **abrir uma conversa**, ela é marcada como lida e você vê as últimas mensagens. Se o contato estiver nos clientes da central, aparece o vínculo.

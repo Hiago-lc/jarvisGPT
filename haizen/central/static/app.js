@@ -1085,7 +1085,7 @@ ROTAS.whatsapp = async () => {
   clearTimeout(WA.timer);
   main.innerHTML = `
     <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida.</p></div>
-      <div class="wa-topo-acoes"><button class="botao" id="wa-janela">Mostrar janela do WhatsApp</button><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
+      <div class="wa-topo-acoes"><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
     <div class="wa">
       <section class="bloco wa-lista">
         <h2>Conversas</h2>
@@ -1105,7 +1105,7 @@ ROTAS.whatsapp = async () => {
       caixa.innerHTML = conversas.length ? `<ul class="wa-itens">${conversas.map((c) => `
         <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
           <span class="wa-previa">${esc(c.previa)}</span></button></li>`).join("")}</ul>`
-        : '<p class="vazio">Nenhuma conversa apareceu na lista do WhatsApp Web. Use "Mostrar janela do WhatsApp" para conferir o que ele está exibindo.</p>';
+        : '<p class="vazio">Nenhuma conversa apareceu ainda. Clique em Atualizar em alguns segundos.</p>';
       $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
     } catch (e) { if (viva()) erroWa(e.message); }
   };
@@ -1130,9 +1130,6 @@ ROTAS.whatsapp = async () => {
     WA.timer = setTimeout(() => { if (viva()) conferir(); }, e.estado === "qr" ? 4000 : 3000);
   };
   $("#wa-atualizar").addEventListener("click", conferir);
-  $("#wa-janela").addEventListener("click", async () => {
-    try { await api("POST", "whatsapp/janela", { mostrar: true }); avisar("A janela do WhatsApp Web está na tela"); } catch (e) { avisar(e.message); }
-  });
   $("#wa-abrir").addEventListener("submit", (e) => { e.preventDefault(); const n = e.target.contato.value.trim(); if (n) abrirConversaWa(n); });
   if (WA.conversa) desenharConversaWa();
   await conferir();
