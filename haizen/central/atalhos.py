@@ -440,11 +440,96 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     return f"Não remarquei \"{nome}\": {(motivo.group(1).strip(chr(34)) if motivo else r)[:200]}", False
 
 
+# ── Google Agenda: horários livres ──────────────────────────────────────────
+_LIVRE = re.compile(r"\b(livres?|disponib\w*|dispon[ií]ve\w*|vagos?|vagas?|folgas?|encaix\w*|brecha)\b", re.I)
+EXPEDIENTE = (8, 19)          # das 8h às 19h
+
+
+def horarios_livres(dia: dt.date, inicio: int = EXPEDIENTE[0], fim: int = EXPEDIENTE[1],
+                    minimo: int = 30) -> dict:
+    """{'livres': [(ini, fim)], 'ocupados': [{'titulo', 'ini', 'fim'}]} em HH:MM.
+
+    Eventos de dia inteiro aparecem em ocupados, mas não bloqueiam horários.
+    Hoje, o que já passou não conta como livre."""
+    from zoneinfo import ZoneInfo
+    fuso = ZoneInfo("America/Sao_Paulo")
+    agora = dt.datetime.now(fuso)
+    comeco = dt.datetime.combine(dia, dt.time(inicio), fuso)
+    final = dt.datetime.combine(dia, dt.time(fim), fuso)
+    if dia == agora.date():
+        minuto = (agora.minute // 30 + 1) * 30
+        comeco = max(comeco, agora.replace(minute=0, second=0, microsecond=0) + dt.timedelta(minutes=minuto))
+    ocupados, blocos = [], []
+    for ev in _eventos_entre(dia, dia + dt.timedelta(days=1)):
+        ini_s, fim_s = (ev.get("start") or {}), (ev.get("end") or {})
+        titulo = ev.get("summary") or "(sem título)"
+        if "dateTime" not in ini_s:
+            ocupados.append({"titulo": titulo, "ini": "", "fim": "", "dia_todo": True})
+            continue
+        a = dt.datetime.fromisoformat(ini_s["dateTime"].replace("Z", "+00:00")).astimezone(fuso)
+        b = dt.datetime.fromisoformat(fim_s["dateTime"].replace("Z", "+00:00")).astimezone(fuso)
+        ocupados.append({"titulo": titulo, "ini": a.strftime("%H:%M"), "fim": b.strftime("%H:%M"), "dia_todo": False})
+        blocos.append((a, b))
+    livres, cursor = [], comeco
+    for a, b in sorted(blocos):
+        if a > cursor and (min(a, final) - cursor).total_seconds() >= minimo * 60:
+            livres.append((cursor.strftime("%H:%M"), min(a, final).strftime("%H:%M")))
+        cursor = max(cursor, b)
+        if cursor >= final:
+            break
+    if (final - cursor).total_seconds() >= minimo * 60:
+        livres.append((cursor.strftime("%H:%M"), final.strftime("%H:%M")))
+    return {"dia": dia.isoformat(), "livres": livres, "ocupados": ocupados}
+
+
+def disponibilidade_direta(texto: str) -> str | None:
+    if _CRIAR.search(texto) and _eventos_da_frase(texto):
+        return None                       # "coloca na agenda das 9 às 10 um encaixe": é criar
+    if not _LIVRE.search(texto) or not (_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto)
+                                        or re.search(r"hor[aá]rio", texto, re.I)):
+        return None
+    dia = _dia_citado(texto) or dt.date.today()
+    try:
+        r = horarios_livres(dia)
+    except Exception as e:  # noqa: BLE001
+        from core.google_calendar_errors import CalendarSetupError, diagnose
+        return f"Não consegui ler o Google Agenda: {e if isinstance(e, CalendarSetupError) else diagnose(e)[1]}"
+    nome = ("hoje" if dia == dt.date.today() else "amanhã" if dia == dt.date.today() + dt.timedelta(days=1)
+            else f"{_DIAS[dia.weekday()]}, {dia.strftime('%d/%m')}")
+    if not r["livres"]:
+        return f"{nome.capitalize()} não tem horário livre entre {EXPEDIENTE[0]}h e {EXPEDIENTE[1]}h."
+    faixas = ", ".join(f"{a} às {b}" for a, b in r["livres"])
+    return f"{nome.capitalize()} você tem livre: {faixas}."
+
+
+# ── WhatsApp: o que chegou ──────────────────────────────────────────────────
+_WHATS = re.compile(r"whats|\bzap\b", re.I)
+_LER_WHATS = re.compile(r"\b(l[eê]|ler|leia|mostr\w*|quais|que|tem|ver|veja|confer\w*|cheg\w*|novas?|n[aã]o lidas?)\b", re.I)
+
+
+def whatsapp_direto(texto: str) -> str | None:
+    """'Quais mensagens chegaram no WhatsApp?' -> a lista das não lidas."""
+    if not _WHATS.search(texto) or not re.search(r"mensage|conversa|n[aã]o lid|cheg", texto, re.I):
+        return None
+    if not _LER_WHATS.search(texto) or re.search(r"\b(respond|envi|mand|escrev|digit)\w*", texto, re.I):
+        return None                      # responder/enviar fica com o modelo e a confirmação
+    from actions.whatsapp import resumo_nao_lidas
+    from core import whatsapp_web
+    ok, _code, r = whatsapp_web.run_op({"op": "unread"}, timeout=60)
+    return resumo_nao_lidas(r) if ok else f"Não consegui ler o WhatsApp: {r}"
+
+
 def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
     r = registro_direto(texto)
     if r is not None:
         return r[0], (["central"] if r[1] else [])
+    w = whatsapp_direto(texto)
+    if w is not None:
+        return w, ["whatsapp"]
+    d = disponibilidade_direta(texto)
+    if d is not None:
+        return d, ["google_agenda"]
     m = mudar_evento_direto(texto)
     if m is not None:
         return m[0], (["google_agenda"] if m[1] else [])

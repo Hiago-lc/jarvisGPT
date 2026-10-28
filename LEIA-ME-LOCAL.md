@@ -97,6 +97,19 @@ py -m pip install PyQt6-WebEngine
 
 Sem ele, o Jarvis abre no visual clássico, como antes. Para preferir sempre o clássico: `setx JARVIS_VISUAL_CLASSICO 1`.
 
+## WhatsApp
+
+A tela **WhatsApp** (na barra lateral) usa o WhatsApp Web numa janela própria do PC. Na primeira vez, escaneie o QR Code pelo celular (WhatsApp, Aparelhos conectados).
+
+- **Não lidas**: lista quem mandou mensagem e a prévia, sem abrir as conversas (nada é marcado como lido).
+- Ao **abrir uma conversa**, ela é marcada como lida e você vê as últimas mensagens. Se o contato estiver nos clientes da central, aparece o vínculo.
+- **Sugerir resposta** escreve um rascunho de resposta, que você pode editar. **Enviar** sempre pergunta antes ("Enviar para…?").
+- **Criar tarefa** e **Criar evento** já vêm preenchidos com o pedido do cliente. **Ver disponibilidade** mostra os horários livres do dia no Google Agenda, com o botão "Marcar aqui".
+
+Pela voz: "quais mensagens chegaram no WhatsApp?", "lê a conversa com a Padaria Sol", "responde a Padaria Sol dizendo que amanhã às 10h está ótimo" (o envio aparece para você confirmar na tela) e "tenho horário livre amanhã?".
+
+É uma integração não oficial: se o WhatsApp mudar o site, a leitura pode parar até um ajuste. Quem envia é sempre você, ao confirmar.
+
 ## O que muda em relação ao Gemini
 
 - A conversa é ouvir → pensar → falar em sequência, então há uma pausa antes da resposta, maior no perfil local.

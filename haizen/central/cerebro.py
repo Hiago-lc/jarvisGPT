@@ -57,6 +57,7 @@ ACOES = (
     ("weather_report", "weather_report", r"clima|tempo (?:em|hoje|amanh)|chuv|chov|temperatura|previs[aã]o|frio|calor"),
     ("web_search", "web_search",
      r"pesquis|procur[ae] na|busc[ae]|google|pre[cç]o|cota[cç]|not[ií]cia|quem [eé]|o que [eé]|quanto custa"),
+    ("whatsapp", "whatsapp", r"whats|\bzap\b|n[aã]o lidas|mensage(?:m|ns) d[eo]s? clientes?|conversa com"),
     ("whatsapp_desktop_search", "whatsapp_desktop_search", r"contato"),
     ("whatsapp_draft", "whatsapp_draft",
      r"rascunho|n[aã]o envi|sem enviar|mas n[aã]o mand|s[oó] (?:digit|escrev)|digit[ae] a mensagem"),
@@ -234,6 +235,11 @@ def escolher_acoes(texto: str, anteriores=()) -> list[str]:
     """Ações do PC para esta mensagem: as que combinam com o pedido, as da
     resposta anterior (para "faz de novo", "agora fecha") e as de sempre."""
     escolhidas = [nome for nome, rx in _PALAVRAS if rx.search(texto or "")]
+    if "whatsapp" in escolhidas:
+        # No WhatsApp, enviar passa pela confirmação da ferramenta "whatsapp";
+        # a antiga, que envia direto pelo app, nem entra na conversa.
+        escolhidas = [n for n in escolhidas if n != "send_message"]
+        anteriores = [a for a in anteriores if a != "send_message"]
     if "whatsapp_draft" in escolhidas:
         # "Digita, mas não envia": a ferramenta que envia nem entra na conversa.
         escolhidas = [n for n in escolhidas if n != "send_message"]

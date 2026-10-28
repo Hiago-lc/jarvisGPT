@@ -477,7 +477,10 @@ class AcoesDoPcTests(_Base):
         e = self.cerebro.escolher_acoes
         self.assertEqual(e("move o arquivo da pasta downloads")[0], "file_controller")
         self.assertIn("youtube_video", e("toca uma música no youtube"))
-        self.assertIn("send_message", e("manda mensagem no whats pro Pedro"))
+        # WhatsApp: a ferramenta que só envia depois da confirmação na tela.
+        self.assertIn("whatsapp", e("manda mensagem no whats pro Pedro"))
+        self.assertNotIn("send_message", e("manda mensagem no whats pro Pedro"))
+        self.assertIn("send_message", e("manda mensagem no telegram pro Pedro"))
         self.assertIn("reminder", e("me lembra às 15h de ligar"))
         self.assertIn("weather_report", e("vai chover amanhã?"))
         self.assertIn("computer_control", e("digita olá e aperta enter"))
@@ -626,7 +629,8 @@ class RecusaTests(_Base):
         escolhidas = self.cerebro.escolher_acoes(t, ["send_message"])
         self.assertIn("whatsapp_draft", escolhidas)
         self.assertNotIn("send_message", escolhidas)
-        self.assertIn("send_message", self.cerebro.escolher_acoes("manda no whats pro Pedro: oi"))
+        self.assertIn("whatsapp", self.cerebro.escolher_acoes("manda no whats pro Pedro: oi"))
+        self.assertIn("send_message", self.cerebro.escolher_acoes("manda no telegram pro Pedro: oi"))
 
 
 class EventoDiretoTests(_Base):

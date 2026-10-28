@@ -1078,6 +1078,150 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => { /* sem app instalável, a página funciona igual */ });
 }
 
+// ── WhatsApp ──────────────────────────────────────────────────────────────
+const WA = { conversa: null };       // {contato, mensagens, cliente}
+
+ROTAS.whatsapp = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">As conversas do WhatsApp Web deste PC. Abrir uma conversa a marca como lida.</p></div>
+      <button class="botao" id="wa-atualizar">Atualizar</button></div>
+    <div class="wa">
+      <section class="bloco wa-lista">
+        <h2>Não lidas</h2>
+        <div id="wa-nao-lidas"><p class="carregando">Lendo o WhatsApp Web…</p></div>
+        <form id="wa-abrir" class="wa-abrir"><input name="contato" placeholder="Abrir conversa pelo nome exato" aria-label="Nome do contato"><button class="botao" type="submit">Abrir</button></form>
+      </section>
+      <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder ou transformar em tarefa e evento.</p></section>
+    </div>`;
+  const carregarLista = async () => {
+    const caixa = $("#wa-nao-lidas");
+    caixa.innerHTML = '<p class="carregando">Lendo o WhatsApp Web…</p>';
+    try {
+      const { conversas } = await api("GET", "whatsapp/nao_lidas");
+      caixa.innerHTML = conversas.length ? `<ul class="wa-itens">${conversas.map((c) => `
+        <li><button type="button" data-contato="${esc(c.contato)}"><span class="wa-nome">${esc(c.contato)}</span><span class="selo">${c.nao_lidas}</span>
+          <span class="wa-previa">${esc(c.previa)}</span></button></li>`).join("")}</ul>`
+        : '<p class="vazio">Nenhuma conversa não lida.</p>';
+      $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
+    } catch (e) {
+      caixa.innerHTML = `<p class="erro">${esc(e.message)}</p><p class="sub">Na primeira vez, uma janela do WhatsApp Web abre no PC: escaneie o QR Code pelo celular (WhatsApp, Aparelhos conectados).</p>`;
+    }
+  };
+  $("#wa-atualizar").addEventListener("click", carregarLista);
+  $("#wa-abrir").addEventListener("submit", (e) => { e.preventDefault(); const n = e.target.contato.value.trim(); if (n) abrirConversaWa(n); });
+  if (WA.conversa) desenharConversaWa();
+  await carregarLista();
+};
+
+async function abrirConversaWa(contato) {
+  const caixa = $("#wa-conversa");
+  caixa.innerHTML = `<p class="carregando">Abrindo a conversa com ${esc(contato)}…</p>`;
+  try {
+    WA.conversa = await api("GET", `whatsapp/conversa?contato=${encodeURIComponent(contato)}&n=20`);
+    desenharConversaWa();
+  } catch (e) { caixa.innerHTML = `<p class="erro">${esc(e.message)}</p>`; }
+}
+
+function desenharConversaWa() {
+  const c = WA.conversa;
+  const caixa = $("#wa-conversa");
+  if (!c || !caixa) return;
+  caixa.innerHTML = `
+    <header class="wa-topo"><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</header>
+    <div class="wa-msgs" id="wa-msgs">${c.mensagens.map((m) => `<div class="msg ${m.de === "eu" ? "eu" : "ele"}"><p>${esc(m.texto)}</p><span class="msg-acoes">${esc(m.hora)}</span></div>`).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
+    <div class="wa-acoes">
+      <button class="botao" type="button" id="wa-sugerir">Sugerir resposta</button>
+      <button class="botao" type="button" id="wa-tarefa">Criar tarefa</button>
+      <button class="botao" type="button" id="wa-evento">Criar evento</button>
+      <button class="botao" type="button" id="wa-livre">Ver disponibilidade</button>
+    </div>
+    <form class="compositor" id="wa-compositor">
+      <textarea id="wa-texto" rows="2" placeholder="Escreva a resposta para ${esc(c.contato)}" aria-label="Resposta"></textarea>
+      <button class="botao primario" type="submit">Enviar</button>
+    </form>`;
+  const msgs = $("#wa-msgs");
+  msgs.scrollTop = msgs.scrollHeight;
+  const dele = c.mensagens.filter((m) => m.de !== "eu").map((m) => m.texto);
+  const resumo = dele.slice(-3).join("\n");
+  $("#wa-sugerir").addEventListener("click", async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = "Pensando…";
+    try { $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens })).texto; }
+    catch (e) { avisar(e.message); }
+    finally { b.disabled = false; b.textContent = "Sugerir resposta"; }
+  });
+  $("#wa-tarefa").addEventListener("click", () => editarTarefa({
+    titulo: `${c.contato}: ${(dele[dele.length - 1] || "").slice(0, 70)}`, cliente_id: c.cliente?.id ?? "",
+    descricao: `Pedido pelo WhatsApp:\n${resumo}`,
+  }, () => avisar("Tarefa criada")));
+  $("#wa-evento").addEventListener("click", () => criarEventoWa(c.contato, resumo));
+  $("#wa-livre").addEventListener("click", () => disponibilidadeWa(c.contato, resumo));
+  $("#wa-compositor").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const texto = $("#wa-texto").value.trim();
+    if (!texto) return;
+    if (!(await confirmarEnvio(c.contato, texto))) return;
+    try {
+      await api("POST", "whatsapp/enviar", { contato: c.contato, texto });
+      avisar(`Enviado para ${c.contato}`);
+      abrirConversaWa(c.contato);
+    } catch (err) { avisar(err.message); }
+  });
+}
+
+const confirmarEnvio = (contato, texto) => new Promise((ok) => {
+  const d = document.createElement("dialog");
+  d.className = "confirmar";
+  d.innerHTML = `<p><strong>Enviar para ${esc(contato)}?</strong></p><p class="wa-previa-envio">${esc(texto)}</p>
+    <div class="dialogo-acoes"><button class="botao" value="nao">Cancelar</button><button class="botao primario" value="sim">Enviar</button></div>`;
+  document.body.appendChild(d);
+  d.addEventListener("click", (e) => { const v = e.target.closest("button")?.value; if (v) { d.close(); ok(v === "sim"); } });
+  d.addEventListener("close", () => { d.remove(); ok(false); });
+  d.showModal();
+});
+
+function amanhaIso() { const d = new Date(Date.now() + 864e5); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); }
+
+function criarEventoWa(contato, resumo, pre = {}) {
+  dialogo({
+    titulo: "Novo evento no Google Agenda",
+    corpo: `<div class="campos">
+      ${campo({ nome: "titulo", rotulo: "Título", valor: pre.titulo || `${contato}`, largo: true, obrig: true })}
+      ${campo({ nome: "dia", rotulo: "Dia", tipo: "date", valor: pre.dia || amanhaIso(), obrig: true })}
+      ${campo({ nome: "inicio", rotulo: "Início", tipo: "time", valor: pre.inicio || "09:00", obrig: true })}
+      ${campo({ nome: "fim", rotulo: "Fim", tipo: "time", valor: pre.fim || "10:00", obrig: true })}
+      ${campo({ nome: "descricao", rotulo: "Descrição", tipo: "textarea", valor: `Pedido pelo WhatsApp (${contato}):\n${resumo}`, largo: true })}
+    </div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} },
+      { texto: "Criar evento", classe: "primario", enviar: true, acao: async (v) => { await api("POST", "agenda/evento", v); avisar("Evento criado no Google Agenda"); } }],
+  });
+}
+
+function disponibilidadeWa(contato, resumo) {
+  dialogo({
+    titulo: "Disponibilidade",
+    corpo: `<div class="campos">${campo({ nome: "dia", rotulo: "Dia", tipo: "date", valor: amanhaIso(), largo: true })}</div><div id="wa-livres"><p class="carregando">Lendo o Google Agenda…</p></div>`,
+    acoes: [{ texto: "Fechar", acao: () => {} }],
+    aoAbrir: (corpo) => {
+      const pintar = async () => {
+        const dia = $("[name=dia]", corpo).value;
+        const caixa = $("#wa-livres", corpo);
+        caixa.innerHTML = '<p class="carregando">Lendo o Google Agenda…</p>';
+        try {
+          const r = await api("GET", `agenda/livre?dia=${dia}`);
+          caixa.innerHTML = `<h3 class="wa-sub">Livre</h3>${r.livres.length ? `<ul class="wa-faixas">${r.livres.map(([a, b]) => `<li><span>${a} às ${b}</span><button type="button" class="botao" data-a="${a}" data-b="${b}">Marcar aqui</button></li>`).join("")}</ul>` : '<p class="vazio">Nada livre entre 8h e 19h.</p>'}
+            <h3 class="wa-sub">Ocupado</h3>${r.ocupados.length ? `<ul class="wa-faixas">${r.ocupados.map((o) => `<li><span>${o.dia_todo ? "Dia todo" : `${o.ini} às ${o.fim}`}</span><span class="sub">${esc(o.titulo)}</span></li>`).join("")}</ul>` : '<p class="vazio">Nenhum compromisso.</p>'}`;
+          $$("[data-a]", caixa).forEach((b) => b.addEventListener("click", () => {
+            const fim = (() => { const [h, m] = b.dataset.a.split(":").map(Number); const t = h * 60 + m + 60; const lim = b.dataset.b; const s = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; return s < lim ? s : lim; })();
+            criarEventoWa(contato, resumo, { dia, inicio: b.dataset.a, fim });
+          }));
+        } catch (e) { caixa.innerHTML = `<p class="erro">${esc(e.message)}</p>`; }
+      };
+      $("[name=dia]", corpo).addEventListener("change", pintar);
+      pintar();
+    },
+  });
+}
+
 // ── Ponte com a janela do Jarvis ──────────────────────────────────────────
 const ESTADOS = {
   LISTENING: ["ouvindo", "Ouvindo. Pode falar."],

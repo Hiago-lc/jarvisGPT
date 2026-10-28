@@ -208,6 +208,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._sistema(metodo, partes[1:])
         if partes and partes[0] == "janela":
             return self._janela(metodo, partes[1:], q)
+        if partes and partes[0] == "whatsapp":
+            return self._whatsapp(metodo, partes[1:], q)
+        if partes and partes[0] == "agenda":
+            return self._agenda(metodo, partes[1:], q)
 
         if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "ficha":
             return dados.ficha_cliente(int(partes[1]))
@@ -264,6 +268,65 @@ class _Handler(BaseHTTPRequestHandler):
                 novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
                 worker.iniciar()
                 return _trabalho(novo)
+        return _NAO_ACHOU
+
+    def _whatsapp(self, metodo, partes, q):
+        """A tela WhatsApp: ler não lidas e conversas; enviar (o clique em Enviar,
+        depois da confirmação na página, é o OK do usuário)."""
+        from core import whatsapp_web
+        rota = partes[0] if partes else ""
+
+        def _ou_erro(ok, code, r):
+            if not ok:
+                raise ValueError(r)
+            return r
+        if rota == "nao_lidas" and metodo == "GET":
+            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "unread"}, timeout=60))}
+        if rota == "conversa" and metodo == "GET":
+            contato = (q.get("contato") or "").strip()
+            if not contato:
+                raise ValueError("informe o contato")
+            n = max(1, min(40, int(q.get("n") or 15)))
+            msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=60))
+            cli = store.buscar_cliente(contato)
+            return {"contato": contato, "mensagens": msgs,
+                    "cliente": {"id": cli["id"], "nome": cli["nome"]} if cli else None}
+        if rota == "enviar" and metodo == "POST":
+            c = self._corpo()
+            contato, texto = str(c.get("contato") or "").strip(), str(c.get("texto") or "").strip()
+            if not contato or not texto:
+                raise ValueError("informe o contato e o texto")
+            _ou_erro(*whatsapp_web.run_op({"op": "send", "recipient": contato, "text": texto}, timeout=45))
+            return {"ok": True}
+        if rota == "sugerir" and metodo == "POST":
+            from haizen.central import whatsapp_ia
+            c = self._corpo()
+            return {"texto": whatsapp_ia.sugerir_resposta(str(c.get("contato") or ""), c.get("mensagens") or [])}
+        return _NAO_ACHOU
+
+    def _agenda(self, metodo, partes, q):
+        import datetime as _dt
+        from haizen.central import atalhos
+        rota = partes[0] if partes else ""
+        if rota == "livre" and metodo == "GET":
+            dia = _dt.date.fromisoformat(q.get("dia") or _dt.date.today().isoformat())
+            return atalhos.horarios_livres(dia)
+        if rota == "evento" and metodo == "POST":
+            from zoneinfo import ZoneInfo
+            from actions.google_agenda import google_agenda
+            c = self._corpo()
+            dia = _dt.date.fromisoformat(str(c.get("dia") or ""))
+            fuso = ZoneInfo("America/Sao_Paulo")
+            ini = _dt.datetime.combine(dia, _dt.time.fromisoformat(str(c.get("inicio"))), fuso)
+            fim = _dt.datetime.combine(dia, _dt.time.fromisoformat(str(c.get("fim"))), fuso)
+            r = str(google_agenda({"action": "create", "title": str(c.get("titulo") or "").strip(),
+                                   "start": ini.isoformat(), "end": fim.isoformat(),
+                                   "description": str(c.get("descricao") or "")[:2000],
+                                   "timezone": "America/Sao_Paulo"}))
+            if not r.startswith("status=done"):
+                motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
+                raise ValueError((motivo.group(1).strip('"') if motivo else r)[:300])
+            return {"ok": True}
         return _NAO_ACHOU
 
     def _janela(self, metodo, partes, q):
