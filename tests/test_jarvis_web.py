@@ -848,6 +848,18 @@ class MudarEventoTests(_Base):
         self.assertIn("Excluí", r["resposta"])
         ga.ULTIMOS.update(quando=0.0, itens=[])
 
+    def test_spoken_names_distorted_by_voice(self):
+        for frase in ("Demanda na minha agenda de amanhã, tem escrito BANISHON Rafa, eu preciso que ajuste "
+                      "o horário dela para 2 às 15 e não de 2 às 17",
+                      "O nome da demanda é BANES São Rafael. Então, preciso que você ajuste o horário dela "
+                      "das 14 às 15 e não de 14 às 17"):
+            self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+                                         "start": {"dateTime": f"{self.amanha}T14:00:00-03:00"},
+                                         "end": {"dateTime": f"{self.amanha}T17:00:00-03:00"}}
+            r = self._pedir(frase)
+            ev = self.agenda.eventos["b1"]
+            self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("14:00", "15:00"), r)
+
     def test_my_name_is_saved(self):
         from unittest.mock import patch as _p
         with _p("memory.config_manager.save_assistant_config") as salvar, \

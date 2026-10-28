@@ -121,7 +121,7 @@ def registro_direto(texto: str) -> tuple[str, bool] | None:
 # ── Google Agenda: consultar é objetivo, não precisa do modelo ──────────────
 _AGENDA = re.compile(r"\b(agenda|compromissos?|reuni[oõ]es|reuni[aã]o|eventos?|calend[aá]rio|demandas)\b", re.I)
 _AGENDA_MUDAR = re.compile(r"\b(marc|cri|agend[ae]\s+(?:uma|um|para|pra)|adicion|coloc|inclu|registr|desmarc|"
-                           r"cancel|remarc|mud[ae]|apag)\w*", re.I)
+                           r"cancel|remarc|mud[ae]|apag|ajust|alter|exclu|remov)\w*", re.I)
 _DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
 
@@ -153,8 +153,9 @@ def agenda_direta(texto: str) -> str | None:
     """Resposta para "o que tenho na agenda hoje?"; None se não for consulta."""
     if not _AGENDA.search(texto) or _AGENDA_MUDAR.search(texto):
         return None
-    if "demandas" in texto.lower() and not re.search(r"agenda|calend", texto, re.I):
-        return None                      # "demandas" sozinho é da central, não da agenda
+    if ("demandas" in texto.lower() and not re.search(r"agenda|calend", texto, re.I)
+            and not _dia_citado(texto)):
+        return None                      # "demandas" sem dia é da central; "demandas de amanhã", da agenda
     ini, fim, nome = _periodo(texto)
     from zoneinfo import ZoneInfo
     fuso = ZoneInfo("America/Sao_Paulo")
@@ -650,6 +651,117 @@ def _aplicar_edicao(ev: dict, campo: str, novo: str, alvo: str) -> tuple[str, bo
     return f"Pronto: \"{nome}\" agora é {_DIAS[a.weekday()]} {a.strftime('%d/%m')}, das {a.strftime('%H:%M')} às {b.strftime('%H:%M')}.", True
 
 
+# ── Google Agenda: ajuste de horário dito do jeito que se fala ──────────────
+# "Demanda de amanhã, tem escrito Banners São Rafael, ajusta o horário dela para
+# 2 às 15 e não de 2 às 17": o nome vem distorcido pelo reconhecimento de voz,
+# então o compromisso é achado pelo nome aproximado E pelo horário atual citado.
+_VERBO_AJUSTE = re.compile(r"\b(?:ajust|alter|mud|remar[cq]|troc|corri[gj]|modific|reagend|reprogram|acert|pass[ae]|mov[ae])\w*", re.I)
+
+
+def _tarde(h1: int, h2: int | None = None) -> tuple[int, int | None]:
+    """'2 às 15' é 14h às 15h; '2 às 5' (sem contexto) é 14h às 17h: agenda de trabalho."""
+    if h2 is not None and h1 <= 7 and h1 + 12 <= h2:
+        return h1 + 12, h2
+    if h1 <= 7 and (h2 is None or h2 <= 7):
+        return h1 + 12, (h2 + 12 if h2 is not None else None)
+    return h1, h2
+
+
+def _faixas(texto: str) -> list[dict]:
+    """Cada faixa de horário citada, marcando as negadas ("e não de 2 às 17")."""
+    saida = []
+    for m in _FAIXA.finditer(texto):
+        h1, h2 = _tarde(int(m.group(1)), int(m.group(3)))
+        antes = texto[max(0, m.start() - 14):m.start()].lower()
+        atual = bool(re.search(r"\b(?:n[ãa]o|est[áa]|t[áa]|era|que (?:é|e))\b[^\d]*$", antes))
+        if h1 > 23 or h2 > 23:
+            continue
+        saida.append({"ini": (h1, int(m.group(2) or 0)), "fim": (h2, int(m.group(4) or 0)), "atual": atual})
+    return saida
+
+
+def _parecido(a: str, b: str) -> bool:
+    from difflib import SequenceMatcher
+    if a == b:
+        return True
+    if min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a)):
+        return True
+    return len(a) >= 4 and len(b) >= 4 and SequenceMatcher(None, a, b).ratio() >= 0.72
+
+
+def _nota_titulo(titulo: str, palavras: list[str]) -> float:
+    termos = _termos(titulo)
+    if not termos:
+        return 0.0
+    return sum(1 for t in termos if any(_parecido(t, p) for p in palavras)) / len(termos)
+
+
+def ajuste_falado(texto: str) -> tuple[str, bool] | None:
+    if "?" in texto or not _VERBO_AJUSTE.search(texto) or _EXCLUIR.search(texto[:_VERBO_AJUSTE.search(texto).start()]):
+        return None
+    faixas = _faixas(texto)
+    novas = [f for f in faixas if not f["atual"]]
+    if not novas:
+        return None
+    nova, atuais = novas[0], [f for f in faixas if f["atual"]]
+    corte = _DESTINO.search(texto)
+    if corte and _dia_citado(texto[corte.end():]):
+        return None                  # "muda X para sexta das 10 às 11": troca de dia, fica com o remarcar
+    dia = _dia_citado(texto)
+    palavras = [p for p in _plano(texto).split() if len(p) >= 3]
+    from zoneinfo import ZoneInfo
+    fuso = ZoneInfo("America/Sao_Paulo")
+    hoje = dt.date.today()
+    try:
+        itens = _eventos_entre(dia, dia + dt.timedelta(days=1)) if dia else _eventos_entre(hoje, hoje + dt.timedelta(days=14))
+    except Exception as e:  # noqa: BLE001
+        from core.google_calendar_errors import CalendarSetupError, diagnose
+        return f"Não consegui ler o Google Agenda: {e if isinstance(e, CalendarSetupError) else diagnose(e)[1]}", False
+    notas = []
+    for ev in itens:
+        ini_s, fim_s = (ev.get("start") or {}).get("dateTime"), (ev.get("end") or {}).get("dateTime")
+        if not ini_s:
+            continue
+        a = dt.datetime.fromisoformat(ini_s.replace("Z", "+00:00")).astimezone(fuso)
+        b = dt.datetime.fromisoformat(fim_s.replace("Z", "+00:00")).astimezone(fuso)
+        nota = _nota_titulo(ev.get("summary", ""), palavras)
+        if any(f["ini"] == (a.hour, a.minute) and f["fim"] == (b.hour, b.minute) for f in atuais):
+            nota += 1.0
+        elif any(f["ini"] == (a.hour, a.minute) for f in atuais):
+            nota += 0.5
+        if _ULTIMO_EVENTO.get("ev", {}).get("id") == ev.get("id") and _REFERENCIA.search(texto):
+            nota += 0.5
+        if nota >= 0.34:
+            notas.append((nota, ev, a))
+    tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or dia or re.search(r"\bdemanda|tarefa\b", texto, re.I))
+    if not notas:
+        if not tem_contexto:
+            return None
+        return ("Não achei esse compromisso" + (" nesse dia" if dia else " nos próximos 14 dias")
+                + ". Diga o nome como está na agenda ou o horário atual dele."), False
+    notas.sort(key=lambda n: -n[0])
+    if len(notas) > 1 and notas[1][0] >= notas[0][0] - 0.15:
+        lista = "; ".join(f"{ev.get('summary', '(sem título)')} ({_quando_evento(ev)})" for _, ev, _ in notas[:4])
+        lembrar = [ev for _, ev, _ in notas[:4]]
+        from actions.google_agenda import lembrar_listados
+        lembrar_listados(lembrar)
+        return f"Fiquei em dúvida entre: {lista}. Qual deles?", False
+    _, ev, atual = notas[0]
+    _lembrar_evento(ev)
+    d = atual.date()
+    params = {"action": "update", "event_id": ev["id"], "timezone": "America/Sao_Paulo",
+              "start": dt.datetime.combine(d, dt.time(*nova["ini"]), fuso).isoformat(),
+              "end": dt.datetime.combine(d, dt.time(*nova["fim"]), fuso).isoformat()}
+    from actions.google_agenda import google_agenda
+    r = str(google_agenda(params))
+    nome = ev.get("summary", "(sem título)")
+    if not r.startswith("status=done"):
+        motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
+        return f"Não alterei \"{nome}\": {(motivo.group(1).strip(chr(34)) if motivo else r)[:200]}", False
+    return (f"Pronto: \"{nome}\" de {_DIAS[d.weekday()]} {d.strftime('%d/%m')} agora é das "
+            f"{nova['ini'][0]:02d}:{nova['ini'][1]:02d} às {nova['fim'][0]:02d}:{nova['fim'][1]:02d}."), True
+
+
 def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     """Remarca ou exclui um compromisso; None se a frase não for esse pedido."""
     if "?" in texto:
@@ -658,7 +770,7 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     mover = _MOVER.search(texto)
     pede_excluir = bool(excluir and (not mover or excluir.start() < mover.start()))
     if not pede_excluir:
-        for etapa in (_completar_pendente, editar_evento_direto, _pedir_valor):
+        for etapa in (_completar_pendente, ajuste_falado, editar_evento_direto, _pedir_valor):
             feito = etapa(texto)
             if feito is not None:
                 return feito
