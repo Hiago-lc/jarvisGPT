@@ -671,7 +671,7 @@ ROTAS.pipeline = async () => {
 };
 
 // ── agentes ───────────────────────────────────────────────────────────────
-const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardando_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", rejeitado: "Refeito", erro: "Com erro" };
+const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardando_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", rejeitado: "Refeito", erro: "Com erro", esperando: "Esperando etapas anteriores" };
 
 async function abrirTrabalho(id, recarregar) {
   const t = await api("GET", `trabalhos/${id}`);
@@ -681,7 +681,7 @@ async function abrirTrabalho(id, recarregar) {
     await api("DELETE", `trabalhos/${t.id}`); avisar("Trabalho excluído"); recarregar();
   } }];
   dialogo({
-    titulo: `Trabalho ${t.id}, ${t.agente}`,
+    titulo: t.titulo ? `${t.titulo} (trabalho ${t.id}, ${t.agente})` : `Trabalho ${t.id}, ${t.agente}`,
     corpo: `<p class="sub" style="margin-top:0">${esc(t.cliente_nome || "Sem cliente")}, <span class="status-${t.status}">${esc(STATUS_TRAB[t.status] || t.status)}</span>, feito por ${t.executor === "claude" ? "Claude Code" : "modelo local"}</p>
       <p style="white-space:pre-wrap;margin:0 0 12px"><strong>Pedido:</strong> ${esc(t.pedido)}</p>
       ${t.erro ? `<p class="erro">${esc(t.erro)}</p>` : ""}
@@ -737,6 +737,154 @@ ROTAS.agentes = async (param) => {
   if (lista.some((t) => ["na_fila", "executando"].includes(t.status))) {
     navegar.timer = setInterval(() => { if (!$("#dialogo").open) recarregar(); }, 8000);
   }
+};
+
+// ── escritório ────────────────────────────────────────────────────────────
+// A equipe de agentes como um escritório: cada um na sua mesa, com o que está
+// fazendo agora num balão. Atualiza sozinho a cada poucos segundos.
+const ESTADO_AGENTE = {
+  trabalhando: "Trabalhando", esperando_voce: "Esperando você", erro: "Travou", na_fila: "Com tarefa na fila", livre: "Livre",
+};
+const SITUACAO_PROJ = { planejando: "Gerente planejando", andamento: "Em andamento", aguardando: "Esperando você", concluido: "Concluído", erro: "Com erro" };
+const PELES = ["#F1C7A5", "#D9A47E", "#B07A55", "#7A4E33"];
+const CABELOS = ["#2B1D14", "#4A3426", "#1B1B1B", "#7A5230", "#B9A48A"];
+
+function hashNome(n) { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+
+function pessoa(a) {
+  // Personagem original, desenhado aqui: cabeça, cabelo, corpo na cor do agente.
+  const h = hashNome(a.nome), cor = a.cor || "#5E6E72";
+  const pele = PELES[h % PELES.length], cabelo = CABELOS[(h >> 3) % CABELOS.length];
+  const cabeloForma = (h >> 6) % 3;
+  const cab = [
+    `<path d="M86 41c0-11 7-17 14-17s14 6 14 17c-3-6-8-8-14-8s-11 2-14 8z" fill="${cabelo}"/>`,
+    `<path d="M85 44c-1-13 6-20 15-20s16 7 15 20c-2-4-4-6-6-7-5 3-13 3-18 0-2 1-4 3-6 7z" fill="${cabelo}"/>`,
+    `<path d="M86 40c1-10 7-16 14-16 8 0 14 6 14 16l-1 9c-1-6-3-10-6-12-4 2-10 2-14 0-3 2-5 6-6 12z" fill="${cabelo}"/>`,
+  ][cabeloForma];
+  const trabalhando = a.estado === "trabalhando";
+  const tela = trabalhando ? cor : a.estado === "erro" ? "#C2483B" : "#DCE3E2";
+  const linhas = trabalhando ? `<g class="tela-linhas"><rect x="132" y="58" width="22" height="2.4" rx="1" fill="#fff" opacity=".85"/><rect x="132" y="64" width="16" height="2.4" rx="1" fill="#fff" opacity=".7"/><rect x="132" y="70" width="19" height="2.4" rx="1" fill="#fff" opacity=".55"/></g>` : "";
+  const papeis = a.fila + a.esperando > 0 ? `<g><rect x="40" y="86" width="22" height="5" rx="1" fill="#fff" stroke="#C9D6D3"/><rect x="42" y="82" width="22" height="5" rx="1" fill="#fff" stroke="#C9D6D3"/><text x="53" y="80" text-anchor="middle" font-size="9" font-weight="700" fill="#5E6E72">${a.fila + a.esperando}</text></g>` : "";
+  const mao = a.estado === "esperando_voce"
+    ? `<path class="mao-erguida" d="M117 70l9-24" stroke="${cor}" stroke-width="7" stroke-linecap="round"/><circle class="mao-erguida" cx="127" cy="43" r="4.5" fill="${pele}"/>`
+    : "";
+  const bracos = a.estado === "esperando_voce"
+    ? `<path d="M84 72l-6 16" stroke="${cor}" stroke-width="7" stroke-linecap="round"/>`
+    : `<g class="${trabalhando ? "digitando" : ""}"><path d="M84 72l18 16" stroke="${cor}" stroke-width="7" stroke-linecap="round"/><path d="M116 72l-6 16" stroke="${cor}" stroke-width="7" stroke-linecap="round"/></g>`;
+  const extra = a.estado === "livre" ? `<g class="xicara"><rect x="163" y="80" width="9" height="9" rx="2" fill="#fff" stroke="#9AA9AB"/><path d="M172 83h3v3h-3" fill="none" stroke="#9AA9AB"/><path class="vapor" d="M166 77c-2-3 2-4 0-7M170 77c-2-3 2-4 0-7" stroke="#9AA9AB" fill="none" stroke-linecap="round"/></g>` : "";
+  return `<svg class="cena" viewBox="0 0 200 120" role="img" aria-label="${esc(a.titulo)}: ${esc(ESTADO_AGENTE[a.estado])}">
+    <ellipse cx="100" cy="112" rx="78" ry="6" fill="#0B1D23" opacity=".06"/>
+    <rect x="86" y="92" width="28" height="22" rx="4" fill="#C9D6D3"/>
+    <path d="M78 64c0-8 10-12 22-12s22 4 22 12v28H78z" fill="${cor}"/>
+    <rect x="94" y="46" width="12" height="9" fill="${pele}"/>
+    <circle cx="100" cy="38" r="13" fill="${pele}"/>
+    ${cab}
+    ${a.estado === "livre" ? '<path d="M95 40h3M102 40h3" stroke="#0E1A1E" stroke-width="1.6" stroke-linecap="round"/>' : '<circle cx="96" cy="39" r="1.5" fill="#0E1A1E"/><circle cx="104" cy="39" r="1.5" fill="#0E1A1E"/>'}
+    ${bracos}${mao}
+    <rect x="24" y="88" width="152" height="8" rx="2" fill="#E6ECEB" stroke="#C9D6D3"/>
+    <rect x="34" y="96" width="5" height="18" fill="#C9D6D3"/><rect x="161" y="96" width="5" height="18" fill="#C9D6D3"/>
+    <rect x="126" y="50" width="34" height="27" rx="3" fill="${tela}" stroke="#0B1D23" stroke-width="2"/>${linhas}
+    <rect x="140" y="77" width="6" height="11" fill="#0B1D23"/>
+    ${papeis}${extra}
+    ${a.estado === "erro" ? '<text x="143" y="70" text-anchor="middle" font-size="16" font-weight="800" fill="#fff">!</text>' : ""}
+  </svg>`;
+}
+
+function balaoAgente(a) {
+  const alvo = (t) => [t.titulo || t.pedido, t.cliente].filter(Boolean).join(" · ");
+  if (a.estado === "trabalhando") return `Fazendo agora: ${alvo(a.atual)}`;
+  if (a.estado === "esperando_voce") return `Terminei "${a.aprovar[0].titulo || a.aprovar[0].pedido.slice(0, 50)}". Pode conferir?`;
+  if (a.estado === "erro") return `Travei: ${a.erro.erro || "erro sem detalhe"}`;
+  if (a.estado === "na_fila") return `Próximo: ${alvo(a.proximo)}`;
+  if (a.esperando) return `Aguardando a etapa anterior (${a.esperando})`;
+  return a.ultimo ? `Livre. Último: ${alvo(a.ultimo)}` : "Livre";
+}
+
+function mesa(a) {
+  return `<button class="mesa estado-${a.estado}" data-agente="${esc(a.nome)}" style="--cor:${esc(a.cor || "#5E6E72")}">
+    <span class="balao">${esc(balaoAgente(a))}</span>
+    ${pessoa(a)}
+    <span class="mesa-nome">${esc(a.titulo)}</span>
+    <span class="mesa-meta"><span class="ponto-estado"></span>${esc(a.estado === "livre" && a.esperando ? "Aguardando etapa anterior" : ESTADO_AGENTE[a.estado])}${a.fila > 1 || (a.fila && a.estado !== "na_fila") ? ` · ${a.fila} na fila` : ""}
+      · ${a.executor === "claude" ? "Claude Code" : "local"}</span>
+  </button>`;
+}
+
+function cartaoProjeto(p, cores) {
+  const [feitas, total] = p.progresso;
+  const etapas = p.etapas.filter((e) => e.agente !== "gerente" || p.situacao === "planejando");
+  return `<article class="projeto sit-${p.situacao}">
+    <div class="projeto-topo"><div><h3>${esc(p.titulo)}</h3><p class="sub">${esc(p.cliente_nome || "Sem cliente")} · <span class="sit">${esc(SITUACAO_PROJ[p.situacao] || p.situacao)}</span></p></div>
+      <button class="botao-icone" data-apagar-proj="${p.id}" title="Excluir projeto" aria-label="Excluir projeto ${esc(p.titulo)}">✕</button></div>
+    <div class="progresso" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${feitas}"><span style="width:${total ? (feitas / total) * 100 : 4}%"></span></div>
+    <ol class="etapas">${etapas.map((e) => `<li><button class="etapa st-${e.status}" data-trab="${e.id}" style="--cor:${esc(cores[e.agente] || "#5E6E72")}" title="${esc(STATUS_TRAB[e.status] || e.status)}">
+      <span class="etapa-ponto"></span>${esc(e.titulo || e.agente)}${e.aprovacao && e.status !== "aprovado" ? ' <span class="etapa-aprova" title="Precisa da sua aprovação">✓?</span>' : ""}</button></li>`).join("")}</ol>
+  </article>`;
+}
+
+function novoProjeto(recarregar) {
+  dialogo({
+    titulo: "Novo projeto",
+    corpo: `<p class="sub" style="margin-top:0">Descreva o que o cliente precisa. O gerente monta o plano, distribui as etapas para a equipe e te chama para aprovar nos pontos importantes.</p>
+      <div class="campos">
+        ${campo({ nome: "cliente", rotulo: "Cliente", tipo: "select", opcoes: [["", "Sem cliente"], ...OPCOES.clientes.map((c) => [c.nome, c.nome])], largo: true })}
+        ${campo({ nome: "pedido", rotulo: "O que o projeto precisa", tipo: "textarea", largo: true, obrig: true })}
+      </div>`,
+    acoes: [
+      { texto: "Cancelar", acao: () => {} },
+      { texto: "Começar projeto", classe: "primario", enviar: true, acao: async (v) => {
+        if (!v.pedido.trim()) throw new Error("Descreva o que o projeto precisa.");
+        const r = await api("POST", "projetos", v);
+        avisar(`${r.aviso ? `${r.aviso} ` : ""}Projeto aberto: o gerente está montando o plano`);
+        recarregar();
+      } },
+    ],
+  });
+}
+
+function fichaAgente(a, recarregar) {
+  const itens = [...(a.atual ? [a.atual] : []), ...a.aprovar, ...(a.erro ? [a.erro] : []), ...(a.proximo ? [a.proximo] : [])];
+  dialogo({
+    titulo: a.titulo,
+    corpo: `<p class="sub" style="margin-top:0">${esc(a.descricao)}<br>Feito por ${a.executor === "claude" ? "Claude Code (assinatura)" : "modelo local"}.</p>
+      ${itens.length ? `<ul class="lista">${itens.map((t) => `<li><a href="#" data-abrir="${t.id}">${esc(t.titulo || t.pedido.slice(0, 70))}</a><span class="meta status-${t.status}">${esc(STATUS_TRAB[t.status] || t.status)}</span></li>`).join("")}</ul>` : '<p class="vazio">Sem trabalhos agora.</p>'}`,
+    acoes: [{ texto: "Pedir um trabalho só para ele", acao: () => { location.hash = "#/agentes"; } }, { texto: "Fechar", classe: "primario", acao: () => {} }],
+    aoAbrir: (corpo) => $$("[data-abrir]", corpo).forEach((l) => l.addEventListener("click", (e) => { e.preventDefault(); abrirTrabalho(+l.dataset.abrir, recarregar); })),
+  });
+}
+
+ROTAS.escritorio = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>Escritório</h1><p class="sub" id="esc-resumo">Sua equipe da HAIZEN trabalhando agora.</p></div>
+      <button class="botao primario" id="novo-projeto">Novo projeto</button></div>
+    <section class="chao" id="chao" aria-label="Mesas dos agentes"></section>
+    <section class="bloco" style="margin-top:20px"><h2>Projetos</h2><div id="projetos" class="projetos"></div></section>`;
+  let dados = null;
+  const desenhar = async () => {
+    dados = await api("GET", "escritorio");
+    const cores = Object.fromEntries(dados.agentes.map((a) => [a.nome, a.cor]));
+    const ordem = { trabalhando: 0, esperando_voce: 1, erro: 2, na_fila: 3, livre: 4 };
+    const agentes = [...dados.agentes].sort((x, y) => (x.nome === "gerente" ? -1 : y.nome === "gerente" ? 1 : ordem[x.estado] - ordem[y.estado]));
+    $("#chao").innerHTML = agentes.map(mesa).join("");
+    const n = (e) => dados.agentes.filter((a) => a.estado === e).length;
+    const aprovar = dados.agentes.reduce((s, a) => s + a.aprovar.length, 0);
+    $("#esc-resumo").textContent = [n("trabalhando") ? `${n("trabalhando")} trabalhando` : "Ninguém trabalhando agora",
+      aprovar ? `${aprovar} ${aprovar === 1 ? "entrega esperando" : "entregas esperando"} você` : "",
+      dados.agentes.reduce((s, a) => s + a.fila, 0) ? `${dados.agentes.reduce((s, a) => s + a.fila, 0)} na fila` : ""].filter(Boolean).join(" · ");
+    $("#projetos").innerHTML = dados.projetos.length ? dados.projetos.map((p) => cartaoProjeto(p, cores)).join("")
+      : '<p class="vazio">Nenhum projeto ainda. Clique em Novo projeto, ou diga ao Jarvis: "abre um projeto para a Padaria Sol: site e campanha de lançamento".</p>';
+    $$("[data-agente]").forEach((b) => b.addEventListener("click", () => fichaAgente(dados.agentes.find((a) => a.nome === b.dataset.agente), desenhar)));
+    $$("#projetos [data-trab]").forEach((b) => b.addEventListener("click", () => abrirTrabalho(+b.dataset.trab, desenhar)));
+    $$("[data-apagar-proj]").forEach((b) => b.addEventListener("click", async () => {
+      if (!(await confirmarExclusao("Excluir este projeto, as etapas e os arquivos das entregas? Não dá para desfazer."))) return;
+      try { await api("DELETE", `projetos/${b.dataset.apagarProj}`); avisar("Projeto excluído"); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    atualizarSelo();
+  };
+  $("#novo-projeto").addEventListener("click", () => novoProjeto(desenhar));
+  await desenhar();
+  clearInterval(navegar.timer);
+  navegar.timer = setInterval(() => { if (!$("#dialogo").open && !document.hidden) desenhar().catch(() => {}); }, 3000);
 };
 
 // ── Jarvis (conversa por texto e voz) ─────────────────────────────────────

@@ -17,13 +17,39 @@ O Jarvis passa a delegar trabalhos a agentes da HAIZEN. Cada entrega fica aguard
 - "Refaz o trabalho 3 com um tom mais informal."
 - "Salva na ficha da Aurora: prefere tons pastel, público de 25 a 40 anos."
 - "Quais agentes eu tenho?"
+- "Abre um projeto para a Loja Aurora: proposta de e-commerce e campanha de Black Friday."
 
 As entregas ficam em **Documentos\HAIZEN\entregas**, um arquivo Markdown por trabalho. Se o Jarvis fechar no meio de um trabalho, ele volta para a fila na próxima vez que você usar a HAIZEN.
 
+## Escritório e projetos
+
+A tela **Escritório** (barra lateral) mostra a equipe trabalhando: cada agente na sua mesa, com um balão dizendo o que está fazendo, o que terminou e espera você, ou onde travou. Atualiza sozinha.
+
+Um **projeto** junta vários serviços. Clique em **Novo projeto** ou diga: "Jarvis, abre um projeto para a Padaria Sol: site novo, identidade visual e lançamento no Instagram". Então:
+
+1. O **gerente** lê o pedido e monta o plano: as etapas, quem faz cada uma e qual depende de qual.
+2. Cada etapa entra na fila quando as anteriores estão aprovadas, e o agente recebe as entregas delas para continuar o trabalho.
+3. Etapas marcadas com ✓? (proposta, conceito de marca, revisão final) esperam você aprovar; as outras seguem sozinhas.
+4. Clique numa etapa para ler a entrega, aprovar ou pedir nova versão; as etapas seguintes passam a usar a versão nova.
+
+A fila faz um trabalho por vez (a placa de vídeo é uma só); o escritório mostra os outros esperando.
+
 ## Agentes incluídos
 
-- **comercial** (`executor: claude`): briefing → proposta comercial.
-- **criativos** (`executor: local`): legendas, roteiros de Reels, anúncios, calendário de posts.
+| Agente | Faz | Executor |
+| --- | --- | --- |
+| gerente | Monta o plano do projeto e distribui | claude |
+| atendimento | Briefing do pedido e perguntas para o cliente | local |
+| comercial | Proposta comercial | claude |
+| designer | Conceito de identidade visual, paleta, tipografia | claude |
+| criativos | Legendas, roteiros, anúncios | local |
+| trafego | Plano de campanha de anúncios | local |
+| social | Linha editorial e calendário de posts | local |
+| dev | Mapa do site, textos, tecnologia, código de páginas | claude |
+| financeiro | Orçamento, cronograma de pagamento, cobrança | local |
+| revisor | Confere as entregas antes do cliente | local |
+
+Sem o Claude Code instalado, os agentes `claude` usam o modelo local.
 
 Cada agente é um arquivo em `haizen/agentes/`. Para criar outro, peça ao Claude (abaixo) ou copie um arquivo e edite.
 

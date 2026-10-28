@@ -34,7 +34,34 @@ _REGRAS = (
 )
 
 
-def montar_prompt(agente: agentes.Agente, cliente: dict | None, pedido: str) -> str:
+def contexto_projeto(t: dict) -> str:
+    """O pedido do projeto e as entregas das etapas de que esta depende."""
+    if not t.get("projeto_id"):
+        return ""
+    proj = store.projeto(t["projeto_id"])
+    partes = []
+    if proj and t.get("agente") != "gerente":
+        partes += ["## Pedido do projeto", proj["pedido"].strip(), ""]
+    restante = 24000
+    for d in json.loads(t.get("depende_de") or "[]"):
+        dep = store.trabalho(d)
+        if not dep or not dep.get("arquivo"):
+            continue
+        try:
+            texto = Path(dep["arquivo"]).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        corte = texto[:min(9000, restante)]
+        restante -= len(corte)
+        nome = dep.get("titulo") or dep["agente"]
+        partes += [f"## Entrega anterior: {nome} (agente {dep['agente']})", corte, ""]
+        if restante <= 0:
+            break
+    return "\n".join(partes).strip()
+
+
+def montar_prompt(agente: agentes.Agente, cliente: dict | None, pedido: str,
+                  contexto: str = "") -> str:
     partes = [agente.instrucoes.strip(), "", _REGRAS]
     if cliente:
         ficha = {"nome": cliente["nome"], **(cliente.get("dados") or {})}
@@ -44,7 +71,9 @@ def montar_prompt(agente: agentes.Agente, cliente: dict | None, pedido: str) -> 
             partes += ["Notas:", cliente["notas"]]
     else:
         partes += ["## Ficha do cliente", "(nenhum cliente associado)"]
-    partes += ["", "## Pedido", pedido.strip()]
+    if contexto:
+        partes += ["", contexto]
+    partes += ["", "## Pedido" if not contexto else "## Sua tarefa nesta etapa", pedido.strip()]
     return "\n".join(partes)
 
 
@@ -124,7 +153,7 @@ def executar(t: dict) -> Path:
     """Executa um trabalho já marcado como 'executando' e grava a entrega."""
     agente = agentes.carregar(t["agente"])
     cliente = store.cliente_por_id(t["cliente_id"])
-    prompt = montar_prompt(agente, cliente, t["pedido"])
+    prompt = montar_prompt(agente, cliente, t["pedido"], contexto_projeto(t))
     if t["executor"] == "claude":
         texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
     else:

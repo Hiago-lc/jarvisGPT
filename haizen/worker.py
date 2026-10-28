@@ -39,7 +39,14 @@ def _rodar() -> None:
                           else contextlib.nullcontext())
                 with desvio:
                     arq = executor.executar(t)
-                _avisar(f"Trabalho {t['id']} ({t['agente']}) pronto para aprovação: {arq.name}")
+                if t.get("projeto_id"):
+                    from . import servicos
+                    servicos.apos_entrega(t)
+                    feito = store.trabalho(t["id"]) or {}
+                    if feito.get("status") == "aguardando_aprovacao":
+                        _avisar(f"Etapa \"{t.get('titulo') or t['agente']}\" do projeto {t['projeto_id']} pronta para sua aprovação.")
+                else:
+                    _avisar(f"Trabalho {t['id']} ({t['agente']}) pronto para aprovação: {arq.name}")
             except Exception as e:
                 store.atualizar(t["id"], status="erro", erro=f"{type(e).__name__}: {e}"[:500])
                 _avisar(f"Trabalho {t['id']} ({t['agente']}) falhou: {e}")

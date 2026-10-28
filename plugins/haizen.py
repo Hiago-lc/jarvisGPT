@@ -8,14 +8,17 @@ from __future__ import annotations
 PLUGIN = {
     "name": "haizen",
     "tier": "core",
-    "brief": ("Agentes e central da HAIZEN: delegar trabalho, status, aprovar, fichas; "
+    "brief": ("Agentes e central da HAIZEN: projeto (gerente divide entre a equipe), delegar trabalho, status, aprovar, fichas; "
               "financeiro, listar e registrar receitas/despesas/tarefas, concluir tarefa."),
     "description": (
         "Comanda os agentes da agência HAIZEN. Use quando o usuário pedir uma "
         "proposta, criativos, legendas, roteiros ou outro trabalho para um cliente, "
         "perguntar como estão os trabalhos, aprovar ou pedir ajuste numa entrega, "
         "ou guardar dados de um cliente. Ações: "
-        "delegar (agente + pedido + cliente), status, aprovar (id), "
+        "projeto (pedido + cliente): abre um projeto inteiro (ex.: site + marca + campanha) e o "
+        "gerente divide em etapas para a equipe, com aprovação do usuário nos pontos importantes; "
+        "use projeto quando o pedido envolver mais de um serviço. "
+        "delegar (agente + pedido + cliente) para uma tarefa só, status, aprovar (id), "
         "refazer (id + pedido com o ajuste), ficha (cliente; com dados para "
         "salvar, sem dados para consultar), agentes (lista os agentes), "
         "central (abre a central com faturamento, clientes, tarefas e pipeline), "
@@ -29,7 +32,7 @@ PLUGIN = {
         "type": "OBJECT",
         "properties": {
             "acao": {"type": "STRING",
-                     "enum": ["delegar", "status", "aprovar", "refazer", "ficha", "agentes",
+                     "enum": ["projeto", "delegar", "status", "aprovar", "refazer", "ficha", "agentes",
                               "central", "financeiro", "listar", "registrar", "concluir"],
                      "description": "O que fazer"},
             "agente": {"type": "STRING",
@@ -59,6 +62,7 @@ _TELAS = (("financeiro", ("financ", "receita", "despesa", "faturamento", "pagame
           ("clientes", ("cliente",)),
           ("tarefas", ("tarefa", "entrega")),
           ("pipeline", ("pipeline", "oportunidade", "lead", "funil")),
+          ("escritorio", ("escritório", "escritorio", "equipe", "projeto")),
           ("agentes", ("agente", "trabalho", "aprova")),
           ("painel", ("painel", "resumo")))
 
@@ -109,6 +113,16 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             quem = "o Claude Code" if t["executor"] == "claude" else "o modelo local"
             return (f"{r['aviso']} Trabalho {t['id']} na fila para o agente "
                     f"{t['agente']}, feito por {quem}. Aviso quando estiver pronto.").strip()
+
+        if acao == "projeto":
+            pedido = str(p.get("pedido") or "").strip()
+            if not pedido:
+                return "O que o projeto precisa? Por exemplo: site, identidade visual e campanha de lançamento."
+            r = servicos.criar_projeto(pedido, str(p.get("cliente") or ""))
+            worker.iniciar(lambda msg: _log(player, msg))
+            return (f"{r['aviso']} Projeto {r['projeto']['id']} aberto. O gerente está montando o plano "
+                    "e distribuindo para a equipe; acompanhe na tela Escritório. "
+                    "Aviso quando uma etapa precisar da sua aprovação.").strip()
 
         if acao == "status":
             return servicos.resumo()

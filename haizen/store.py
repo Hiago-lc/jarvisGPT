@@ -17,8 +17,9 @@ import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 
+# "esperando": etapa de um projeto que espera as etapas de que depende.
 STATUS = ("na_fila", "executando", "aguardando_aprovacao",
-          "aprovado", "rejeitado", "erro")
+          "aprovado", "rejeitado", "erro", "esperando")
 
 
 def _dados_dir() -> Path:
@@ -148,6 +149,14 @@ CREATE TABLE IF NOT EXISTS jarvis_mensagens (
     acoes TEXT NOT NULL DEFAULT '[]',
     criado_em REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projetos (
+    id INTEGER PRIMARY KEY,
+    titulo TEXT NOT NULL,
+    pedido TEXT NOT NULL,
+    cliente_id INTEGER REFERENCES clientes(id),
+    criado_em REAL NOT NULL,
+    atualizado_em REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS receitas_receb ON receitas(data_recebimento);
 CREATE INDEX IF NOT EXISTS despesas_pag ON despesas(data_pagamento);
 CREATE INDEX IF NOT EXISTS tarefas_status ON tarefas(status);
@@ -165,6 +174,14 @@ _COLUNAS_NOVAS = {
     },
     # 'web' (chat da central) ou 'janela' (janela de voz do start_local).
     "jarvis_mensagens": {"origem": "TEXT NOT NULL DEFAULT 'web'"},
+    # Etapas de projeto: o gerente distribui, cada etapa espera as anteriores.
+    "trabalhos": {
+        "projeto_id": "INTEGER",
+        "etapa": "INTEGER NOT NULL DEFAULT 0",
+        "titulo": "TEXT NOT NULL DEFAULT ''",
+        "depende_de": "TEXT NOT NULL DEFAULT '[]'",
+        "aprovacao": "INTEGER NOT NULL DEFAULT 1",
+    },
 }
 
 
@@ -263,15 +280,22 @@ def cliente_por_id(cid) -> dict | None:
 
 # ── trabalhos ───────────────────────────────────────────────────────────────
 def criar_trabalho(agente: str, pedido: str, executor: str,
-                   cliente_id: int | None = None) -> dict:
+                   cliente_id: int | None = None, *, projeto_id: int | None = None,
+                   etapa: int = 0, titulo: str = "", depende_de: list | None = None,
+                   aprovacao: bool = True, status: str = "na_fila") -> dict:
     if not (pedido or "").strip():
         raise ValueError("o trabalho precisa de um pedido")
+    if status not in STATUS:
+        raise ValueError(f"status inválido: {status}")
     agora = time.time()
     with conexao() as con:
         cur = con.execute(
             "INSERT INTO trabalhos(agente, cliente_id, pedido, executor, status,"
-            " criado_em, atualizado_em) VALUES(?,?,?,?,?,?,?)",
-            (agente, cliente_id, pedido.strip(), executor, "na_fila", agora, agora))
+            " criado_em, atualizado_em, projeto_id, etapa, titulo, depende_de, aprovacao)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (agente, cliente_id, pedido.strip(), executor, status, agora, agora,
+             projeto_id, int(etapa), (titulo or "").strip()[:80],
+             json.dumps([int(x) for x in (depende_de or [])]), 1 if aprovacao else 0))
         return dict(con.execute("SELECT * FROM trabalhos WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -294,7 +318,9 @@ def listar_trabalhos(status: str | None = None, limite: int = 20) -> list[dict]:
 def atualizar(tid: int, **campos) -> dict:
     if "status" in campos and campos["status"] not in STATUS:
         raise ValueError(f"status inválido: {campos['status']}")
-    permitidos = {"status", "arquivo", "erro", "observacao", "executor"}
+    permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de"}
+    if isinstance(campos.get("depende_de"), list):
+        campos["depende_de"] = json.dumps([int(x) for x in campos["depende_de"]])
     sets = {k: v for k, v in campos.items() if k in permitidos}
     sets["atualizado_em"] = time.time()
     with conexao() as con:
@@ -362,6 +388,53 @@ def gravar_entrega(tid: int, conteudo: str) -> Path:
     arq.write_text(conteudo.strip() + "\n", encoding="utf-8")
     atualizar(tid, status="aguardando_aprovacao", arquivo=str(arq), erro="")
     return arq
+
+
+# ── projetos ───────────────────────────────────────────────────────────────
+def criar_projeto(titulo: str, pedido: str, cliente_id: int | None = None) -> dict:
+    if not (pedido or "").strip():
+        raise ValueError("o projeto precisa de um pedido")
+    agora = time.time()
+    with conexao() as con:
+        cur = con.execute("INSERT INTO projetos(titulo, pedido, cliente_id, criado_em, atualizado_em)"
+                          " VALUES(?,?,?,?,?)",
+                          ((titulo or pedido).strip()[:120], pedido.strip(), cliente_id, agora, agora))
+        return dict(con.execute("SELECT * FROM projetos WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def projeto(pid: int) -> dict | None:
+    with conexao() as con:
+        row = con.execute("SELECT * FROM projetos WHERE id=?", (int(pid),)).fetchone()
+        return dict(row) if row else None
+
+
+def listar_projetos(limite: int = 30) -> list[dict]:
+    with conexao() as con:
+        return [dict(r) for r in con.execute("SELECT * FROM projetos ORDER BY id DESC LIMIT ?", (limite,))]
+
+
+def renomear_projeto(pid: int, titulo: str) -> None:
+    with conexao() as con:
+        con.execute("UPDATE projetos SET titulo=?, atualizado_em=? WHERE id=?",
+                    ((titulo or "").strip()[:120], time.time(), int(pid)))
+
+
+def trabalhos_do_projeto(pid: int) -> list[dict]:
+    with conexao() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM trabalhos WHERE projeto_id=? ORDER BY etapa, id", (int(pid),))]
+
+
+def apagar_projeto(pid: int) -> dict:
+    """Apaga o projeto e as etapas dele (com os arquivos das entregas)."""
+    etapas = trabalhos_do_projeto(pid)
+    if any(t["status"] == "executando" for t in etapas):
+        raise ValueError("uma etapa deste projeto está sendo feita agora; espere terminar para excluir")
+    for t in etapas:
+        apagar_trabalho(t["id"])
+    with conexao() as con:
+        con.execute("DELETE FROM projetos WHERE id=?", (int(pid),))
+    return {"id": pid, "etapas_apagadas": len(etapas)}
 
 
 # ── conversa do Jarvis (web e janela de voz no mesmo histórico) ─────────────

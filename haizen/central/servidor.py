@@ -98,6 +98,59 @@ def _trabalho(t: dict, com_entrega: bool = False) -> dict:
     return out
 
 
+def _projeto(p: dict) -> dict:
+    etapas = store.trabalhos_do_projeto(p["id"])
+    cli = store.cliente_por_id(p["cliente_id"])
+    validas = [t for t in etapas if t["status"] != "rejeitado"]
+    if any(t["agente"] != "gerente" for t in validas):
+        validas = [t for t in validas if t["agente"] != "gerente"]   # o plano já virou etapas
+    feitas = sum(1 for t in validas if t["status"] == "aprovado")
+    return {**p, "cliente_nome": cli["nome"] if cli else None,
+            "situacao": servicos.situacao_projeto(etapas),
+            "progresso": [feitas, len(validas)],
+            "etapas": [{k: t[k] for k in ("id", "agente", "titulo", "status", "etapa", "aprovacao", "executor")}
+                       for t in validas]}
+
+
+def escritorio() -> dict:
+    """Quem está fazendo o quê agora: a tela Escritório se monta com isto."""
+    recentes = store.listar_trabalhos(None, 300)
+    projetos = {p["id"]: p["titulo"] for p in store.listar_projetos(100)}
+    clientes: dict = {}
+
+    def cliente(cid):
+        if cid not in clientes:
+            c = store.cliente_por_id(cid)
+            clientes[cid] = c["nome"] if c else None
+        return clientes[cid]
+
+    def resumo(t):
+        return {"id": t["id"], "titulo": t.get("titulo") or "", "pedido": t["pedido"][:220],
+                "status": t["status"], "cliente": cliente(t["cliente_id"]),
+                "projeto": projetos.get(t.get("projeto_id")), "atualizado_em": t["atualizado_em"]}
+    saida = []
+    for a in agentes.listar():
+        meus = [t for t in recentes if t["agente"] == a.nome]
+        atual = next((t for t in meus if t["status"] == "executando"), None)
+        fila = [t for t in meus if t["status"] == "na_fila"]
+        esperando = [t for t in meus if t["status"] == "esperando"]
+        aprovar = [t for t in meus if t["status"] == "aguardando_aprovacao"]
+        # Só o erro mais recente conta: depois de um trabalho bem feito, ele some.
+        erro = meus[0] if meus and meus[0]["status"] == "erro" else None
+        estado = ("trabalhando" if atual else "esperando_voce" if aprovar else "erro" if erro
+                  else "na_fila" if fila else "livre")
+        ultimo = next((t for t in meus if t["status"] in ("aprovado", "aguardando_aprovacao")), None)
+        saida.append({**a.resumo(), "estado": estado,
+                      "atual": resumo(atual) if atual else None,
+                      "proximo": resumo(fila[-1]) if fila else None,
+                      "aprovar": [resumo(t) for t in aprovar[:5]],
+                      "erro": resumo(erro) | {"erro": erro["erro"][:200]} if erro else None,
+                      "ultimo": resumo(ultimo) if ultimo else None,
+                      "fila": len(fila), "esperando": len(esperando)})
+    return {"agentes": saida, "trabalhando": worker.ocupado(),
+            "projetos": [_projeto(p) for p in store.listar_projetos(12)]}
+
+
 def _abrir_pasta(caminho: str) -> None:
     p = Path(caminho)
     if not p.exists():
@@ -202,6 +255,10 @@ class _Handler(BaseHTTPRequestHandler):
 
         if partes and partes[0] == "trabalhos":
             return self._trabalhos(metodo, partes[1:], q)
+        if partes == ["escritorio"] and metodo == "GET":
+            return escritorio()
+        if partes and partes[0] == "projetos":
+            return self._projetos(metodo, partes[1:])
         if partes and partes[0] == "jarvis":
             return self._jarvis(metodo, partes[1:], q)
         if partes and partes[0] == "sistema":
@@ -268,6 +325,25 @@ class _Handler(BaseHTTPRequestHandler):
                 novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
                 worker.iniciar()
                 return _trabalho(novo)
+        return _NAO_ACHOU
+
+    def _projetos(self, metodo, partes):
+        if not partes and metodo == "GET":
+            return [_projeto(p) for p in store.listar_projetos(30)]
+        if not partes and metodo == "POST":
+            c = self._corpo()
+            r = servicos.criar_projeto(c.get("pedido", ""), c.get("cliente", ""), c.get("titulo", ""))
+            worker.iniciar()
+            return {"projeto": _projeto(r["projeto"]), "aviso": r["aviso"]}
+        if len(partes) == 1:
+            pid = int(partes[0])
+            proj = store.projeto(pid)
+            if proj is None:
+                raise KeyError("projeto não encontrado")
+            if metodo == "GET":
+                return _projeto(proj)
+            if metodo == "DELETE":
+                return store.apagar_projeto(pid)
         return _NAO_ACHOU
 
     def _whatsapp(self, metodo, partes, q):
@@ -491,9 +567,20 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
             else:
                 threading.Thread(target=_servidor.serve_forever, name="central-haizen",
                                  daemon=True).start()
+                _retomar_fila()
     if abrir_navegador:
         webbrowser.open(url())
     return url()
+
+
+def _retomar_fila() -> None:
+    """Trabalhos que ficaram pela metade quando o Jarvis fechou voltam à fila,
+    e a fila volta a andar: o escritório não fica parado esperando um comando."""
+    try:
+        if store.recuperar_interrompidos() or store.listar_trabalhos("na_fila", 1):
+            worker.iniciar()
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] não consegui retomar a fila: {e}")
 
 
 def parar() -> None:

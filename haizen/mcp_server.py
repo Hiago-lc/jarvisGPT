@@ -104,6 +104,29 @@ def salvar_cliente(nome: str, dados: dict | None = None, notas: str = "") -> dic
     return store.salvar_cliente(nome, dados or {}, notas)
 
 
+# ── projetos ────────────────────────────────────────────────────────────────
+@mcp.tool()
+def criar_projeto(pedido: str, cliente: str = "") -> dict:
+    """Abre um projeto com mais de um serviço (ex.: site + identidade + campanha).
+    O agente gerente monta o plano de etapas e cada etapa vai para o agente certo;
+    as etapas marcadas para aprovação esperam o dono da agência aprovar."""
+    from haizen import worker as _worker
+    r = servicos.criar_projeto(pedido, cliente)
+    _worker.iniciar()
+    return r
+
+
+@mcp.tool()
+def listar_projetos() -> list[dict]:
+    """Projetos recentes, com a situação e as etapas (agente, título, status)."""
+    out = []
+    for p in store.listar_projetos(20):
+        etapas = store.trabalhos_do_projeto(p["id"])
+        out.append({**p, "situacao": servicos.situacao_projeto(etapas),
+                    "etapas": [{k: t[k] for k in ("id", "agente", "titulo", "status")} for t in etapas]})
+    return out
+
+
 # ── trabalhos ───────────────────────────────────────────────────────────────
 @mcp.tool()
 def listar_trabalhos(status: str = "", limite: int = 20) -> list[dict]:
