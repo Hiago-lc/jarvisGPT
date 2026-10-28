@@ -38,6 +38,7 @@ class StabilityIndicator(QDialog):
             'connecting': ('● JARVIS · Conectando', '#edc779'),
             'reconnecting': ('● JARVIS · Reconectando', '#edc779'),
             'disconnected': ('● JARVIS · Desconectado', '#ff939c'),
+            'offline': ('● JARVIS · Desligado', '#b6c4d5'),
         }.get(state, ('● JARVIS · Sem estado', '#b6c4d5'))
         self.button.setText(label)
         self.button.setStyleSheet(f'color:{color};border:0px;text-align:left;')

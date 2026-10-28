@@ -634,6 +634,12 @@ class JarvisLive:
         self.ui.on_text_command   = self._on_text_command
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
+        # Desligar só o agente (voz e conversa): a central, o WhatsApp e os
+        # agentes da HAIZEN continuam. Ligado ao abrir.
+        self._agente_ligado = threading.Event()
+        self._agente_ligado.set()
+        self.ui.on_agent_toggle   = self.ligar_agente
+        self.ui.agent_on          = self._agente_ligado.is_set
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
@@ -897,6 +903,31 @@ class JarvisLive:
         if loop and ev is not None:
             loop.call_soon_threadsafe(ev.set)
 
+    def ligar_agente(self, ligado: bool) -> None:
+        """Botão "Desligar o Jarvis (só a voz)": fecha a conversa, o microfone e
+        tira o modelo da placa de vídeo; o resto do sistema segue. Ligar reabre."""
+        if bool(ligado) == self._agente_ligado.is_set():
+            return
+        if ligado:
+            self.ui.write_log("SYS: Ligando o Jarvis…")
+            self._agente_ligado.set()
+            return
+        self._agente_ligado.clear()
+        self.ui.write_log("SYS: Jarvis desligado. A central, a agenda, o WhatsApp e os agentes continuam funcionando.")
+        self.request_reconnect(keep_context=True, reason="desligar o Jarvis")
+        threading.Thread(target=self._liberar_modelo, daemon=True, name="liberar-modelo").start()
+
+    def _liberar_modelo(self) -> None:
+        time.sleep(3)                  # a conversa termina de fechar antes
+        if self._agente_ligado.is_set():
+            return
+        try:
+            from start_local import liberar_outros
+            if liberar_outros(""):
+                self.ui.write_log("SYS: Modelo do Jarvis retirado da placa de vídeo.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[JARVIS] não liberei o modelo: {e}")
+
     def _on_voice_change(self):
         """Voice picker applied.
 
@@ -946,6 +977,9 @@ class JarvisLive:
                 getattr(self._dashboard, "_bind_error", "") or "")
 
     def _on_text_command(self, text: str):
+        if not self._agente_ligado.is_set():
+            self.ui.write_log("SYS: O Jarvis está desligado. Use o botão Ligar Jarvis na barra lateral.")
+            return
         if not self._loop or not self.session:
             return
         # Respect wake-word sleep: a typed command must not be answered while
@@ -2526,6 +2560,14 @@ class JarvisLive:
             self._dashboard = None
 
         while True:
+            if not self._agente_ligado.is_set():
+                # Desligado pelo botão: sem conversa nem microfone até ligar de novo.
+                self.session = None
+                self.ui.set_state("SLEEPING")
+                self.ui.set_connection_status("offline")
+                while not self._agente_ligado.is_set():
+                    await asyncio.sleep(0.4)
+                self._conn_backoff = 0
             try:
                 print("[JARVIS] Connecting...")
                 self.ui.set_state("THINKING")

@@ -1106,18 +1106,34 @@ def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     return _responder_um(texto)
 
 
-_DESLIGAR = re.compile(r"^\W*(?:jarvis\W+)?(?:pode\s+)?(?:desliga|desligar|desligue|encerra|encerrar|encerre)"
-                       r"(?:\s+(?:o\s+)?(?:jarvis|sistema|tudo|voc[eê]))?(?:\s+(?:por\s+favor|a[ií]|agora))?\W*$", re.I)
+_DESLIGAR = re.compile(r"^\W*(?:jarvis\W+)?(?:pode\s+)?(?:desliga|desligar|desligue|encerra|encerrar|encerre|fecha|fechar|feche)"
+                       r"(?:\s+(?:o\s+|a\s+)?(?P<alvo>jarvis|sistema|tudo|programa|central|voc[eê]))?(?:\s+(?:por\s+favor|a[ií]|agora))?\W*$", re.I)
 
 
 def desligar_direto(texto: str) -> str | None:
-    """"Jarvis, desliga" / "desliga o Jarvis": fala a despedida e encerra tudo."""
-    if not _DESLIGAR.search(texto or ""):
+    """"Jarvis, desliga": desliga só o assistente (a central e os agentes seguem).
+    "Desliga tudo" / "fecha o sistema": encerra o programa inteiro."""
+    m = _DESLIGAR.search(texto or "")
+    if not m or (not m.group("alvo") and re.search(r"fecha|feche", texto, re.I)):
         return None
     import threading
-    from haizen.central import servidor
-    threading.Thread(target=servidor.desligar, kwargs={"espera": 3.5}, daemon=True).start()
-    return "Desligando o Jarvis. Até mais!"
+    tudo = (m.group("alvo") or "").lower() in ("tudo", "sistema", "programa", "central")
+    if tudo:
+        from haizen.central import servidor
+        threading.Thread(target=servidor.desligar, kwargs={"espera": 3.5}, daemon=True).start()
+        return "Desligando tudo. Até mais!"
+    from haizen.central import janela
+    ponte = janela.ponte()
+    if ponte is None or not hasattr(ponte, "agente"):
+        return "Aqui não há o Jarvis de voz para desligar. Para fechar tudo, diga \"desliga tudo\"."
+
+    def _depois():
+        import time as _t
+        _t.sleep(3.5)                      # termina de falar antes
+        ponte.agente(False)
+    threading.Thread(target=_depois, daemon=True).start()
+    return ("Desligando o Jarvis. A central, a agenda, o WhatsApp e os agentes continuam funcionando; "
+            "para me ligar de novo, use o botão Ligar Jarvis.")
 
 
 def _responder_um(texto: str) -> tuple[str, list[str]] | None:

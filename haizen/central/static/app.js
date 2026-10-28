@@ -1707,6 +1707,7 @@ const ESTADOS = {
 const PONTE_ESTADO = { desde: 0, linhas: [], ultimo: null };
 
 function lerEstado(e) {
+  if (e.agente === false) return ["desligado", "Jarvis desligado"];
   if (e.mudo) return ESTADOS.MUTED;
   if (e.dormindo) return ESTADOS.SLEEPING;
   return ESTADOS[e.estado] || ["ouvindo", "Pronto"];
@@ -1716,6 +1717,13 @@ function pintarSistema(e) {
   const pilula = $("#mic-global");
   pilula.setAttribute("aria-pressed", String(!e.mudo));
   $("#mic-global-rotulo").textContent = e.mudo ? "Microfone desligado" : "Microfone ligado";
+  const ligado = e.agente !== false;
+  const bAg = $("#agente-jarvis");
+  bAg.hidden = false;
+  bAg.dataset.ligado = String(ligado);
+  $("#agente-rotulo").textContent = ligado ? "Desligar só o Jarvis" : "Ligar Jarvis";
+  bAg.title = ligado ? "Desliga a voz e a conversa do Jarvis; a central, a agenda, o WhatsApp e os agentes continuam" : "Liga de novo a voz e a conversa do Jarvis";
+  pilula.hidden = !ligado;
   const [classe, texto] = lerEstado(e);
   const ponto = $("#nav-estado");
   ponto.hidden = false;
@@ -1739,6 +1747,18 @@ async function lacoPonte() {
     await new Promise((ok) => setTimeout(ok, document.hidden ? 5000 : 1000));
   }
 }
+
+$("#agente-jarvis").addEventListener("click", async () => {
+  const b = $("#agente-jarvis");
+  const ligar = b.dataset.ligado === "false";
+  b.disabled = true;
+  try {
+    await api("POST", "janela/agente", { ligado: ligar });
+    pintarSistema({ ...(PONTE_ESTADO.ultimo || {}), agente: ligar });
+    avisar(ligar ? "Ligando o Jarvis…" : "Jarvis desligado. O resto do sistema continua funcionando.");
+  } catch (e) { avisar(e.message); }
+  finally { b.disabled = false; }
+});
 
 $("#mic-global").addEventListener("click", async () => {
   const ligado = $("#mic-global").getAttribute("aria-pressed") !== "true";
@@ -1874,7 +1894,7 @@ async function jarvisNativo() {
 $("#desligar-jarvis").addEventListener("click", async () => {
   const d = document.createElement("dialog");
   d.className = "confirmar";
-  d.innerHTML = `<p><strong>Desligar o Jarvis?</strong></p><p class="sub">A janela, a voz, a central, o WhatsApp e os agentes param. O que um agente estiver fazendo volta para a fila quando você abrir de novo pelo atalho da área de trabalho.</p>
+  d.innerHTML = `<p><strong>Desligar tudo?</strong></p><p class="sub">A janela, a voz, a central, o WhatsApp e os agentes param. Para desligar só a voz do Jarvis, use "Desligar só o Jarvis". O que um agente estiver fazendo volta para a fila quando você abrir de novo pelo atalho da área de trabalho.</p>
     <div class="dialogo-acoes"><button class="botao" value="nao">Cancelar</button><button class="botao perigo" value="sim">Desligar</button></div>`;
   document.body.appendChild(d);
   const sim = await new Promise((ok) => {

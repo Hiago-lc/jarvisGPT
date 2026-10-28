@@ -446,6 +446,11 @@ class _Handler(BaseHTTPRequestHandler):
             hist = cerebro.historico(1)
             return {**p.estado(int(q.get("desde") or 0)),
                     "ultima": hist[-1]["criado_em"] if hist else 0}
+        if rota == "agente" and metodo == "POST":
+            if not hasattr(p, "agente"):
+                raise ValueError("reinicie o Jarvis para usar este botão")
+            p.agente(bool(self._corpo().get("ligado")))
+            return {"ok": True}
         if rota == "mensagem" and metodo == "POST":
             texto = str(self._corpo().get("texto") or "").strip()
             if not texto:

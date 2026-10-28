@@ -4292,6 +4292,8 @@ class MainWindow(QMainWindow):
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JarvisLive
         self.on_wake_manual    = None   # callable: () -> None — manual sleep/wake
+        self.on_agent_toggle   = None   # callable: (ligado: bool) -> None — desligar só o agente
+        self.agent_on          = None   # callable: () -> bool
         self.on_push_to_talk   = None   # callable: (enable: bool) -> str scope
         self.ptt_hold          = None   # callable: (held: bool) -> None — windowed chord
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
@@ -7517,6 +7519,7 @@ class _PonteJanela:
             "dormindo": bool(sono.get("enabled")) and not bool(sono.get("awake", True)),
             "palavra_ativacao": bool(sono.get("enabled")),
             "nome": w._assistant_name,
+            "agente": bool(self._ui.agent_on()) if callable(getattr(self._ui, "agent_on", None)) else True,
             "atividade": [{"id": i, "texto": t} for i, t in list(w._atividade) if i > desde][-60:],
         }
 
@@ -7543,6 +7546,13 @@ class _PonteJanela:
 
     def abrir(self, nome: str) -> None:
         self._na_interface(lambda: self._ui._win._abrir_ajuste(nome))
+
+    def agente(self, ligado: bool) -> None:
+        """Liga ou desliga só o assistente (voz e conversa); o resto continua."""
+        cb = getattr(self._ui, "on_agent_toggle", None)
+        if not callable(cb):
+            raise ValueError("o Jarvis ainda está iniciando; tente em alguns segundos")
+        cb(bool(ligado))
 
     def desligar(self) -> None:
         """O botão Desligar da interface: fecha a janela e encerra o Jarvis."""

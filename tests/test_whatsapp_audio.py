@@ -131,14 +131,31 @@ class DesligarTests(unittest.TestCase):
             servidor.desligar()
         self.assertEqual(ordem, ["whatsapp", "janela", "central", "fim 0"])
 
-    def test_voice_command(self):
+    def test_voice_turns_off_only_the_assistant(self):
+        from haizen.central import atalhos, janela
+        pedidos = []
+
+        class Ponte:
+            def agente(self, ligado):
+                pedidos.append(ligado)
+        with patch.object(janela, "ponte", return_value=Ponte()), patch("time.sleep"):
+            r = atalhos.responder_direto("Jarvis, desliga")
+            import time
+            for _ in range(50):
+                if pedidos:
+                    break
+                time.sleep(0.01)
+        self.assertIn("continuam funcionando", r[0])
+        self.assertEqual(pedidos, [False])
+
+    def test_voice_turns_off_everything_only_when_asked(self):
         from haizen.central import atalhos
         with patch("threading.Thread") as t:
-            r = atalhos.responder_direto("Jarvis, desliga")
-        self.assertEqual(r[0], "Desligando o Jarvis. Até mais!")
-        self.assertTrue(t.return_value.start.called)
+            r = atalhos.responder_direto("desliga tudo")
+        self.assertEqual(r[0], "Desligando tudo. Até mais!")
+        self.assertIs(t.call_args.kwargs["target"].__name__, "desligar")
         self.assertIsNone(atalhos.desligar_direto("desliga o computador"))
-
+        self.assertIsNone(atalhos.desligar_direto("fecha a janela"))
 
 if __name__ == "__main__":
     unittest.main()
