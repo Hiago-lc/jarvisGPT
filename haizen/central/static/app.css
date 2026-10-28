@@ -375,3 +375,9 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .wa-faixas li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid #EEF2F1; }
 .wa-previa-envio { white-space: pre-wrap; background: var(--papel); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
 @media (max-width: 900px) { .wa { grid-template-columns: 1fr; } }
+.wa-topo-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.wa-itens button.tem-nao-lidas .wa-nome { color: var(--tinta); }
+.wa-itens button:not(.tem-nao-lidas) .wa-nome { font-weight: 500; }
+.wa-qr { display: grid; justify-items: center; gap: 12px; padding: 6px 0 12px; }
+.wa-qr img { width: min(264px, 100%); height: auto; image-rendering: pixelated; border-radius: 8px; background: #fff; padding: 8px; border: 1px solid var(--linha); }
+.wa-qr ol { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; }

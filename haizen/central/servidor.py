@@ -280,8 +280,18 @@ class _Handler(BaseHTTPRequestHandler):
             if not ok:
                 raise ValueError(r)
             return r
+        if rota == "estado" and metodo == "GET":
+            ok, code, r = whatsapp_web.run_op({"op": "login", "wait": 15}, timeout=75)
+            if not ok:
+                return {"estado": "erro", "erro": r, "imagem": ""}
+            return r
+        if rota == "recentes" and metodo == "GET":
+            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "recent"}, timeout=90))}
+        if rota == "janela" and metodo == "POST":
+            mostrar = bool(self._corpo().get("mostrar", True))
+            return {"ok": bool(_ou_erro(*whatsapp_web.run_op({"op": "window", "show": mostrar}, timeout=30)))}
         if rota == "nao_lidas" and metodo == "GET":
-            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "unread"}, timeout=60))}
+            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "unread"}, timeout=90))}
         if rota == "conversa" and metodo == "GET":
             contato = (q.get("contato") or "").strip()
             if not contato:

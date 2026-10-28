@@ -1079,38 +1079,63 @@ if ("serviceWorker" in navigator) {
 }
 
 // ── WhatsApp ──────────────────────────────────────────────────────────────
-const WA = { conversa: null };       // {contato, mensagens, cliente}
+const WA = { conversa: null, timer: null };   // conversa: {contato, mensagens, cliente}
 
 ROTAS.whatsapp = async () => {
+  clearTimeout(WA.timer);
   main.innerHTML = `
-    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">As conversas do WhatsApp Web deste PC. Abrir uma conversa a marca como lida.</p></div>
-      <button class="botao" id="wa-atualizar">Atualizar</button></div>
+    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida.</p></div>
+      <div class="wa-topo-acoes"><button class="botao" id="wa-janela">Mostrar janela do WhatsApp</button><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
     <div class="wa">
       <section class="bloco wa-lista">
-        <h2>Não lidas</h2>
-        <div id="wa-nao-lidas"><p class="carregando">Lendo o WhatsApp Web…</p></div>
+        <h2>Conversas</h2>
+        <div id="wa-lista"><p class="carregando">Abrindo o WhatsApp Web…</p></div>
         <form id="wa-abrir" class="wa-abrir"><input name="contato" placeholder="Abrir conversa pelo nome exato" aria-label="Nome do contato"><button class="botao" type="submit">Abrir</button></form>
       </section>
       <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder ou transformar em tarefa e evento.</p></section>
     </div>`;
+  const caixa = $("#wa-lista");
+  const viva = () => document.body.contains(caixa);
   const carregarLista = async () => {
-    const caixa = $("#wa-nao-lidas");
-    caixa.innerHTML = '<p class="carregando">Lendo o WhatsApp Web…</p>';
+    caixa.innerHTML = '<p class="carregando">Lendo as conversas…</p>';
     try {
-      const { conversas } = await api("GET", "whatsapp/nao_lidas");
+      const { conversas } = await api("GET", "whatsapp/recentes");
+      if (!viva()) return;
+      conversas.sort((a, b) => (b.nao_lidas > 0) - (a.nao_lidas > 0));
       caixa.innerHTML = conversas.length ? `<ul class="wa-itens">${conversas.map((c) => `
-        <li><button type="button" data-contato="${esc(c.contato)}"><span class="wa-nome">${esc(c.contato)}</span><span class="selo">${c.nao_lidas}</span>
+        <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
           <span class="wa-previa">${esc(c.previa)}</span></button></li>`).join("")}</ul>`
-        : '<p class="vazio">Nenhuma conversa não lida.</p>';
+        : '<p class="vazio">Nenhuma conversa apareceu na lista do WhatsApp Web. Use "Mostrar janela do WhatsApp" para conferir o que ele está exibindo.</p>';
       $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
-    } catch (e) {
-      caixa.innerHTML = `<p class="erro">${esc(e.message)}</p><p class="sub">Na primeira vez, uma janela do WhatsApp Web abre no PC: escaneie o QR Code pelo celular (WhatsApp, Aparelhos conectados).</p>`;
-    }
+    } catch (e) { if (viva()) erroWa(e.message); }
   };
-  $("#wa-atualizar").addEventListener("click", carregarLista);
+  const erroWa = (msg) => {
+    caixa.innerHTML = `<p class="erro">${esc(msg)}</p><button class="botao" type="button" id="wa-tentar">Tentar de novo</button>`;
+    $("#wa-tentar").addEventListener("click", conferir);
+  };
+  // Conectado? Pedindo QR? Ainda carregando? A tela acompanha até conectar.
+  const conferir = async () => {
+    clearTimeout(WA.timer);
+    let e;
+    try { e = await api("GET", "whatsapp/estado"); } catch (err) { e = { estado: "erro", erro: err.message }; }
+    if (!viva()) return;
+    if (e.estado === "ok") { await carregarLista(); return; }
+    if (e.estado === "qr") {
+      caixa.innerHTML = `<div class="wa-qr"><img alt="QR Code para conectar o WhatsApp" src="data:image/png;base64,${e.imagem}">
+        <ol><li>No celular, abra o WhatsApp.</li><li>Toque em Configurações (ou ⋮) e depois em <strong>Aparelhos conectados</strong>.</li><li>Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para este código.</li></ol>
+        <p class="sub">O código muda a cada poucos segundos; esta tela acompanha sozinha.</p></div>`;
+    } else if (e.estado === "carregando") {
+      caixa.innerHTML = '<p class="carregando">Abrindo o WhatsApp Web… Na primeira vez pode levar até um minuto.</p>';
+    } else { erroWa(e.erro || "Não consegui abrir o WhatsApp Web."); return; }
+    WA.timer = setTimeout(() => { if (viva()) conferir(); }, e.estado === "qr" ? 4000 : 3000);
+  };
+  $("#wa-atualizar").addEventListener("click", conferir);
+  $("#wa-janela").addEventListener("click", async () => {
+    try { await api("POST", "whatsapp/janela", { mostrar: true }); avisar("A janela do WhatsApp Web está na tela"); } catch (e) { avisar(e.message); }
+  });
   $("#wa-abrir").addEventListener("submit", (e) => { e.preventDefault(); const n = e.target.contato.value.trim(); if (n) abrirConversaWa(n); });
   if (WA.conversa) desenharConversaWa();
-  await carregarLista();
+  await conferir();
 };
 
 async function abrirConversaWa(contato) {

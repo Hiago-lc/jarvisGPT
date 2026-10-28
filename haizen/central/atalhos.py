@@ -515,7 +515,7 @@ def whatsapp_direto(texto: str) -> str | None:
         return None                      # responder/enviar fica com o modelo e a confirmação
     from actions.whatsapp import resumo_nao_lidas
     from core import whatsapp_web
-    ok, _code, r = whatsapp_web.run_op({"op": "unread"}, timeout=60)
+    ok, _code, r = whatsapp_web.run_op({"op": "unread"}, timeout=90)
     return resumo_nao_lidas(r) if ok else f"Não consegui ler o WhatsApp: {r}"
 
 

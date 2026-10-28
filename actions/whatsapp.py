@@ -10,7 +10,7 @@ def _web():
 
 
 def _falha(acao, code, result):
-    if code in ("login_or_ui", "contact_not_found", "ambiguous_contact", "existing_draft"):
+    if code in ("login_or_ui", "login_qr", "contact_not_found", "ambiguous_contact", "existing_draft"):
         return outcome.ask("whatsapp", result, code=code)
     return outcome.failed("whatsapp", result, code=code)
 
@@ -34,7 +34,7 @@ def whatsapp(parameters, response=None, player=None, session_memory=None):
     acao = p.get("acao") or p.get("action") or "nao_lidas"
     contato = str(p.get("contato") or "").strip()
     if acao == "nao_lidas":
-        ok, code, r = _web().run_op({"op": "unread"}, timeout=60)
+        ok, code, r = _web().run_op({"op": "unread"}, timeout=90)
         if not ok:
             return _falha(acao, code, r)
         return outcome.untrusted("whatsapp", resumo_nao_lidas(r))

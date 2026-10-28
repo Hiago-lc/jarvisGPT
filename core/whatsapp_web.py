@@ -7,6 +7,7 @@ WhatsApp screen in the Jarvis interface). Reading the unread list uses the chat
 list only, so nothing is marked as read until a conversation is opened.
 """
 from concurrent.futures import Future, TimeoutError as FutureTimeout
+import os
 import queue
 import re
 import threading
@@ -15,6 +16,7 @@ import time
 from core.data_paths import data_dir
 
 _JOBS = queue.Queue()
+_HIDDEN = {}            # o contexto cuja janela já foi minimizada
 _WORKER_LOCK = threading.Lock()
 _worker = None
 _active = None
@@ -120,41 +122,113 @@ def parse_meta(meta):
     return {k: v.strip() for k, v in m.groupdict().items()} if m else {'hora': '', 'data': '', 'autor': ''}
 
 
+_QR = ('[data-ref] canvas, canvas[aria-label*="QR"], canvas[aria-label*="qr"], '
+       'canvas[aria-label*="Scan"], canvas[aria-label*="scan"], canvas[aria-label*="scane"]')
+
+
+def _visible(locator):
+    try:
+        return locator.count() > 0 and locator.first.is_visible()
+    except Exception:
+        return False
+
+
+def login_state(page, stop, wait=40):
+    """'ok' (conversas na tela), 'qr' (pedindo para escanear) ou 'carregando'."""
+    until = time.monotonic() + wait
+    while True:
+        _check(stop)
+        if _visible(page.locator('#pane-side')):
+            return 'ok'
+        if _visible(page.locator(_QR)):
+            return 'qr'
+        if time.monotonic() >= until:
+            return 'carregando'
+        stop.wait(.5)
+
+
+def qr_png(page):
+    """O QR Code como PNG, para mostrar dentro do Jarvis."""
+    for sel in ('[data-ref]', _QR):
+        loc = page.locator(sel)
+        if _visible(loc):
+            return loc.first.screenshot(timeout=5000)
+    return page.screenshot(timeout=5000)
+
+
+def login_info(page, stop, wait=15):
+    import base64
+    state = login_state(page, stop, wait)
+    out = {'estado': state, 'imagem': ''}
+    if state == 'qr':
+        out['imagem'] = base64.b64encode(qr_png(page)).decode('ascii')
+    return out
+
+
+def _require_login(page, stop):
+    state = login_state(page, stop, 40)
+    if state == 'qr':
+        raise DraftError('login_qr', 'O WhatsApp Web está pedindo o QR Code. Abra a tela WhatsApp do Jarvis e escaneie pelo celular (WhatsApp > Aparelhos conectados).')
+    if state != 'ok':
+        raise DraftError('login_or_ui', 'O WhatsApp Web não terminou de carregar em 40 segundos. Tente de novo; se continuar, use "Mostrar janela do WhatsApp" para ver o que aparece.')
+
+
 def _chat_rows(page):
-    rows = page.locator('#pane-side [role="listitem"]')
-    return rows if rows.count() else page.locator('#pane-side [role="row"]')
+    for sel in ('#pane-side [role="listitem"]', '#pane-side [role="row"]', '#pane-side [role="gridcell"]'):
+        rows = page.locator(sel)
+        if rows.count():
+            return rows
+    return page.locator('#pane-side [role="listitem"]')
 
 
-def unread_chats(page, stop, limit=25):
-    """[{'contato', 'nao_lidas', 'previa'}] from the chat list; opens nothing."""
+def recent_chats(page, stop, limit=25):
+    """[{'contato', 'nao_lidas', 'previa'}] das conversas visíveis na lista; abre nenhuma."""
     _check(stop)
     if not page.url.startswith('https://web.whatsapp.com/'):
         raise DraftError('wrong_site', 'A janela não está no WhatsApp Web oficial.')
-    try:
-        page.locator('#pane-side').first.wait_for(state='visible', timeout=8000)
-    except Exception:
-        raise DraftError('login_or_ui', 'O WhatsApp Web não está pronto. Se a janela mostrar QR Code, vincule pelo celular (WhatsApp > Aparelhos conectados).') from None
-    out = []
+    _require_login(page, stop)
+    out, vistos = [], set()
     for row in _chat_rows(page).all()[:80]:
         _check(stop)
-        badge = row.locator(_UNREAD_BADGE)
-        if not badge.count():
-            continue
         titles = [t.get_attribute('title') or '' for t in row.locator('span[title]').all()]
-        titles = [t for t in titles if t.strip()]
-        if not titles:
+        titles = [t.strip() for t in titles if t.strip()]
+        if not titles or titles[0] in vistos:
             continue
-        label = badge.first.get_attribute('aria-label') or badge.first.inner_text()
-        digits = re.search(r'\d+', label or '')
-        out.append({'contato': titles[0].strip(), 'nao_lidas': int(digits.group()) if digits else 1,
-                    'previa': titles[-1].strip() if len(titles) > 1 else ''})
+        vistos.add(titles[0])
+        badge = row.locator(_UNREAD_BADGE)
+        unread = 0
+        if badge.count():
+            label = badge.first.get_attribute('aria-label') or badge.first.inner_text()
+            digits = re.search(r'\d+', label or '')
+            unread = int(digits.group()) if digits else 1
+        out.append({'contato': titles[0], 'nao_lidas': unread,
+                    'previa': titles[-1] if len(titles) > 1 else ''})
         if len(out) >= limit:
             break
     return out
 
 
+def unread_chats(page, stop, limit=25):
+    """Só as conversas com mensagens não lidas (pela lista; abre nenhuma)."""
+    return [c for c in recent_chats(page, stop, 80) if c['nao_lidas']][:limit]
+
+
+def show_window(page, show=True):
+    """Traz a janela do WhatsApp Web para a tela ou a minimiza de novo."""
+    try:
+        cdp = page.context.new_cdp_session(page)
+        wid = cdp.send('Browser.getWindowForTarget')['windowId']
+        cdp.send('Browser.setWindowBounds', {'windowId': wid, 'bounds': {'windowState': 'normal' if show else 'minimized'}})
+        if show:
+            page.bring_to_front()
+        return True
+    except Exception:
+        return False
+
+
 def read_chat(page, recipient, stop, count=15):
     """The last `count` messages of a conversation (opening it marks it read)."""
+    _require_login(page, stop)
     _open_chat(page, recipient, stop)
     items = page.locator('#main [data-pre-plain-text]').all()[-count:]
     out = []
@@ -202,6 +276,12 @@ def send_message(page, recipient, text, stop):
 
 def _do(page, payload, stop):
     op = payload.get('op', 'draft')
+    if op == 'login':
+        return login_info(page, stop, payload.get('wait', 15))
+    if op == 'recent':
+        return recent_chats(page, stop, payload.get('limit', 25))
+    if op == 'window':
+        return show_window(page, payload.get('show', True))
     if op == 'unread':
         return unread_chats(page, stop, payload.get('limit', 25))
     if op == 'read':
@@ -252,6 +332,12 @@ def _loop():
                         page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
                     if not page.url.startswith('https://web.whatsapp.com/'):
                         page.goto('https://web.whatsapp.com/', wait_until='domcontentloaded', timeout=20000)
+                    if _HIDDEN.get('ctx') is not context:
+                        # A janela fica minimizada: o QR Code e as conversas aparecem
+                        # dentro do Jarvis. JARVIS_WHATSAPP_VISIVEL=1 deixa à mostra.
+                        if not os.environ.get('JARVIS_WHATSAPP_VISIVEL'):
+                            show_window(page, False)
+                        _HIDDEN['ctx'] = context
                     _check(stop)
                     started = True
                     actual = _do(page, payload, stop)
@@ -273,8 +359,10 @@ def _loop():
             future.set_result((True, 'verified', actual))
         except DraftError as error:
             future.set_result((False, error.code, str(error)))
-        except Exception:
-            future.set_result((False, 'browser_error', 'A automação do navegador falhou. Confira a janela do WhatsApp Web; não foi possível confirmar a operação.' + (' Veja na conversa se a mensagem saiu antes de tentar de novo.' if payload.get('op') == 'send' else '')))
+        except Exception as error:
+            motivo = f'{type(error).__name__}: {str(error).splitlines()[0][:200] if str(error) else ""}'
+            print(f'[WhatsApp Web] {payload.get("op")}: {motivo}')
+            future.set_result((False, 'browser_error', f'A automação do WhatsApp Web falhou ({motivo}).' + (' Veja na conversa se a mensagem saiu antes de tentar de novo.' if payload.get('op') == 'send' else '')))
             try:
                 if page is None or page.is_closed():
                     context = page = None

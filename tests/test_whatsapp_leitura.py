@@ -42,6 +42,8 @@ class LerTests(unittest.TestCase):
                                  self._linha("Marcos", "Vi o orçamento", "1 mensagem não lida")]
         side = MagicMock()
         side.first = side
+        side.count.return_value = 1
+        side.is_visible.return_value = True
         self.page.locator.side_effect = lambda sel: {"#pane-side": side,
                                                      '#pane-side [role="listitem"]': rows}[sel]
         r = web.unread_chats(self.page, self.stop)
@@ -66,7 +68,7 @@ class LerTests(unittest.TestCase):
         itens.all.return_value = [msg("[09:12, 27/10/2026] Padaria Sol: ", "Oi!", False),
                                   msg("[09:40, 27/10/2026] Hiago: ", "Consigo sim", True)]
         self.page.locator.side_effect = lambda sel: itens
-        with patch.object(web, "_open_chat"):
+        with patch.object(web, "_open_chat"), patch.object(web, "_require_login"):
             r = web.read_chat(self.page, "Padaria Sol", self.stop)
         self.assertEqual([(m["hora"], m["de"], m["texto"]) for m in r],
                          [("09:12", "contato", "Oi!"), ("09:40", "eu", "Consigo sim")])
@@ -274,3 +276,62 @@ class FraseIncompletaTests(unittest.TestCase):
     def test_pause_default_is_longer(self):
         import providers.engine_pipeline as ep
         self.assertGreaterEqual(ep._VAD_SILENCE_MS, 1200)
+
+
+class LoginTests(unittest.TestCase):
+    def setUp(self):
+        self.stop = threading.Event()
+        self.page = MagicMock(url="https://web.whatsapp.com/")
+        self.estado = "qr"
+
+        def loc(sel):
+            el = MagicMock()
+            el.first = el
+            visivel = (sel == "#pane-side" and self.estado == "ok") or (sel in ("[data-ref]", web._QR) and self.estado == "qr")
+            el.count.return_value = 1 if visivel else 0
+            el.is_visible.return_value = visivel
+            el.screenshot.return_value = b"\x89PNGqr"
+            return el
+        self.page.locator.side_effect = loc
+
+    def test_qr_is_returned_as_an_image_for_the_jarvis_screen(self):
+        r = web.login_info(self.page, self.stop, wait=0)
+        self.assertEqual(r["estado"], "qr")
+        import base64
+        self.assertEqual(base64.b64decode(r["imagem"]), b"\x89PNGqr")
+
+    def test_connected_and_still_loading(self):
+        self.estado = "ok"
+        self.assertEqual(web.login_info(self.page, self.stop, wait=0), {"estado": "ok", "imagem": ""})
+        self.estado = "nada"
+        self.assertEqual(web.login_state(self.page, self.stop, wait=0), "carregando")
+
+    def test_reading_while_asking_for_qr_says_so(self):
+        with patch.object(web, "login_state", return_value="qr"):
+            with self.assertRaises(web.DraftError) as e:
+                web.recent_chats(self.page, self.stop)
+        self.assertEqual(e.exception.code, "login_qr")
+
+    def test_recent_list_includes_read_chats_with_zero(self):
+        def linha(nome, previa, badge):
+            row = MagicMock()
+            spans = MagicMock()
+            spans.all.return_value = [_el(nome), _el(previa)]
+            b = _el(aria=badge, count=1 if badge else 0)
+            row.locator.side_effect = lambda sel: spans if sel == "span[title]" else b
+            return row
+        rows = MagicMock()
+        rows.count.return_value = 2
+        rows.all.return_value = [linha("Ana", "Obrigada!", None), linha("Padaria Sol", "Até sexta?", "2 mensagens não lidas")]
+        with patch.object(web, "_require_login"), patch.object(web, "_chat_rows", return_value=rows):
+            r = web.recent_chats(self.page, self.stop)
+        self.assertEqual([(c["contato"], c["nao_lidas"]) for c in r], [("Ana", 0), ("Padaria Sol", 2)])
+
+    def test_window_is_minimized_or_shown_through_the_browser(self):
+        cdp = MagicMock()
+        cdp.send.side_effect = lambda m, p=None: {"windowId": 7} if m == "Browser.getWindowForTarget" else {}
+        self.page.context.new_cdp_session.return_value = cdp
+        self.assertTrue(web.show_window(self.page, False))
+        cdp.send.assert_called_with("Browser.setWindowBounds", {"windowId": 7, "bounds": {"windowState": "minimized"}})
+        web.show_window(self.page, True)
+        self.page.bring_to_front.assert_called_once()
