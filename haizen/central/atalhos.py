@@ -18,11 +18,14 @@ import unicodedata
 from haizen import store
 
 _VERBO = re.compile(r"\b(registr|adicion|lan[cç]|inclu|insir|coloqu|cadastr|anot)\w*", re.I)
-_TIPO = re.compile(r"\b(receitas?|faturamentos?|despesas?|gastos?|custos?)\b", re.I)
+_TIPO = re.compile(r"\b(receitas?|faturamentos?|despesas?|gastos?|custos?|pagamentos?|parcelas?|entradas?|"
+                   r"recebimentos?|contas?|boletos?)\b", re.I)
+_TIPO_DESPESA = ("despesa", "gasto", "custo", "conta", "boleto")
 _VALOR = re.compile(r"(?:R\$\s*(\d[\d.]*(?:,\d{1,2})?)|(\d[\d.]*(?:,\d{1,2})?)\s*(?:reais|real)\b)", re.I)
 _FIM = (r"(?=\s*[,;]|\.\s|\.$|\s+(?:com\s+)?venc|\s+(?:para\s+o\s+)?dia\s|\s+j[aá]\s+(?:foi\s+)?(?:recebid|pag)"
+        r"|\s+como\s+(?:j[aá]\s+)?(?:recebid|pag|quitad)|\s+(?:a|para)\s+(?:receber|pagar)\b"
         r"|\s+n[aã]o\s+foi|\s+(?:foi\s+)?recebid|\s+(?:foi\s+)?pag[oa]\b|\s+a\s+receber|\s+categoria|$)")
-_DESCRICAO = re.compile(r"(?:descri[cç][aã]o|referente\s+(?:a|ao|à)?|ref\.)\s*:?\s*[\"“]?(.+?)[\"”]?" + _FIM, re.I)
+_DESCRICAO = re.compile(r"(?:descri[cç][aã]o(?:\s+de(?=\s))?|referente\s+(?:a|ao|à)?|ref\.)\s*:?\s*[\"“]?(.+?)[\"”]?" + _FIM, re.I)
 _CATEGORIA = re.compile(r"categoria\s*:?\s*(.+?)" + _FIM, re.I)
 _DATA = re.compile(r"(?:vencimento|vence|venc\.?|para\s+o\s+dia|no\s+dia|dia|data)\s*(?:em|é|:)?\s*"
                    r"(hoje|amanh[ãa]|ontem|\d{1,2}/\d{1,2}(?:/\d{2,4})?)", re.I)
@@ -37,11 +40,32 @@ def _plano(texto: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", t).split())
 
 
+_GENERICOS = {"solucoes", "solucao", "ltda", "eireli", "digital", "comercio", "servicos", "studio", "agencia",
+              "grupo", "loja", "empresa", "brasil", "store", "company", "cia", "me", "epp", "sa", "do", "da", "de"}
+
+
 def _cliente_na_frase(texto: str) -> dict | None:
+    """O cliente citado: pelo nome exato, ou, se nenhum bater, pelo nome
+    parecido ("Khoguer Soluções" é a KROGUER SOLUÇÕES; voz e digitação erram)."""
     frase = f" {_plano(texto)} "
-    achados = [c for c in store.listar_clientes()
-               if (n := _plano(c["nome"])) and f" {n} " in frase]
-    return max(achados, key=lambda c: len(c["nome"])) if achados else None
+    clientes = store.listar_clientes()
+    achados = [c for c in clientes if (n := _plano(c["nome"])) and f" {n} " in frase]
+    if achados:
+        return max(achados, key=lambda c: len(c["nome"]))
+    from difflib import SequenceMatcher
+    palavras = [w for w in frase.split() if len(w) >= 4]
+    notas = []
+    for c in clientes:
+        nucleo = [w for w in _plano(c["nome"]).split() if w not in _GENERICOS and len(w) >= 4]
+        if not nucleo:
+            continue
+        melhor = max((SequenceMatcher(None, nucleo[0], w).ratio() for w in palavras), default=0)
+        if melhor >= 0.8:
+            notas.append((melhor, c))
+    notas.sort(key=lambda n: -n[0])
+    if not notas or (len(notas) > 1 and notas[1][0] == notas[0][0]):
+        return None
+    return notas[0][1]
 
 
 def _data(texto: str) -> str:
@@ -77,7 +101,7 @@ def registro_direto(texto: str) -> tuple[str, bool] | None:
     tipo_m, valor_m = _TIPO.search(texto), _VALOR.search(texto)
     if not tipo_m or not valor_m:
         return None
-    despesa = _plano(tipo_m.group(1)).rstrip("s") in ("despesa", "gasto", "custo")
+    despesa = _plano(tipo_m.group(1)).rstrip("s") in _TIPO_DESPESA
     valor = valor_m.group(1) or valor_m.group(2)
     desc_m = _DESCRICAO.search(texto)
     descricao = desc_m.group(1).strip(" \"”'") if desc_m else ""
@@ -116,6 +140,80 @@ def registro_direto(texto: str) -> tuple[str, bool] | None:
     return (f"Registrei a {'despesa' if despesa else 'receita'}{quem}: {r.get('descricao')}, "
             f"{_brl(float(r.get('valor') or 0))}, vencimento {_br(r.get('vencimento', ''))}, "
             f"{situacao}. Já aparece no Financeiro.", True)
+
+
+# ── Financeiro: dar baixa (marcar como recebida/paga o que já existe) ───────
+_BAIXA_VERBO = re.compile(r"\b(coloc|coloqu|marc|marqu|mud|deix|alter|atualiz|baix|confirm|registr|p[oõ]e|ponha|"
+                          r"recebi|recebemos|pagou|pagaram|paguei|quit)\w*", re.I)
+_CRIAR_NOVO = re.compile(r"\b(outr[oa]s?|nov[oa]s?|mais\s+um[a]?|adicion|lan[cç]|cadastr|cri[ae])\w*", re.I)
+_PARCELA = re.compile(r"\b(\d{1,2})\s*/\s*(\d{1,2})\b|\b(\d{1,2})[ªao°]?\s*parcela|parcela\s+(\d{1,2})\b", re.I)
+_PALAVRAS_VAZIAS = {"coloque", "coloca", "como", "recebido", "recebida", "pago", "paga", "pagamento", "parcela", "marca",
+                    "marque", "que", "foi", "para", "pra", "receita", "despesa", "conta", "valor", "reais", "esta", "isso"}
+
+
+def baixa_direta(texto: str) -> str | None:
+    """"Coloca como recebido o pagamento 2/2 da Kroguer": acha a receita que
+    já existe e marca como recebida (ou a despesa, como paga). Nunca cria."""
+    if "?" in texto or not _RECEBIDO.search(texto) and not re.search(r"\b(recebi|pagou|paguei|quitou)\b", texto, re.I):
+        return None
+    if not _BAIXA_VERBO.search(texto) or _CRIAR_NOVO.search(texto) or _NAO_RECEBIDO.search(texto):
+        return None
+    from haizen.central import dados
+    cliente = _cliente_na_frase(texto)
+    despesa = bool(re.search(r"\b(despesa|conta|boleto|gasto|custo)s?\b", texto, re.I)) and cliente is None
+    if not despesa and cliente is None:
+        return None
+    ent = "despesas" if despesa else "receitas"
+    campo = "pago" if despesa else "recebido"
+    itens = dados.listar(ent, **({} if despesa else {"cliente_id": cliente["id"]}))
+    if not itens:
+        return None if despesa else f"Não achei nenhuma receita de {cliente['nome']} no Financeiro."
+    parcela = _PARCELA.search(texto)
+    valor_m = _VALOR.search(texto)
+    valor = dados.reais(dados.centavos(valor_m.group(1) or valor_m.group(2))) if valor_m else None
+    palavras = [w for w in _plano(texto).split() if len(w) >= 4 and w not in _PALAVRAS_VAZIAS
+                and (not cliente or w not in _plano(cliente["nome"]))]
+
+    def nota(r):
+        d = _plano(r.get("descricao", ""))
+        n = 0.0
+        if parcela:
+            num = parcela.group(1) or parcela.group(3) or parcela.group(4)
+            tot = parcela.group(2)
+            alvo = f"{num}/{tot}" if tot else None
+            desc = (r.get("descricao") or "").replace(" ", "")
+            if alvo and alvo in desc:
+                n += 3
+            elif re.search(rf"(?:^|\D){num}\s*/", desc) or re.search(rf"parcela\s*{num}\b|{num}\s*a\s*parcela", d):
+                n += 2
+            else:
+                n -= 2
+        if valor is not None:
+            n += 1.5 if abs(float(r.get("valor") or 0) - valor) < 0.01 else -1
+        n += sum(0.5 for w in palavras if w in d)
+        return n
+    candidatos = sorted(((nota(r), r) for r in itens), key=lambda x: -x[0])
+    melhor = candidatos[0][0]
+    if (parcela or valor is not None or palavras) and melhor <= 0:
+        quem = f" de {cliente['nome']}" if cliente else ""
+        return f"Não achei essa {'despesa' if despesa else 'receita'}{quem}. Confira a descrição ou o valor na tela Financeiro."
+    topo = [r for n, r in candidatos if n == melhor]
+    pendentes = [r for r in topo if not r.get(campo)]
+    rotulo = lambda r: f"\"{r.get('descricao') or 'sem descrição'}\", {_brl(float(r.get('valor') or 0))}, vencimento {_br(r.get('vencimento', ''))}"
+    if not pendentes:
+        r = topo[0]
+        quando = r.get("data_recebimento") or r.get("data_pagamento") or ""
+        return (f"Essa já estava {'paga' if despesa else 'recebida'}{f' em {_br(quando)}' if quando else ''}: "
+                f"{rotulo(r)}. Não mudei nada.")
+    if len(pendentes) > 1:
+        lista = "; ".join(rotulo(r) for r in pendentes[:4])
+        return f"Achei mais de uma em aberto: {lista}. Qual delas? Diga a parcela (ex.: 2/2) ou o valor."
+    r = pendentes[0]
+    feito = dados.atualizar(ent, r["id"], {campo: True})
+    quem = f" de {cliente['nome']}" if cliente else ""
+    quando = feito.get("data_recebimento") or feito.get("data_pagamento") or dados.hoje()
+    return (f"Marquei como {'paga' if despesa else 'recebida'} a {'despesa' if despesa else 'receita'}{quem}: "
+            f"{rotulo(feito)}, {'paga' if despesa else 'recebida'} em {_br(quando)}. Não criei nenhum registro novo.")
 
 
 # ── Google Agenda: consultar é objetivo, não precisa do modelo ──────────────
@@ -196,8 +294,8 @@ _CRIAR = re.compile(r"\b(?:colo[cq]u?|adicion|mar[cq]u?|agend(?!a\b)|cri[ae]|bot
 # Pedido de mudar algo que já existe: nunca vira compromisso novo.
 _JA_EXISTE = re.compile(r"\b(?:ajust|alter|mud|remar[cq]|corri[gj]|modific|reagend|troc|renome|reprogram|acert|exclu|apag|remov|cancel)\w*", re.I)
 _HORA = r"(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?"
-_FAIXA = re.compile(r"(?:\b(?:d[ae]s?|das)\s+)?" + _HORA + r"\s*(?:[àa]s?|at[ée]|-|–|a)\s+" + _HORA, re.I)
-_UMA = re.compile(r"\b(?:[àa]s|ao meio[- ]dia)\s*" + _HORA, re.I)
+_FAIXA = re.compile(r"(?:\b(?:d[ae]s?|das)\s+)?" + _HORA + r"\s*(?:[àáa]s?|at[ée]|-|–|a)\s+" + _HORA, re.I)
+_UMA = re.compile(r"\b(?:[àáa]s|ao meio[- ]dia)\s*" + _HORA, re.I)
 _SEMANA = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
 _ULTIMO_DIA: list = []          # [(data, quando)]: o dia citado há pouco na conversa
 
@@ -252,7 +350,15 @@ def _limpar_titulo(t: str) -> str:
     t = re.sub(r"^\s*(?:[-–:,;.]|\be\b)\s*", "", t.strip())
     t = re.sub(r"\s*(?:[-–:,;.]|\be\b)?\s*$", "", t)
     t = re.sub(r"\s+(?:no|na)\s+(?:google\s+)?(?:agenda|calend[aá]rio)\b.*$", "", t, flags=re.I)
+    # Sobras de ligação: "de implementação" vira "implementação"; "reunião com" perde o "com".
+    t = re.sub(r"^(?:(?:de|do|da|dos|das|para|pra)\s+)+", "", t.strip(), flags=re.I)
+    t = re.sub(r"(?:\s+(?:de|do|da|para|pra|com|e|o|a))+$", "", t, flags=re.I)
+    t = re.sub(r"^(?:o|a|os|as|um|uma)\s+", "", t, flags=re.I)
     return t.strip(" \"'“”")
+
+
+def _maiuscula(t: str) -> str:
+    return t[:1].upper() + t[1:] if t[:1].islower() else t
 
 
 def _eventos_da_frase(texto: str) -> list[tuple[int, int, int, int, str]]:
@@ -262,20 +368,25 @@ def _eventos_da_frase(texto: str) -> list[tuple[int, int, int, int, str]]:
     if faixas:
         # Com um horário só, o nome pode vir antes ("agenda uma call das 14 às 15
         # com o cliente"): junta o que vem antes (sem o verbo) e o que vem depois.
-        antes = _limpar_titulo(_CRIAR.sub(" ", texto[:faixas[0].start()], count=1)) if len(faixas) == 1 else ""
+        # Só o que vem DEPOIS do verbo: "vamos para a agenda, preciso que inclua..."
+        # não entra no nome do compromisso.
+        verbo = _CRIAR.search(texto[:faixas[0].start()])
+        antes = (_limpar_titulo(texto[verbo.end() if verbo else 0:faixas[0].start()])
+                 if len(faixas) == 1 else "")
         for i, m in enumerate(faixas):
             fim_titulo = faixas[i + 1].start() if i + 1 < len(faixas) else len(texto)
             h1, m1, h2, m2 = m.group(1), m.group(2), m.group(3), m.group(4)
             depois = _limpar_titulo(texto[m.end():fim_titulo])
             saida.append((int(h1), int(m1 or 0), int(h2), int(m2 or 0),
-                          _limpar_titulo(f"{antes} {depois}") if antes else depois))
+                          _maiuscula(_limpar_titulo(f"{antes} {depois}") if antes else depois)))
         return saida
     m = _UMA.search(texto)
     if m:
         h, mi = (12, 0) if "meio" in m.group(0).lower() else (int(m.group(1)), int(m.group(2) or 0))
-        antes = _limpar_titulo(_CRIAR.sub(" ", texto[:m.start()], count=1))
+        verbo = _CRIAR.search(texto[:m.start()])
+        antes = _limpar_titulo(texto[verbo.end() if verbo else 0:m.start()])
         depois = _limpar_titulo(texto[m.end():])
-        titulo = _limpar_titulo(f"{antes} {depois}")
+        titulo = _maiuscula(_limpar_titulo(f"{antes} {depois}"))
         fim = h * 60 + mi + 60
         saida.append((h, mi, fim // 60, fim % 60, titulo))
     return saida
@@ -371,7 +482,7 @@ def _lembrar_evento(ev: dict) -> dict:
     return ev
 
 
-_HORA_ALVO_ACHAR = re.compile(r"\b(?:d[ae]s?|[àa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
+_HORA_ALVO_ACHAR = re.compile(r"\b(?:d[ae]s?|[àáa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
 
 
 def _achar_evento(alvo: str) -> tuple[dict | None, str]:
@@ -422,7 +533,7 @@ def _achar_evento(alvo: str) -> tuple[dict | None, str]:
 
 
 _PRONOME = re.compile(r"\b(elas?|eles?|ess[ae]s?|est[ae]s?|tod[ao]s|isso|aquel[ae]s?|ambas?|ambos)\b", re.I)
-_HORA_ALVO = re.compile(r"\b(?:d[ae]s?|[àa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
+_HORA_ALVO = re.compile(r"\b(?:d[ae]s?|[àáa]s?)\s+(\d{1,2})(?:[:h](\d{2}))?\s*(?:h(?:oras?)?\b)?", re.I)
 
 
 def _alvos_sem_nome(texto: str) -> list[dict] | None:
@@ -494,7 +605,7 @@ _EDITAR = re.compile(
     + _SEP + r"(?P<novo>.+)$", re.I | re.S)
 _RENOMEAR = re.compile(r"\brenome\w*\s+(?P<alvo>.+?)\s+(?:para|pra|como)\s+(?P<novo>.+)$", re.I | re.S)
 _ESTENDER = re.compile(r"\b(?:estend|prorrog|aument|estic|encurt|diminu|reduz)\w*\s+(?P<alvo>.+?)\s+(?:at[ée]|para|pra)\s+"
-                       r"(?:[àa]s?\s+)?(?P<novo>\d.*)$", re.I | re.S)
+                       r"(?:[àáa]s?\s+)?(?P<novo>\d.*)$", re.I | re.S)
 _NUM_PALAVRA = {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4, "cinco": 5}
 
 
@@ -519,7 +630,7 @@ def _minutos(texto: str) -> int | None:
 
 def _hora_em(texto: str) -> tuple[int, int] | None:
     sem_data = re.sub(r"\d{1,2}/\d{1,2}(?:/\d{2,4})?", " ", texto)
-    m = (re.search(r"\b(?:[àa]s?|at[ée]|para|pra)\s+" + _HORA, sem_data, re.I)
+    m = (re.search(r"\b(?:[àáa]s?|at[ée]|para|pra)\s+" + _HORA, sem_data, re.I)
          or re.search(r"\b" + _HORA, sem_data, re.I))
     if not m or int(m.group(1)) > 23 or int(m.group(2) or 0) > 59:
         return None
@@ -843,7 +954,7 @@ def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
     if novos:
         h1, m1, h2, m2, _ = novos[0]
         params["start"] = dt.datetime.combine(dia, dt.time(h1, m1), fuso).isoformat()
-        if re.search(r"\d\s*(?:h\w*\s*)?(?:[àa]s?|at[ée]|-|–|a)\s+\d", destino):
+        if re.search(r"\d\s*(?:h\w*\s*)?(?:[àáa]s?|at[ée]|-|–|a)\s+\d", destino):
             params["end"] = dt.datetime.combine(dia, dt.time(h2 % 24, m2), fuso).isoformat()
     else:
         params["start"] = dt.datetime.combine(dia, atual.timetz().replace(tzinfo=None), fuso).isoformat()
@@ -958,11 +1069,50 @@ def nome_direto(texto: str) -> str | None:
     return f"Anotado, {nome}. Vou te chamar assim daqui para frente."
 
 
+_ITEM = re.compile(r"(?:^|\n)\s*(?:\d{1,2}\s*[).:\-–]?|[-•*])\s+(?=\S)")
+
+
+def _itens(texto: str) -> tuple[str, list[str]]:
+    """'Preciso de duas coisas:\n1 X\n2 Y' -> ('Preciso de duas coisas:', ['X', 'Y'])."""
+    marcas = list(_ITEM.finditer(texto))
+    if len(marcas) < 2:
+        return texto, []
+    intro = texto[:marcas[0].start()].strip()
+    itens = [texto[m.end():(marcas[i + 1].start() if i + 1 < len(marcas) else len(texto))].strip()
+             for i, m in enumerate(marcas)]
+    return intro, [i for i in itens if i]
+
+
 def responder_direto(texto: str) -> tuple[str, list[str]] | None:
-    """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
+    """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas).
+
+    Uma lista numerada vira um pedido por item, com uma resposta por item.
+    Se nenhum item for resolvido aqui, o modelo recebe a mensagem inteira."""
+    intro, itens = _itens(texto)
+    if len(itens) >= 2:
+        contexto = " na agenda" if re.search(r"agenda|calend", intro, re.I) else ""
+        respostas, usadas, pendentes = [], [], []
+        for n, item in enumerate(itens, start=1):
+            r = _responder_um(item if not contexto or re.search(r"agenda|calend", item, re.I) else item + contexto)
+            if r is None:
+                pendentes.append((n, item))
+                respostas.append(f"{n}. Não fiz este pelo atalho: \"{item[:80]}\". Mande ele sozinho que eu faço.")
+            else:
+                respostas.append(f"{n}. {r[0]}")
+                usadas += r[1]
+        if len(pendentes) == len(itens):
+            return None
+        return "\n".join(respostas), sorted(set(usadas))
+    return _responder_um(texto)
+
+
+def _responder_um(texto: str) -> tuple[str, list[str]] | None:
     n = nome_direto(texto)
     if n is not None:
         return n, ["central"]
+    b = baixa_direta(texto)
+    if b is not None:
+        return b, ["central"]
     r = registro_direto(texto)
     if r is not None:
         return r[0], (["central"] if r[1] else [])

@@ -679,7 +679,7 @@ class EventoDiretoTests(_Base):
 
     def test_single_time_and_title_before_it(self):
         self._pedir("marca uma reunião com a Padaria Sol sexta às 15h")
-        self.assertEqual(self.criados[0]["title"], "reunião com a Padaria Sol")
+        self.assertEqual(self.criados[0]["title"], "Reunião com a Padaria Sol")
         self.assertIn("T15:00", self.criados[0]["start"])
         self.assertIn("T16:00", self.criados[0]["end"])
 
