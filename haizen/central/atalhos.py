@@ -318,11 +318,136 @@ def criar_evento_direto(texto: str) -> tuple[str, bool] | None:
     return "\n\n".join(partes), bool(feitos)
 
 
+# ── Google Agenda: remarcar e excluir ───────────────────────────────────────
+_EXCLUIR = re.compile(r"\b(exclu|apag|cancel|desmar[cq]|remov|tir[ae])\w*", re.I)
+_MOVER = re.compile(r"\b(mov|mud|remar[cq]|pass[ae]|adi[ae]|transf[ei]r|tro[cq]|reagend|empurr|jog[ua])\w*", re.I)
+_DESTINO = re.compile(r"\s(?:para|pra|pro)\s", re.I)
+_CONTEXTO_AGENDA = re.compile(r"agenda|calend[aá]rio|compromisso|reuni[aã]o|evento|call", re.I)
+_VAZIAS = {"o", "a", "os", "as", "de", "do", "da", "dos", "das", "meu", "minha", "um", "uma", "com",
+           "evento", "compromisso", "na", "no", "e", "que", "ta", "esta", "esse", "essa", "aquele", "aquela"}
+
+
+def _termos(texto: str) -> list[str]:
+    return [t for t in _plano(texto).split() if len(t) > 1 and t not in _VAZIAS]
+
+
+def _eventos_entre(ini: dt.date, fim: dt.date) -> list[dict]:
+    from zoneinfo import ZoneInfo
+    from core.google_calendar import service
+    fuso = ZoneInfo("America/Sao_Paulo")
+    return service().events().list(
+        calendarId="primary", timeMin=dt.datetime.combine(ini, dt.time(), fuso).isoformat(),
+        timeMax=dt.datetime.combine(fim, dt.time(), fuso).isoformat(),
+        singleEvents=True, orderBy="startTime", maxResults=100).execute(num_retries=1).get("items", [])
+
+
+def _quando_evento(ev: dict) -> str:
+    ini = (ev.get("start") or {})
+    if "dateTime" in ini:
+        d = dt.datetime.fromisoformat(ini["dateTime"].replace("Z", "+00:00"))
+        return f"{_DIAS[d.weekday()]} {d.strftime('%d/%m, %H:%M')}"
+    d = dt.date.fromisoformat(ini.get("date", "")[:10])
+    return f"{_DIAS[d.weekday()]} {d.strftime('%d/%m')}, dia todo"
+
+
+def _achar_evento(alvo: str) -> tuple[dict | None, str]:
+    """(evento, "") ou (None, resposta explicando o que faltou)."""
+    dia = _dia_citado(alvo)
+    termos = _termos(_SOBRAS.sub(" ", alvo))
+    if not termos:
+        return None, "Qual compromisso? Diga o nome, por exemplo: \"remarca o Estudos de amanhã para 14h\"."
+    hoje = dt.date.today()
+    ini, fim = (dia, dia + dt.timedelta(days=1)) if dia else (hoje, hoje + dt.timedelta(days=30))
+    try:
+        itens = _eventos_entre(ini, fim)
+    except Exception as e:  # noqa: BLE001
+        from core.google_calendar_errors import CalendarSetupError, diagnose
+        return None, f"Não consegui ler o Google Agenda: {e if isinstance(e, CalendarSetupError) else diagnose(e)[1]}"
+    notas = []
+    for ev in itens:
+        titulo = set(_termos(ev.get("summary", "")))
+        acertos = sum(1 for t in termos if t in titulo)
+        if acertos:
+            notas.append((acertos / len(termos), ev))
+    onde = "nesse dia" if dia else "nos próximos 30 dias"
+    if not notas or max(n for n, _ in notas) < 0.6:
+        return None, f"Não achei \"{' '.join(termos)}\" na agenda {onde}."
+    melhor = max(n for n, _ in notas)
+    empatados = [ev for n, ev in notas if n == melhor]
+    if len(empatados) > 1:
+        lista = "; ".join(f"{ev.get('summary', '(sem título)')} ({_quando_evento(ev)})" for ev in empatados[:5])
+        return None, f"Achei mais de um: {lista}. Qual deles? Diga o dia para eu saber."
+    return empatados[0], ""
+
+
+def mudar_evento_direto(texto: str) -> tuple[str, bool] | None:
+    """Remarca ou exclui um compromisso; None se a frase não for esse pedido."""
+    if "?" in texto:
+        return None
+    tem_contexto = bool(_CONTEXTO_AGENDA.search(texto) or _dia_citado(texto))
+    excluir = _EXCLUIR.search(texto)
+    mover = _MOVER.search(texto)
+    if excluir and tem_contexto and (not mover or excluir.start() < mover.start()):
+        alvo = texto[excluir.end():]
+        ev, problema = _achar_evento(alvo)
+        if ev is None:
+            # "apaga o arquivo de amanhã" não é agenda: sem palavra de agenda, segue para o modelo.
+            return (problema, False) if _CONTEXTO_AGENDA.search(texto) else None
+        from actions.google_agenda import google_agenda
+        r = str(google_agenda({"action": "delete", "event_id": ev["id"]}))
+        nome = ev.get("summary", "(sem título)")
+        if "CONFIRMATION_PENDING" in r:
+            return f"Confirme na tela para eu excluir \"{nome}\" ({_quando_evento(ev)}).", True
+        return (r if not r.startswith("status=") else f"Não excluí \"{nome}\": {r}"), False
+    if not mover or not tem_contexto:
+        return None
+    resto = texto[mover.end():]
+    corte = _DESTINO.search(" " + resto)
+    if not corte:
+        return None
+    alvo, destino = (" " + resto)[:corte.start()], (" " + resto)[corte.end():]
+    novos = _eventos_da_frase(destino)
+    novo_dia = _dia_citado(destino) or _dia_citado(" ".join(destino.split()[:3]))
+    if not novos and not novo_dia:
+        return None                  # "muda o título para X": fica com o modelo
+    ev, problema = _achar_evento(alvo)
+    if ev is None:
+        return (problema, False) if _CONTEXTO_AGENDA.search(texto) else None
+    ini_atual = (ev.get("start") or {}).get("dateTime")
+    if not ini_atual:
+        return "Esse compromisso é de dia inteiro; me diga o horário novo de início e fim.", False
+    from zoneinfo import ZoneInfo
+    fuso = ZoneInfo("America/Sao_Paulo")
+    atual = dt.datetime.fromisoformat(ini_atual.replace("Z", "+00:00")).astimezone(fuso)
+    dia = novo_dia or atual.date()
+    params = {"action": "update", "event_id": ev["id"], "timezone": "America/Sao_Paulo"}
+    if novos:
+        h1, m1, h2, m2, _ = novos[0]
+        params["start"] = dt.datetime.combine(dia, dt.time(h1, m1), fuso).isoformat()
+        if re.search(r"\d\s*(?:h\w*\s*)?(?:[àa]s?|at[ée]|-|–|a)\s+\d", destino):
+            params["end"] = dt.datetime.combine(dia, dt.time(h2 % 24, m2), fuso).isoformat()
+    else:
+        params["start"] = dt.datetime.combine(dia, atual.timetz().replace(tzinfo=None), fuso).isoformat()
+    from actions.google_agenda import google_agenda
+    r = str(google_agenda(params))
+    nome = ev.get("summary", "(sem título)")
+    if r.startswith("status=done"):
+        quando = re.search(r"start=(\S+)", r)
+        novo = dt.datetime.fromisoformat(quando.group(1).strip('"')) if quando else None
+        texto_quando = f"{_DIAS[novo.weekday()]} {novo.strftime('%d/%m, %H:%M')}" if novo else "o novo horário"
+        return f"Remarquei \"{nome}\" para {texto_quando}.", True
+    motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
+    return f"Não remarquei \"{nome}\": {(motivo.group(1).strip(chr(34)) if motivo else r)[:200]}", False
+
+
 def responder_direto(texto: str) -> tuple[str, list[str]] | None:
     """Pedidos que o código resolve sozinho: (resposta, ferramentas usadas)."""
     r = registro_direto(texto)
     if r is not None:
         return r[0], (["central"] if r[1] else [])
+    m = mudar_evento_direto(texto)
+    if m is not None:
+        return m[0], (["google_agenda"] if m[1] else [])
     e = criar_evento_direto(texto)
     if e is not None:
         return e[0], (["google_agenda"] if e[1] else [])

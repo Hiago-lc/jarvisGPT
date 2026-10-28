@@ -691,6 +691,98 @@ class EventoDiretoTests(_Base):
             self.assertEqual(self.criados, [], t)
 
 
+class _AgendaFalsa:
+    """Google Agenda em memória: list, get, patch e delete."""
+
+    def __init__(self, eventos):
+        self.eventos = {e["id"]: e for e in eventos}
+        self.apagados = []
+
+    def events(self):
+        return self
+
+    def list(self, **kw):
+        ini, fim = kw["timeMin"][:10], kw["timeMax"][:10]
+        itens = [e for e in self.eventos.values() if ini <= e["start"]["dateTime"][:10] < fim]
+        return type("R", (), {"execute": lambda _s, **k: {"items": sorted(itens, key=lambda e: e["start"]["dateTime"])}})()
+
+    def get(self, calendarId, eventId):
+        return type("R", (), {"execute": lambda _s, **k: dict(self.eventos[eventId])})()
+
+    def patch(self, calendarId, eventId, body, sendUpdates):
+        self.eventos[eventId].update(body)
+        return type("R", (), {"execute": lambda _s, **k: dict(self.eventos[eventId])})()
+
+    def delete(self, calendarId, eventId, sendUpdates):
+        def run(_s, **k):
+            self.apagados.append(eventId)
+            self.eventos.pop(eventId)
+        return type("R", (), {"execute": run})()
+
+
+class MudarEventoTests(_Base):
+    def setUp(self):
+        super().setUp()
+        import datetime as dt
+        self.amanha = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        ev = lambda i, t, h1, h2: {"id": i, "summary": t,
+                                   "start": {"dateTime": f"{self.amanha}T{h1}:00-03:00", "timeZone": "America/Sao_Paulo"},
+                                   "end": {"dateTime": f"{self.amanha}T{h2}:00-03:00", "timeZone": "America/Sao_Paulo"}}
+        self.agenda = _AgendaFalsa([ev("a1", "Vídeo Café Empresarial da ACI", "09:00", "10:00"),
+                                    ev("a2", "Estudos", "11:00", "12:00"),
+                                    ev("a3", "Reunião com a Padaria Sol", "15:00", "16:00")])
+        self.p = patch("core.google_calendar.service", return_value=self.agenda)
+        self.p.start()
+        self.confirmacoes = []
+        from core import confirm
+        self.c = patch.object(confirm, "request", side_effect=lambda **kw: (self.confirmacoes.append(kw), "[CONFIRMATION_PENDING] x")[1])
+        self.c.start()
+
+    def tearDown(self):
+        self.c.stop()
+        self.p.stop()
+        super().tearDown()
+
+    def _pedir(self, texto):
+        llm = FakeLLM([("Resposta do modelo.", [])])
+        with patch.object(self.cerebro, "_provedor", return_value=llm):
+            return self.cerebro.responder(texto)
+
+    def test_move_keeps_the_duration(self):
+        r = self._pedir("remarca o Estudos de amanhã para as 14h")
+        self.assertEqual(self.agenda.eventos["a2"]["start"]["dateTime"][11:16], "14:00")
+        self.assertEqual(self.agenda.eventos["a2"]["end"]["dateTime"][11:16], "15:00")
+        self.assertIn('Remarquei "Estudos"', r["resposta"])
+
+    def test_move_with_a_new_range_and_day(self):
+        import datetime as dt
+        self._pedir("muda a reunião com a Padaria Sol para sexta das 10 às 11:30")
+        ev = self.agenda.eventos["a3"]
+        dia = dt.date.fromisoformat(ev["start"]["dateTime"][:10])
+        self.assertEqual(dia.weekday(), 4)
+        self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("10:00", "11:30"))
+
+    def test_delete_asks_for_confirmation_first(self):
+        r = self._pedir("exclui o vídeo café da agenda de amanhã")
+        self.assertEqual(self.agenda.apagados, [])
+        self.assertEqual(len(self.confirmacoes), 1)
+        self.assertIn("Vídeo Café Empresarial da ACI", self.confirmacoes[0]["title"])
+        self.assertIn("Confirme na tela", r["resposta"])
+        self.confirmacoes[0]["run"]()
+        self.assertEqual(self.agenda.apagados, ["a1"])
+
+    def test_not_found_and_ambiguous_are_explained(self):
+        r = self._pedir("cancela a reunião com o dentista amanhã")
+        self.assertIn("Não achei", r["resposta"])
+        self.agenda.eventos["a4"] = dict(self.agenda.eventos["a2"], id="a4")
+        r = self._pedir("apaga o compromisso Estudos de amanhã")
+        self.assertIn("mais de um", r["resposta"])
+
+    def test_unrelated_deletes_go_to_the_model(self):
+        r = self._pedir("apaga o arquivo relatório de amanhã")
+        self.assertEqual(r["resposta"], "Resposta do modelo.")
+
+
 class DatasTests(unittest.TestCase):
     def test_brazilian_dates(self):
         from haizen.central.dados import _data
