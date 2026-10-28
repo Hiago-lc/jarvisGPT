@@ -58,6 +58,19 @@ DEFAULT_WHISPER = "small"
 LOCAL_TOOL_BUDGET = {"max_tools": "10", "max_tool_chars": "8000",
                      "history_chars": "8000"}
 
+
+def orcamento_local(contexto: int) -> dict:
+    """Ferramentas e histórico que cabem no contexto escolhido.
+
+    Um contexto menor faz o modelo caber inteiro numa placa de 4 GB (bem mais
+    rápido), mas aí o pedido também precisa ser menor: senão o Ollama corta o
+    começo, que são justamente as instruções."""
+    if contexto >= 12288:
+        return dict(LOCAL_TOOL_BUDGET)
+    if contexto >= 8192:
+        return {"max_tools": "10", "max_tool_chars": "7000", "history_chars": "5000"}
+    return {"max_tools": "8", "max_tool_chars": "6000", "history_chars": "3000"}
+
 # Quanto esperar pela primeira palavra do modelo local, em segundos. O padrão
 # do provedor (60 s) é pouco para uma placa modesta: antes de responder, o
 # modelo lê ~7 mil tokens de instruções, e na primeira vez ainda carrega o
@@ -183,6 +196,35 @@ def preparar_ollama(base: str, contexto: int = DEFAULT_CONTEXT,
         return base
 
 
+def liberar_outros(modelo: str, url: str = OLLAMA_URL) -> list[str]:
+    """Tira da placa de vídeo as outras versões do modelo do Jarvis.
+
+    Com OLLAMA_KEEP_ALIVE=-1 um modelo carregado fica na placa para sempre; ao
+    trocar de contexto (ou de modelo), o antigo continuava ocupando a memória e
+    empurrava o novo para o processador, que é várias vezes mais lento."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url + "/api/ps", timeout=5) as r:
+            carregados = [m.get("name") or m.get("model") or "" for m in json.loads(r.read()).get("models", [])]
+    except Exception:  # noqa: BLE001
+        return []
+    atual = {modelo, f"{modelo}:latest"}
+    liberados = []
+    for nome in carregados:
+        if nome in atual or not nome.startswith(DERIVED_PREFIX):
+            continue
+        try:
+            req = urllib.request.Request(url + "/api/generate", headers={"Content-Type": "application/json"},
+                                         data=json.dumps({"model": nome, "keep_alive": 0}).encode())
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+            liberados.append(nome)
+            print(f"  • Liberei '{nome}' da placa de vídeo.")
+        except Exception:  # noqa: BLE001
+            pass
+    return liberados
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Configuração
 # ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +273,7 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
     if perfil == "local":
         llm.update(base_url=OLLAMA_URL + "/v1", model=modelo, api_key="",
                    vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
-                   **LOCAL_TOOL_BUDGET)
+                   **orcamento_local(int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))))
         llm.pop("reasoning_effort", None)
         llm.pop("fallback_models", None)
     else:
@@ -427,6 +469,7 @@ if __name__ == "__main__":
     if a.perfil == "local":
         contexto = int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))
         modelo = preparar_ollama(modelo, contexto)
+        liberar_outros(modelo)
     configure(a.perfil, modelo)
     if a.perfil == "local":
         aquecer_modelo(modelo)

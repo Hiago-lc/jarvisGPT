@@ -616,5 +616,45 @@ class AquecimentoTests(unittest.TestCase):
         self.assertEqual(self._motor("https://generativelanguage.googleapis.com/v1beta/openai"), [])
 
 
+
+class ContextoTests(unittest.TestCase):
+    def test_smaller_context_gets_a_smaller_request(self):
+        self.assertEqual(start_local.orcamento_local(12288)["history_chars"], "8000")
+        self.assertEqual(start_local.orcamento_local(8192)["history_chars"], "5000")
+        self.assertEqual(start_local.orcamento_local(6144)["max_tool_chars"], "6000")
+        with patch.dict(os.environ, {"JARVIS_CONTEXT": "6144"}):
+            cfg = start_local.montar_config({}, "local", "qwen")["providers"]["creds"]["openai_compat"]
+        self.assertEqual((cfg["history_chars"], cfg["max_tools"]), ("3000", "8"))
+
+    def test_other_jarvis_models_leave_the_gpu(self):
+        enviados = []
+
+        class R:
+            def __init__(self, corpo=b"{}"):
+                self.corpo = corpo
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return self.corpo
+
+        def abrir(req, timeout=None):
+            url = req if isinstance(req, str) else req.full_url
+            if url.endswith("/api/ps"):
+                return R(json.dumps({"models": [{"name": "jarvis-qwen3-4b-12k:latest"},
+                                                {"name": "jarvis-qwen3-4b-8k:latest"},
+                                                {"name": "llava:latest"}]}).encode())
+            enviados.append(json.loads(req.data))
+            return R()
+        with patch("urllib.request.urlopen", side_effect=abrir):
+            liberados = start_local.liberar_outros("jarvis-qwen3-4b-8k")
+        self.assertEqual(liberados, ["jarvis-qwen3-4b-12k:latest"])
+        self.assertEqual(enviados, [{"model": "jarvis-qwen3-4b-12k:latest", "keep_alive": 0}])
+
+
 if __name__ == "__main__":
     unittest.main()

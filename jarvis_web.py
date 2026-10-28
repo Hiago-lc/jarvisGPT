@@ -140,6 +140,7 @@ def main(argv=None) -> int:
     if a.perfil == "local":
         modelo = start_local.preparar_ollama(
             modelo, int(start_local._env("JARVIS_CONTEXT", str(start_local.DEFAULT_CONTEXT))))
+        start_local.liberar_outros(modelo)
     start_local.configure(a.perfil, modelo)
 
     from haizen import worker
