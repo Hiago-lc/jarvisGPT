@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+os.environ.setdefault("JARVIS_CEREBRO", "local")   # estes testes são do cérebro local
 
 from providers.base import FunctionCall
 
@@ -820,30 +821,30 @@ class MudarEventoTests(_Base):
 
     def test_conversation_from_the_screenshot(self):
         import datetime as dt
-        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners Sol Nascente",
                                      "start": {"dateTime": f"{self.amanha}T09:00:00-03:00"},
                                      "end": {"dateTime": f"{self.amanha}T10:00:00-03:00"}}
-        r = self._pedir("preciso que ajuste o horário da demanda Banners São Rafael da agenda para ser de 14 as 15")
+        r = self._pedir("preciso que ajuste o horário da demanda Banners Sol Nascente da agenda para ser de 14 as 15")
         ev = self.agenda.eventos["b1"]
         self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("14:00", "15:00"))
         self.assertEqual(len(self.agenda.eventos), 4)          # nada foi criado
-        self.assertIn("Banners São Rafael", r["resposta"])
+        self.assertIn("Banners Sol Nascente", r["resposta"])
         # "dessa tarefa", sem dizer o horário: pergunta, e a resposta seguinte completa.
         r = self._pedir("ajuste o horário dessa tarefa de amanhã")
-        self.assertIn("Para que horário mudo \"Banners São Rafael\"", r["resposta"])
+        self.assertIn("Para que horário mudo \"Banners Sol Nascente\"", r["resposta"])
         r = self._pedir("das 16 às 17:30")
         self.assertEqual((ev["start"]["dateTime"][11:16], ev["end"]["dateTime"][11:16]), ("16:00", "17:30"))
 
     def test_delete_by_pasting_the_listed_line(self):
         import actions.google_agenda as ga
-        self.agenda.eventos["e1"] = {"id": "e1", "summary": "preciso que ajuste o horário da demanda Banners São Rafael da ser",
+        self.agenda.eventos["e1"] = {"id": "e1", "summary": "preciso que ajuste o horário da demanda Banners Sol Nascente da ser",
                                      "start": {"dateTime": f"{self.amanha}T14:00:00-03:00"},
                                      "end": {"dateTime": f"{self.amanha}T15:00:00-03:00"}}
-        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+        self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners Sol Nascente",
                                      "start": {"dateTime": f"{self.amanha}T09:00:00-03:00"},
                                      "end": {"dateTime": f"{self.amanha}T10:00:00-03:00"}}
         ga.lembrar_listados(list(self.agenda.eventos.values()))
-        r = self._pedir("preciso que exclua: 14:00: preciso que ajuste o horário da demanda Banners São Rafael da ser")
+        r = self._pedir("preciso que exclua: 14:00: preciso que ajuste o horário da demanda Banners Sol Nascente da ser")
         self.assertEqual(self.agenda.apagados, ["e1"])
         self.assertIn("Excluí", r["resposta"])
         ga.ULTIMOS.update(quando=0.0, itens=[])
@@ -851,9 +852,9 @@ class MudarEventoTests(_Base):
     def test_spoken_names_distorted_by_voice(self):
         for frase in ("Demanda na minha agenda de amanhã, tem escrito BANISHON Rafa, eu preciso que ajuste "
                       "o horário dela para 2 às 15 e não de 2 às 17",
-                      "O nome da demanda é BANES São Rafael. Então, preciso que você ajuste o horário dela "
+                      "O nome da demanda é BANES Sol Nascente. Então, preciso que você ajuste o horário dela "
                       "das 14 às 15 e não de 14 às 17"):
-            self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners São Rafael",
+            self.agenda.eventos["b1"] = {"id": "b1", "summary": "Banners Sol Nascente",
                                          "start": {"dateTime": f"{self.amanha}T14:00:00-03:00"},
                                          "end": {"dateTime": f"{self.amanha}T17:00:00-03:00"}}
             r = self._pedir(frase)
@@ -893,7 +894,7 @@ class ExcluirSemNomeTests(_Base):
         hoje = dt.date.today().isoformat()
         ev = lambda i, t, h: {"id": i, "summary": t, "start": {"dateTime": f"{hoje}T{h}:00-03:00"},
                               "end": {"dateTime": f"{hoje}T{h[:2]}:59:00-03:00"}}
-        self.agenda = _AgendaFalsa([ev("b1", "Banners São Rafael", "14:00"), ev("b2", "Criativos São Rafael", "14:00"),
+        self.agenda = _AgendaFalsa([ev("b1", "Banners Sol Nascente", "14:00"), ev("b2", "Criativos Sol Nascente", "14:00"),
                                     ev("b3", "Estudos", "16:00")])
         self.p = patch("core.google_calendar.service", return_value=self.agenda)
         self.p.start()
@@ -919,7 +920,7 @@ class ExcluirSemNomeTests(_Base):
 
     def test_by_time_today(self):
         r = self._pedir("exclui os compromissos das 14h de hoje")
-        self.assertIn("Excluí do Google Agenda: Banners São Rafael", r["resposta"])
+        self.assertIn("Excluí do Google Agenda: Banners Sol Nascente", r["resposta"])
         self.assertEqual(self.confirmacoes, [])
         self.assertEqual(sorted(self.agenda.apagados), ["b1", "b2"])
 

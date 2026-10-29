@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+os.environ.setdefault("JARVIS_CEREBRO", "local")   # estes testes são do cérebro local
 
 
 class FinanceiroFaladoTests(unittest.TestCase):

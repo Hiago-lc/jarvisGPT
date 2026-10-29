@@ -449,8 +449,8 @@ def marcas() -> list[dict]:
 def pasta_da_marca(cliente_id: int | None, texto: str = "", marca: str = "") -> str:
     """A pasta do cliente onde os agentes leem o material e gravam o trabalho.
 
-    Ordem: a marca escolhida; uma marca citada no pedido ("vídeo da Stylle
-    Turismo"); a única marca do cliente. Sem nada disso, vazio."""
+    Ordem: a marca escolhida; uma marca citada no pedido ("vídeo da Viagens
+    Sol"); a única marca do cliente. Sem nada disso, vazio."""
     todas = [m for m in marcas() if (m.get("pasta") or "").strip()]
     if marca:
         k = chave(marca)

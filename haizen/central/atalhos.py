@@ -763,7 +763,7 @@ def _aplicar_edicao(ev: dict, campo: str, novo: str, alvo: str) -> tuple[str, bo
 
 
 # ── Google Agenda: ajuste de horário dito do jeito que se fala ──────────────
-# "Demanda de amanhã, tem escrito Banners São Rafael, ajusta o horário dela para
+# "Demanda de amanhã, tem escrito Banners Sol Nascente, ajusta o horário dela para
 # 2 às 15 e não de 2 às 17": o nome vem distorcido pelo reconhecimento de voz,
 # então o compromisso é achado pelo nome aproximado E pelo horário atual citado.
 _VERBO_AJUSTE = re.compile(r"\b(?:ajust|alter|mud|remar[cq]|troc|corri[gj]|modific|reagend|reprogram|acert|pass[ae]|mov[ae])\w*", re.I)

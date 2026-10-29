@@ -271,9 +271,21 @@ class _Handler(BaseHTTPRequestHandler):
             return self._whatsapp(metodo, partes[1:], q)
         if partes and partes[0] == "agenda":
             return self._agenda(metodo, partes[1:], q)
+        if partes and partes[0] == "pc":
+            return self._pc(metodo, partes[1:])
 
         if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "ficha":
             return dados.ficha_cliente(int(partes[1]))
+        if len(partes) == 3 and partes[0] == "clientes" and partes[2] == "guia":
+            from haizen.producao import guia
+            c = self._corpo() if metodo == "POST" else q
+            marca = store.pasta_da_marca(int(partes[1]), str(c.get("nota") or ""), str(c.get("marca") or ""))
+            if not marca or not Path(marca).is_dir():
+                raise ValueError("este cliente não tem pasta cadastrada nas marcas")
+            if metodo == "POST":
+                arq = guia.anotar(Path(marca), str(c.get("nota") or ""), "contado ao Jarvis")
+                return {"ok": True, "arquivo": str(arq)}
+            return {"arquivo": str(guia.arquivo_guia(Path(marca))), "guia": guia.ler_guia(Path(marca))}
         if len(partes) == 3 and partes[0] == "tarefas" and partes[2] == "acessos":
             return {"acessos": dados.acessos_da_tarefa(int(partes[1]))}
         if len(partes) == 3 and partes[0] == "marcas" and partes[2] == "abrir" and metodo == "POST":
@@ -425,6 +437,17 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ValueError("informe o contato e o texto")
             _ou_erro(*whatsapp_web.run_op({"op": "send", "recipient": contato, "text": texto}, timeout=45))
             return {"ok": True}
+        if rota == "enviar_confirmando" and metodo == "POST":
+            # O Claude prepara; o envio só acontece quando o usuário confirma na tela.
+            from haizen.central import cerebro
+            c = self._corpo()
+            contato, texto = str(c.get("contato") or "").strip(), str(c.get("texto") or "").strip()
+            if not contato or not texto:
+                raise ValueError("informe o contato e o texto")
+            cerebro.ligar_confirmacoes()
+            r = cerebro.executar_ferramenta("whatsapp", {"acao": "responder", "contato": contato,
+                                                         "texto": texto[:4000]})
+            return {"resultado": str(r), "confirmacao": cerebro.confirmacao_pendente()}
         if rota == "transcrever" and metodo == "POST":
             from core import transcrever
             c = self._corpo()
@@ -471,6 +494,24 @@ class _Handler(BaseHTTPRequestHandler):
                 motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
                 raise ValueError((motivo.group(1).strip('"') if motivo else r)[:300])
             return {"ok": True}
+        return _NAO_ACHOU
+
+    def _pc(self, metodo, partes):
+        """O Claude (cérebro do Jarvis) controlando o PC pelas ações do Jarvis.
+        Ações irreversíveis caem na confirmação da tela, como na voz."""
+        from haizen.central import cerebro
+        rota = partes[0] if partes else ""
+        if rota == "acoes" and metodo == "GET":
+            return [{"nome": n, "descricao": t.get("description", ""), "parametros": t.get("parameters", {})}
+                    for n, t in cerebro._acoes_pc().items()]
+        if rota == "acao" and metodo == "POST":
+            c = self._corpo()
+            nome = str(c.get("nome") or "")
+            if nome not in cerebro._MODULO:
+                raise ValueError(f"ação desconhecida: {nome}")
+            cerebro.ligar_confirmacoes()
+            r = cerebro.executar_ferramenta(nome, dict(c.get("parametros") or {}))
+            return {"resultado": str(r)[:6000], "confirmacao": cerebro.confirmacao_pendente()}
         return _NAO_ACHOU
 
     def _janela(self, metodo, partes, q):

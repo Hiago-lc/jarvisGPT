@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
+os.environ.setdefault("JARVIS_CEREBRO", "local")   # estes testes são do cérebro local
 
 from core import whatsapp_web as web
 

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+os.environ.setdefault("JARVIS_CEREBRO", "local")   # estes testes são do cérebro local
 
 PAGINA = """<!doctype html><html><body><div id="main">
 <div role="row"><div data-id="false_5511@c.us_TXT1" class="message-in"><div data-pre-plain-text="[09:10, 28/10/2026] Ana: "><span>Bom dia!</span></div></div></div>

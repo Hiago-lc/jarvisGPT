@@ -250,6 +250,11 @@ dialog::backdrop { background: rgba(11, 29, 35, .45); }
 .conversa { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 16px; }
 .msg { max-width: 82%; }
 .msg p { margin: 0; white-space: pre-wrap; }
+.msg .md p { white-space: normal; margin: 0 0 6px; }
+.msg .md p:last-child, .msg .md ul:last-child, .msg .md ol:last-child { margin-bottom: 0; }
+.msg .md ul, .msg .md ol { margin: 4px 0 8px; padding-left: 20px; }
+.msg .md li { margin: 2px 0; }
+.msg .md code { font-size: .9em; background: var(--fundo, rgba(127,127,127,.12)); padding: 1px 5px; border-radius: 4px; }
 .msg.eu { align-self: flex-end; background: var(--petroleo); color: #fff; padding: 10px 14px; border-radius: 14px 14px 4px 14px; }
 .msg.ele { align-self: flex-start; background: var(--superficie); border: 1px solid var(--linha); padding: 10px 14px; border-radius: 14px 14px 14px 4px; }
 .msg.pensando p { color: var(--cinza); }

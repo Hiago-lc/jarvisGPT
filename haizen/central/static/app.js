@@ -1229,7 +1229,41 @@ const JARVIS_NOMES = {
   screen_task: "tarefa na tela", send_message: "mensagem", video_player: "vídeo",
   whatsapp_desktop_search: "contatos do WhatsApp", whatsapp_draft: "rascunho no WhatsApp",
   youtube_video: "YouTube",
+  // As ferramentas do Claude (cérebro do Jarvis).
+  painel: "painel", listar: "consulta", registrar: "registro", atualizar: "alteração", excluir_registro: "exclusão",
+  ficha_cliente: "ficha do cliente", agenda_eventos: "agenda", agenda_criar: "agenda", agenda_editar: "agenda",
+  agenda_excluir: "agenda", agenda_horarios_livres: "agenda", whatsapp_conversas: "WhatsApp", whatsapp_ler: "WhatsApp",
+  whatsapp_enviar: "WhatsApp", projeto_criar: "novo projeto", projetos: "projetos", trabalho_delegar: "agentes",
+  trabalhos: "agentes", trabalho_ver: "agentes", trabalho_aprovar: "aprovação", trabalho_refazer: "nova versão",
+  guia_da_marca: "guia da marca", guia_anotar: "guia da marca", computador_acoes: "PC", computador: "PC",
+  Read: "leitura de arquivo", Glob: "pastas", Grep: "busca em arquivos", LS: "pastas", WebSearch: "pesquisa na web",
+  WebFetch: "página da web", desligar: "desligar",
 };
+
+// Markdown simples das respostas do Claude: negrito, código, listas e parágrafos.
+// O texto é escapado antes; só estas marcações viram HTML.
+function mdSimples(texto) {
+  const inline = (t) => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s.,;:!?)]|$)/g, "$1<em>$2</em>");
+  const blocos = [];
+  let lista = null;
+  for (const linha of String(texto || "").split("\n")) {
+    const item = linha.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (item) {
+      const tipo = /^\s*\d/.test(linha) ? "ol" : "ul";
+      if (!lista || lista.tipo !== tipo) { lista = { tipo, itens: [] }; blocos.push(lista); }
+      lista.itens.push(inline(item[1]));
+      continue;
+    }
+    lista = null;
+    const tit = linha.match(/^#{1,4}\s+(.*)$/);
+    if (tit) blocos.push(`<p><strong>${inline(tit[1])}</strong></p>`);
+    else if (linha.trim()) blocos.push(`<p>${inline(linha)}</p>`);
+  }
+  return blocos.map((b) => (typeof b === "string" ? b : `<${b.tipo}>${b.itens.map((i) => `<li>${i}</li>`).join("")}</${b.tipo}>`)).join("");
+}
 
 async function apiBin(caminho, corpo) {
   const r = await fetch(`/api/${caminho}`, { method: "POST", headers: { "X-Central": "1", "Content-Type": "application/octet-stream" }, body: corpo });
@@ -1352,7 +1386,8 @@ function balao(m) {
   const origem = m.origem === "janela" ? '<span class="msg-origem">pela janela de voz</span>' : "";
   if (m.papel === "usuario") return `<div class="msg eu"><p>${esc(m.texto)}</p>${origem}</div>`;
   const acoes = (m.acoes || []).map((a) => JARVIS_NOMES[a] || a);
-  return `<div class="msg ele"><p>${esc(m.texto)}</p>${acoes.length ? `<span class="msg-acoes">Usou: ${esc(acoes.join(", "))}</span>` : ""}${origem}</div>`;
+  const unicas = [...new Set(acoes)];
+  return `<div class="msg ele"><div class="md">${mdSimples(m.texto)}</div>${unicas.length ? `<span class="msg-acoes">Usou: ${esc(unicas.join(", "))}</span>` : ""}${origem}</div>`;
 }
 
 function mostrarConfirmacao(c) {
@@ -1360,7 +1395,7 @@ function mostrarConfirmacao(c) {
   if (!el) return;
   if (!c) { el.hidden = true; return; }
   el.hidden = false;
-  $("#conf-titulo").textContent = c.titulo;
+  $("#conf-titulo").textContent = c.titulo + (c.detalhe ? `: "${c.detalhe}"` : "");
 }
 
 ROTAS.jarvis = async () => (PONTE ? jarvisNativo() : jarvisWeb());

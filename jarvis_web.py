@@ -1,7 +1,11 @@
 """Jarvis web: o assistente e a central da HAIZEN no navegador, no PC e no celular.
 
 Roda em segundo plano, sem a janela antiga (que fica opcional, em start_local.py).
-O cérebro continua neste PC: modelo, voz, agentes, arquivos e controle do PC.
+Quem responde e age é o Claude (Claude Code com a sua assinatura), usando as
+ferramentas do Jarvis: financeiro, agenda, WhatsApp, agentes e o PC. Sem o
+Claude Code (ou com JARVIS_CEREBRO=local), volta o modelo local.
+
+    py jarvis_web.py --abrir               # só abre a janela (se já estiver rodando)
 
     py jarvis_web.py                       # modelo local, abre o navegador
     py jarvis_web.py --perfil hibrido      # Groq gratuito + voz local
@@ -110,34 +114,98 @@ def iniciar_com_windows(perfil: str, ligar: bool, com_janela: bool = False) -> s
     return f"Pronto: o Jarvis vai iniciar sozinho quando você ligar o PC.{extra} ({atalho})"
 
 
+# ── a janela ────────────────────────────────────────────────────────────────
+def _navegador_app() -> str | None:
+    """Edge ou Chrome, para abrir a central como um aplicativo (sem abas e barra)."""
+    if sys.platform != "win32":
+        return shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("microsoft-edge")
+    pastas = [os.environ.get(k, "") for k in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
+    for rel in (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe"):
+        for base in pastas:
+            if base and (Path(base) / rel).is_file():
+                return str(Path(base) / rel)
+    return shutil.which("msedge") or shutil.which("chrome")
+
+
+def abrir_janela(url: str) -> None:
+    """A central numa janela própria, com o microfone liberado (127.0.0.1 é local)."""
+    exe = _navegador_app()
+    if exe:
+        try:
+            perfil = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "JarvisGPT" / "janela-web"
+            subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={perfil}", "--window-size=1280,860",
+                              "--no-first-run", "--no-default-browser-check"])
+            return
+        except OSError:
+            pass
+    import webbrowser
+    webbrowser.open(url)
+
+
+def _ja_aberto() -> bool:
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{PORTA}/api/sistema/versao", headers={"X-Central": "1"})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=3) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _claude_cerebro() -> bool:
+    try:
+        from haizen.central import claude_cerebro
+        return claude_cerebro.ativo()
+    except Exception as e:  # noqa: BLE001
+        print(f"Claude Code indisponível ({e}); uso o modelo local.")
+        return False
+
+
 # ── principal ───────────────────────────────────────────────────────────────
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Jarvis web: assistente e central da HAIZEN.")
     ap.add_argument("--perfil", choices=start_local.PERFIS, default="local")
     ap.add_argument("--modelo", default="")
     ap.add_argument("--sem-navegador", action="store_true")
+    ap.add_argument("--abrir", action="store_true", help="só abrir a janela do Jarvis já rodando")
     ap.add_argument("--tailscale", action="store_true", help="liberar o acesso pelo celular")
     ap.add_argument("--iniciar-com-windows", action="store_true")
     ap.add_argument("--nao-iniciar-com-windows", action="store_true")
     ap.add_argument("--com-janela", action="store_true",
                     help="com --iniciar-com-windows: abre também a janela de voz")
     a = ap.parse_args(argv)
+    try:
+        # O atalho da área de trabalho (Jarvis.vbs) abre com este mesmo Python.
+        _pyw = Path(sys.executable).with_name("pythonw.exe")
+        (RAIZ / "config" / "python_local.txt").write_text(
+            str(_pyw if _pyw.is_file() else Path(sys.executable)), encoding="utf-8")
+    except OSError:
+        pass
 
     if a.iniciar_com_windows or a.nao_iniciar_com_windows:
         print(iniciar_com_windows(a.perfil, a.iniciar_com_windows, a.com_janela))
         return 0
 
+    url_jarvis = f"http://127.0.0.1:{PORTA}/#/jarvis"
+    if a.abrir and _ja_aberto():
+        abrir_janela(url_jarvis)
+        print("O Jarvis já está rodando; abri a janela.")
+        return 0
+
     modelo = a.modelo or start_local.modelo_padrao(a.perfil)
-    # Ao ligar o PC (--sem-navegador), o Ollama pode ainda estar subindo.
-    espera = 180 if a.sem_navegador else 0
+    claude = _claude_cerebro()
+    # Com o Claude no comando, o modelo local é só reserva: sem Ollama, segue.
+    espera = 0 if claude else (180 if a.sem_navegador else 0)
     problemas = [p for p in start_local.verificar_aguardando(a.perfil, modelo, espera)
                  if "Piper" not in p]
     for p in problemas:
         print("  •", p)
-    if problemas:
+    if problemas and not claude:
         print("Resolva os itens acima e rode de novo.")
         return 1
-    if a.perfil == "local":
+    if claude:
+        print("Cérebro: Claude (Claude Code da sua assinatura).")
+    if a.perfil == "local" and not problemas and not claude:
         modelo = start_local.preparar_ollama(
             modelo, int(start_local._env("JARVIS_CONTEXT", str(start_local.DEFAULT_CONTEXT))))
         start_local.liberar_outros(modelo)
@@ -173,8 +241,7 @@ def main(argv=None) -> int:
     print("Carregando o ouvido e a voz (só na primeira vez demora)...")
     threading.Thread(target=cerebro.aquecer, daemon=True, name="aquecer").start()
     if not a.sem_navegador:
-        import webbrowser
-        webbrowser.open(url + "#/jarvis")
+        abrir_janela(url.rstrip("/") + "/#/jarvis")
     print("Pronto. Ctrl+C para fechar.")
     try:
         while True:

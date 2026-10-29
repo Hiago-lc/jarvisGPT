@@ -229,6 +229,7 @@ def refazer(tid: int, ajuste: str) -> dict:
                                 titulo=t.get("titulo") or "", aprovacao=bool(t.get("aprovacao", 1)),
                                 depende_de=json.loads(t.get("depende_de") or "[]"))
     store.atualizar(tid, status="rejeitado", observacao=(ajuste or "").strip())
+    _aprender(t, ajuste, "ajuste pedido")
     if t.get("projeto_id"):
         # As etapas seguintes passam a esperar a nova versão.
         for outra in store.trabalhos_do_projeto(t["projeto_id"]):
@@ -236,6 +237,21 @@ def refazer(tid: int, ajuste: str) -> dict:
             if tid in deps:
                 store.atualizar(outra["id"], depende_de=[novo["id"] if d == tid else d for d in deps])
     return novo
+
+
+def _aprender(t: dict, nota: str, como: str) -> None:
+    """Ajustes e observações da revisão vão para o guia da marca do cliente."""
+    if not (nota or "").strip():
+        return
+    try:
+        from pathlib import Path
+        from haizen.producao import guia
+        proj = store.projeto(t["projeto_id"]) if t.get("projeto_id") else None
+        marca = (proj or {}).get("marca_pasta") or store.pasta_da_marca(t.get("cliente_id"), t.get("pedido", ""))
+        if marca and Path(marca).is_dir():
+            guia.anotar(Path(marca), nota, f"{como} em {t.get('titulo') or t['agente']}")
+    except Exception as e:  # noqa: BLE001 - aprender é extra; a revisão segue
+        print(f"[HAIZEN] não anotei no guia da marca: {e}")
 
 
 def tentar_de_novo(tid: int) -> dict:
@@ -261,6 +277,7 @@ def aprovar(tid: int, observacao: str = "") -> dict:
         raise ValueError(f"o trabalho {tid} está {_NOMES_STATUS[t['status']]}, "
                          "não aguardando aprovação")
     feito = store.atualizar(tid, status="aprovado", observacao=(observacao or "").strip())
+    _aprender(t, observacao, "aprovado com observação")
     if feito.get("projeto_id"):
         liberar(feito["projeto_id"])
     return feito

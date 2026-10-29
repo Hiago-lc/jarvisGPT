@@ -298,6 +298,20 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None) -
     agencia = pasta_haizen()
     if agencia and agencia != marca:
         linhas += [f"- Material da HAIZEN (logo e identidade da agência, para propostas e documentos): `{agencia.as_posix()}`."]
+    from haizen.producao import guia
+    if marca:
+        proprio = [marca / n for n in ("CLAUDE.md", "JARVIS.md") if (marca / n).is_file()]
+        if proprio:
+            linhas += [f"- Instruções do próprio cliente: leia `{proprio[0].as_posix()}` antes de começar."]
+        texto_guia = guia.ler_guia(marca).strip()
+        if texto_guia:
+            linhas += ["", "## Guia da marca (o que o dono da HAIZEN já aprovou ou pediu para mudar: siga à risca)",
+                       texto_guia[-6000:]]
+    rec = guia.receitas()
+    if rec:
+        linhas += ["", "## Receitas que já deram certo",
+                   "Se o pedido for deste tipo, leia a receita inteira e siga a estrutura dela:"]
+        linhas += [f"- {r['nome']}: {r['descricao']} → `{r['arquivo'].as_posix()}`" for r in rec]
     linhas += [
         "",
         "## Ferramentas (rode no terminal)",

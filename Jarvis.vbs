@@ -1,4 +1,4 @@
-' Abre o Jarvis sem a janela preta do terminal. É o que o atalho
+' Abre o Jarvis (versão web, com o Claude) sem a janela preta do terminal. É o que o atalho
 ' "Jarvis HAIZEN" da área de trabalho chama.
 Option Explicit
 Dim fso, sh, pasta, py, arq, f, http, aberto, base, pastas, p
@@ -19,9 +19,6 @@ If Err.Number = 0 Then
 End If
 Err.Clear
 On Error GoTo 0
-If aberto Then
-  If MsgBox("O Jarvis já está aberto. Abrir outra janela mesmo assim?", vbYesNo + vbQuestion, "Jarvis") <> vbYes Then WScript.Quit
-End If
 
 ' O Python que o Jarvis usou da última vez (o start_local.py anota aqui).
 py = ""
@@ -73,7 +70,13 @@ If py = "" Then py = "pythonw.exe"
 
 sh.CurrentDirectory = pasta
 On Error Resume Next
-sh.Run """" & py & """ """ & pasta & "\start_local.py""", 0, False
+' A versão web: o Claude responde e age; a central abre numa janela própria.
+' Já aberto: só mostra a janela de novo.
+If aberto Then
+  sh.Run """" & py & """ """ & pasta & "\jarvis_web.py"" --abrir", 0, False
+Else
+  sh.Run """" & py & """ """ & pasta & "\jarvis_web.py""", 0, False
+End If
 If Err.Number <> 0 Then
   MsgBox "Não consegui abrir o Jarvis: o Python não foi encontrado." & vbCrLf & _
          "Abra uma vez pelo PyCharm ou pelo terminal (python start_local.py) e tente de novo.", vbExclamation, "Jarvis"

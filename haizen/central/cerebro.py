@@ -139,6 +139,10 @@ def estado() -> dict:
     """O que está configurado, para a página dizer com quem você fala."""
     from memory.config_manager import get_pipeline, get_provider_config
     pipe = get_pipeline()
+    from haizen.central import claude_cerebro
+    if claude_cerebro.ativo():
+        return {"modelo": "Claude", "onde": "Claude Code (sua assinatura)", "cerebro": "claude",
+                "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt"))}
     llm = get_provider_config(pipe.get("llm") or "openai_compat")
     base = llm.get("base_url", "")
     onde = ("modelo local" if "127.0.0.1" in base or "localhost" in base
@@ -476,6 +480,8 @@ def historico(limite: int = 40) -> list[dict]:
 def limpar_historico() -> None:
     with store.conexao() as con:
         con.execute("DELETE FROM jarvis_mensagens")
+    from haizen.central import claude_cerebro
+    claude_cerebro.nova_conversa()
 
 
 def _guardar(papel: str, texto: str, acoes: list | None = None) -> None:
@@ -550,12 +556,38 @@ def _mensagens_anteriores() -> list[dict]:
     return list(reversed(out))
 
 
+def _pelo_claude(texto: str, por_voz: bool) -> dict | None:
+    """O Claude responde e age. None = cair no cérebro local (Claude indisponível)."""
+    from haizen.central import claude_cerebro
+    from haizen.central.atalhos import desligar_direto
+    resposta = desligar_direto(texto)          # desligar não espera o Claude
+    acoes = ["desligar"] if resposta else []
+    if resposta is None:
+        try:
+            r = claude_cerebro.responder(texto, por_voz)
+            resposta, acoes = r["resposta"], r["acoes"]
+        except PermissionError as e:           # Claude Code sem login: dizer como resolver
+            resposta, acoes = str(e), []
+        except Exception as e:  # noqa: BLE001
+            print(f"[Jarvis web] o Claude falhou, uso o cérebro local: {e}")
+            return None
+    _guardar("usuario", texto)
+    _guardar("jarvis", resposta, acoes)
+    return {"resposta": resposta, "acoes": acoes, "confirmacao": confirmacao_pendente(),
+            "cerebro": "claude"}
+
+
 def responder(texto: str, por_voz: bool = False) -> dict:
     """Uma volta completa: pergunta → (ferramentas) → resposta."""
     texto = (texto or "").strip()
     if not texto:
         raise ValueError("mensagem vazia")
     ligar_confirmacoes()
+    from haizen.central import claude_cerebro
+    if claude_cerebro.ativo():
+        r = _pelo_claude(texto, por_voz)
+        if r is not None:
+            return r
     # Registro de receita/despesa com tudo na frase: o código grava, sem modelo.
     # e consulta da agenda: o código resolve, sem o modelo.
     from haizen.central.atalhos import responder_direto

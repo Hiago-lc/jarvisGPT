@@ -2,6 +2,32 @@
 
 O Jarvis passa a delegar trabalhos a agentes da HAIZEN. Cada entrega fica aguardando a sua aprovação: nada é publicado, enviado ou cobrado sozinho.
 
+## O Claude é o cérebro do Jarvis (versão web)
+
+O atalho **Jarvis HAIZEN** abre a central numa janela própria. Quem responde e age é o **Claude**, pelo Claude Code do PC e com a sua assinatura (não a API). Ele continua a mesma conversa entre uma mensagem e outra, e usa as ferramentas do Jarvis:
+
+| Ferramenta | O que faz |
+| --- | --- |
+| Financeiro, clientes, tarefas, pipeline | Consulta, registra, marca como recebido, conclui (confere antes para não duplicar) |
+| Google Agenda | Lista, cria, muda, move e exclui eventos; horários livres |
+| WhatsApp | Lê conversas e ouve áudios; para **enviar**, a mensagem espera você clicar em Confirmar na tela |
+| Projetos e agentes | Abre projetos, acompanha, aprova e pede novas versões quando você manda |
+| Guia da marca | Guarda preferências de cada cliente que os agentes seguem sempre |
+| Computador | Abre programas, volume, navegador, arquivos, YouTube... (o que é irreversível pede confirmação) |
+| Pastas dos clientes | Lê logos, manuais e referências para responder (sem alterar nada) |
+
+Fale pelo microfone (botão **Falar** ou **Conversa**) ou digite. **Limpar conversa** começa uma conversa nova com o Claude.
+
+Se o Claude Code não estiver instalado, o Jarvis volta ao modelo local. Se ele não estiver conectado à sua conta, a resposta explica como conectar (`conectar-claude.bat`, depois `/login`). Para forçar o modelo local: variável `JARVIS_CEREBRO=local`. Para escolher o modelo do Claude: `JARVIS_CLAUDE_MODELO` (ex.: `sonnet`).
+
+### O fluxo de produção
+
+1. Você pede ao Jarvis ("faz um reels da excursão para Porto Seguro com as filmagens da pasta dela").
+2. O Claude abre um **projeto**; o gerente planeja e os agentes produzem os arquivos na pasta do cliente, em `JARVIS - para revisar`.
+3. Você revisa na tela do trabalho e aprova ou pede ajuste ("o texto do gancho ficou pequeno").
+4. Cada ajuste e cada observação ao aprovar vira uma linha no **guia da marca** do cliente (`JARVIS - para revisar\_GUIA DA MARCA (Jarvis).md`), e todo agente lê o guia antes de produzir. O que você aprovou uma vez não precisa ser repetido.
+5. Tipos de peça que já deram certo viram **receitas** (`haizen\producao\receitas\*.md`), que os agentes seguem: a primeira é o reels de pacote de viagem. Se o cliente tiver um `CLAUDE.md` próprio na pasta dele, os agentes leem também.
+
 | Quem | Papel | Custo |
 | --- | --- | --- |
 | Jarvis (voz, modelo local) | Recebe o pedido, põe na fila, avisa quando fica pronto | Zero |

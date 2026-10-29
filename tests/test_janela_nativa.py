@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+os.environ.setdefault("JARVIS_CEREBRO", "local")   # estes testes são do cérebro local
 
 import start_local
 from memory import config_manager as cm
