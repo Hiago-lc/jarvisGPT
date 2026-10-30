@@ -82,7 +82,8 @@ def arquivos_da_pasta(pasta: str) -> list[dict]:
     raiz = Path(pasta)
     out = []
     for f in sorted(raiz.rglob("*")):
-        if not f.is_file() or f.name in (".trabalho", "CLAUDE.md", "desktop.ini") or ".claude" in f.parts:
+        if not f.is_file() or f.name in (".trabalho", "CLAUDE.md", "desktop.ini") or ".claude" in f.parts \
+                or "00 - Material enviado" in f.parts:
             continue
         rel = f.relative_to(raiz).as_posix()
         out.append({"nome": rel, "tamanho": f.stat().st_size, "tipo": f.suffix.lower().lstrip("."),
@@ -267,6 +268,24 @@ def pastas_do_trabalho(t: dict) -> tuple[Path, Path | None, Path | None]:
     return pasta, marca_p, raiz
 
 
+def copiar_material(t: dict, pasta: Path, projeto: Path | None) -> Path | None:
+    """Os arquivos que você enviou (no projeto ou no trabalho) vão para
+    "00 - Material enviado", na pasta do projeto (ou do trabalho avulso)."""
+    ids = json.loads(t.get("anexos") or "[]")
+    proj = store.projeto(t["projeto_id"]) if t.get("projeto_id") else None
+    if proj:
+        ids = json.loads(proj.get("anexos") or "[]") + ids
+    if not ids:
+        return None
+    from haizen.central import anexos
+    destino = (projeto or pasta) / "00 - Material enviado"
+    try:
+        anexos.copiar_para(list(dict.fromkeys(ids)), destino)
+    except (KeyError, OSError) as e:
+        print(f"[HAIZEN] material enviado incompleto: {e}")
+    return destino
+
+
 def pasta_haizen() -> Path | None:
     """O material da própria agência (logo, cores), para propostas e orçamentos."""
     for m in store.marcas():
@@ -295,6 +314,10 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None) -
                    "o material que faltou."]
     if projeto:
         linhas += [f"- Etapas anteriores deste projeto (para ler e reaproveitar): `{projeto.as_posix()}`."]
+    material = (projeto or pasta) / "00 - Material enviado"
+    if material.is_dir():
+        linhas += [f"- Material que o dono da HAIZEN enviou para este pedido (fotos, vídeos, logos, referências; "
+                   f"use com prioridade): `{material.as_posix()}`."]
     agencia = pasta_haizen()
     if agencia and agencia != marca:
         linhas += [f"- Material da HAIZEN (logo e identidade da agência, para propostas e documentos): `{agencia.as_posix()}`."]
@@ -386,6 +409,7 @@ def executar(t: dict) -> Path:
                 texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
             else:
                 pasta, marca, projeto = pastas_do_trabalho(t)
+                copiar_material(t, pasta, projeto)
                 (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto), encoding="utf-8")
                 store.atualizar(t["id"], pasta=str(pasta))
                 leitura = [p for p in (marca, projeto, pasta_haizen()) if p is not None]

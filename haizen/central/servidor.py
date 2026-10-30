@@ -17,7 +17,7 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from haizen import agentes, servicos, store, worker
 from haizen.central import dados
@@ -271,6 +271,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._whatsapp(metodo, partes[1:], q)
         if partes and partes[0] == "agenda":
             return self._agenda(metodo, partes[1:], q)
+        if partes and partes[0] == "anexos":
+            from haizen.central import anexos
+            if len(partes) == 1 and metodo == "POST":
+                return anexos.salvar(q.get("nome") or "arquivo", self._bruto(anexos.LIMITE))
+            if len(partes) == 2 and metodo == "GET":
+                arq = anexos.caminho(unquote(partes[1]))
+                return _Arquivo(arq.read_bytes(), anexos.tipo(arq))
         if partes and partes[0] == "pc":
             return self._pc(metodo, partes[1:])
 
@@ -321,7 +328,8 @@ class _Handler(BaseHTTPRequestHandler):
                                                                  int(q.get("limite") or 50))]
         if not partes and metodo == "POST":
             c = self._corpo()
-            r = servicos.delegar(c.get("agente", ""), c.get("pedido", ""), c.get("cliente", ""))
+            r = servicos.delegar(c.get("agente", ""), c.get("pedido", ""), c.get("cliente", ""),
+                                 anexos=c.get("anexos") or [])
             worker.iniciar()
             return {"trabalho": _trabalho(r["trabalho"]), "aviso": r["aviso"]}
         if len(partes) >= 1:
@@ -373,7 +381,8 @@ class _Handler(BaseHTTPRequestHandler):
                 worker.iniciar()
                 return _trabalho(t)
             if len(partes) == 2 and partes[1] == "refazer" and metodo == "POST":
-                novo = servicos.refazer(tid, self._corpo().get("ajuste", ""))
+                c = self._corpo()
+                novo = servicos.refazer(tid, c.get("ajuste", ""), c.get("anexos") or [])
                 worker.iniciar()
                 return _trabalho(novo)
         return _NAO_ACHOU
@@ -383,7 +392,8 @@ class _Handler(BaseHTTPRequestHandler):
             return [_projeto(p) for p in store.listar_projetos(30)]
         if not partes and metodo == "POST":
             c = self._corpo()
-            r = servicos.criar_projeto(c.get("pedido", ""), c.get("cliente", ""), c.get("titulo", ""), c.get("marca", ""))
+            r = servicos.criar_projeto(c.get("pedido", ""), c.get("cliente", ""), c.get("titulo", ""), c.get("marca", ""),
+                                       c.get("anexos") or [])
             worker.iniciar()
             return {"projeto": _projeto(r["projeto"]), "aviso": r["aviso"]}
         if len(partes) == 1:
@@ -589,7 +599,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         if rota == "mensagem" and metodo == "POST":
             c = self._corpo()
-            return cerebro.responder(c.get("texto", ""), bool(c.get("voz")))
+            return cerebro.responder(c.get("texto", ""), bool(c.get("voz")), c.get("anexos") or [])
         if rota == "ouvir" and metodo == "POST":
             return {"texto": cerebro.ouvir(self._bruto(), int(q.get("taxa") or 16000))}
         if rota == "falar" and metodo == "POST":

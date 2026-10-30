@@ -675,6 +675,111 @@ const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardand
 
 // Os arquivos que o agente produziu: miniaturas das imagens, vídeos e PDFs
 // (buscados com o cabeçalho da central e mostrados como blob).
+// ── anexos: fotos, vídeos, PDFs que você envia ao Jarvis e aos projetos ─────
+async function enviarAnexo(arquivo) {
+  const r = await fetch(`/api/anexos?nome=${encodeURIComponent(arquivo.name || "arquivo")}`, {
+    method: "POST", headers: { "X-Central": "1", "Content-Type": "application/octet-stream" }, body: arquivo });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.erro || `Erro ${r.status}`);
+  return d;
+}
+
+const tamanhoLegivel = (n) => (n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+
+// Um seletor de anexos dentro de `caixa`; `alvo` também aceita arrastar e colar.
+function seletorAnexos(caixa, alvo = caixa, { compacto = false } = {}) {
+  const itens = [];               // {id, nome, tamanho, imagem, url, enviando, erro}
+  let pendentes = 0;
+  caixa.innerHTML = `<div class="anexos-lista"></div>${compacto ? "" : '<button type="button" class="botao anexar-botao">Anexar arquivos</button>'}
+    <input type="file" multiple hidden>`;
+  const lista = $(".anexos-lista", caixa);
+  const input = $("input[type=file]", caixa);
+  const desenhar = () => {
+    lista.innerHTML = itens.map((a, i) => `<span class="anexo-chip${a.erro ? " erro" : ""}" title="${esc(a.erro || a.nome)}">
+      ${a.url ? `<img src="${a.url}" alt="">` : '<span class="anexo-icone" aria-hidden="true">📎</span>'}
+      <span class="anexo-nome">${esc(a.nome)}</span><span class="meta">${a.enviando ? "enviando…" : a.erro ? "falhou" : tamanhoLegivel(a.tamanho)}</span>
+      <button type="button" class="anexo-tirar" data-tirar="${i}" aria-label="Tirar ${esc(a.nome)}">×</button></span>`).join("");
+    $$("[data-tirar]", lista).forEach((b) => b.addEventListener("click", () => {
+      const [a] = itens.splice(+b.dataset.tirar, 1);
+      if (a?.url) URL.revokeObjectURL(a.url);
+      desenhar();
+    }));
+  };
+  const adicionar = async (arquivos) => {
+    for (const f of arquivos) {
+      const a = { nome: f.name || "arquivo", tamanho: f.size, enviando: true,
+        url: f.type?.startsWith("image/") ? URL.createObjectURL(f) : "" };
+      itens.push(a);
+      pendentes++;
+      desenhar();
+      enviarAnexo(f).then((d) => Object.assign(a, { id: d.id, enviando: false }))
+        .catch((e) => Object.assign(a, { enviando: false, erro: e.message }))
+        .finally(() => { pendentes--; desenhar(); });
+    }
+  };
+  $(".anexar-botao", caixa)?.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { adicionar([...input.files]); input.value = ""; });
+  alvo.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); alvo.classList.add("arrastando"); } });
+  alvo.addEventListener("dragleave", () => alvo.classList.remove("arrastando"));
+  alvo.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault(); alvo.classList.remove("arrastando"); adicionar([...e.dataTransfer.files]);
+  });
+  alvo.addEventListener("paste", (e) => {
+    const fs = [...(e.clipboardData?.files || [])];
+    if (fs.length) { e.preventDefault(); adicionar(fs); }
+  });
+  return {
+    abrir: () => input.click(),
+    ids: () => itens.filter((a) => a.id).map((a) => a.id),
+    nomes: () => itens.filter((a) => a.id).map((a) => a.nome),
+    enviando: () => pendentes > 0,
+    limpar: () => { itens.forEach((a) => a.url && URL.revokeObjectURL(a.url)); itens.length = 0; desenhar(); },
+  };
+}
+
+function exigirAnexosProntos(sel) {
+  if (sel?.enviando()) throw new Error("Espere os arquivos terminarem de enviar.");
+  return sel ? sel.ids() : [];
+}
+
+// Miniaturas dos anexos no histórico ([anexo:id] no texto).
+const ANEXO_RE = /\n?\[anexo:([^\]\n]+)\]/g;
+const URLS_ANEXOS = new Map();
+function separarAnexos(texto) {
+  const ids = [...String(texto || "").matchAll(ANEXO_RE)].map((m) => m[1]);
+  return { texto: String(texto || "").replace(ANEXO_RE, "").trim(), ids };
+}
+function htmlAnexos(ids) {
+  if (!ids.length) return "";
+  return `<div class="msg-anexos">${ids.map((id) => {
+    const nome = id.replace(/^\d{8}-\d{6}-\d{3}-/, "");
+    const img = /\.(png|jpe?g|gif|webp)$/i.test(id);
+    return `<a class="msg-anexo" data-anexo="${esc(id)}" href="#" title="${esc(nome)}">${img ? '<span class="msg-anexo-img"></span>' : `📎 ${esc(nome)}`}</a>`;
+  }).join("")}</div>`;
+}
+async function urlAnexo(id) {
+  if (URLS_ANEXOS.has(id)) return URLS_ANEXOS.get(id);
+  const r = await fetch(`/api/anexos/${encodeURIComponent(id)}`, { headers: { "X-Central": "1" } });
+  if (!r.ok) throw new Error("arquivo não encontrado");
+  const url = URL.createObjectURL(await r.blob());
+  URLS_ANEXOS.set(id, url);
+  return url;
+}
+function hidratarAnexos(caixa) {
+  $$("[data-anexo]:not([data-pronto])", caixa).forEach(async (a) => {
+    a.dataset.pronto = "1";
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { window.open(await urlAnexo(a.dataset.anexo), "_blank", "noopener"); } catch (err) { avisar(err.message); }
+    });
+    const ph = $(".msg-anexo-img", a);
+    if (ph) {
+      try { ph.outerHTML = `<img src="${await urlAnexo(a.dataset.anexo)}" alt="">`; } catch (_) { ph.textContent = "📎"; }
+    }
+  });
+}
+
 async function arquivoBlob(id, nome) {
   const r = await fetch(`/api/trabalhos/${id}/arquivo?nome=${encodeURIComponent(nome)}`, { headers: { "X-Central": "1" } });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).erro || `Erro ${r.status}`);
@@ -716,6 +821,7 @@ async function galeriaTrabalho(t, caixa) {
 
 async function abrirTrabalho(id, recarregar) {
   const t = await api("GET", `trabalhos/${id}`);
+  let sel = null;
   const pode = t.status === "aguardando_aprovacao";
   const excluir = t.status === "executando" ? [] : [{ texto: "Excluir", classe: "perigo esquerda", acao: async () => {
     if (!(await confirmarExclusao(`Excluir o trabalho ${t.id}${t.arquivo ? " e o arquivo da entrega" : ""}? Não dá para desfazer.`))) return false;
@@ -729,14 +835,15 @@ async function abrirTrabalho(id, recarregar) {
       ${t.observacao ? `<p class="sub">${esc(t.observacao)}</p>` : ""}
       <div id="galeria-trabalho"></div>
       ${t.entrega ? `<details class="relatorio"${t.pasta ? "" : " open"}><summary>Relatório do agente</summary><div class="entrega">${esc(t.entrega)}</div></details>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
-      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}</div>` : ""}`,
-    aoAbrir: () => galeriaTrabalho(t, $("#galeria-trabalho")),
+      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}
+        <div class="largo"><span class="rotulo-anexos">Arquivos novos para esta versão (opcional)</span><div id="aj-anexos" class="anexos-caixa"></div></div></div>` : ""}`,
+    aoAbrir: (corpo) => { galeriaTrabalho(t, $("#galeria-trabalho")); if (pode) sel = seletorAnexos($("#aj-anexos", corpo), corpo); },
     acoes: pode ? [
       ...excluir,
       ...(t.pasta ? [{ texto: "Abrir pasta", acao: async () => { await api("POST", `trabalhos/${t.id}/pasta`, {}); return false; } }] : []),
       { texto: "Pedir nova versão", acao: async (v) => {
         if (!v.ajuste.trim()) throw new Error("Escreva o que deve mudar na nova versão.");
-        await api("POST", `trabalhos/${t.id}/refazer`, { ajuste: v.ajuste }); avisar("Nova versão na fila"); recarregar();
+        await api("POST", `trabalhos/${t.id}/refazer`, { ajuste: v.ajuste, anexos: exigirAnexosProntos(sel) }); avisar("Nova versão na fila"); recarregar();
       } },
       { texto: "Fechar", acao: () => {} },
       { texto: "Aprovar", classe: "primario", acao: async () => { await api("POST", `trabalhos/${t.id}/aprovar`, {}); avisar("Entrega aprovada"); recarregar(); } },
@@ -1148,6 +1255,7 @@ function cartaoProjeto(p, cores) {
 }
 
 function novoProjeto(recarregar) {
+  let sel = null;
   api("GET", "marcas").then((ms) => {
     const sel = $("#np-marca");
     if (sel) sel.insertAdjacentHTML("beforeend", ms.filter((m) => m.pasta).map((m) => `<option value="${esc(m.nome)}">${esc(m.nome)}${m.cliente_nome ? ` (${esc(m.cliente_nome)})` : ""}</option>`).join(""));
@@ -1159,12 +1267,14 @@ function novoProjeto(recarregar) {
         ${campo({ nome: "cliente", rotulo: "Cliente", tipo: "select", opcoes: [["", "Sem cliente"], ...OPCOES.clientes.map((c) => [c.nome, c.nome])], largo: true })}
         <label class="largo">Pasta do cliente (onde estão logos e fotos, e onde os arquivos serão salvos)<select name="marca" id="np-marca"><option value="">Automático (pela marca citada ou pelo cliente)</option></select></label>
         ${campo({ nome: "pedido", rotulo: "O que o projeto precisa", tipo: "textarea", largo: true, obrig: true })}
+        <div class="largo"><span class="rotulo-anexos">Fotos, vídeos, logos ou referências (opcional; vão para a pasta do projeto)</span><div id="np-anexos" class="anexos-caixa"></div></div>
       </div>`,
+    aoAbrir: (corpo) => { sel = seletorAnexos($("#np-anexos", corpo), corpo); },
     acoes: [
       { texto: "Cancelar", acao: () => {} },
       { texto: "Começar projeto", classe: "primario", enviar: true, acao: async (v) => {
         if (!v.pedido.trim()) throw new Error("Descreva o que o projeto precisa.");
-        const r = await api("POST", "projetos", v);
+        const r = await api("POST", "projetos", { ...v, anexos: exigirAnexosProntos(sel) });
         if (r.aviso) avisar(r.aviso);
         avisar(`${r.aviso ? `${r.aviso} ` : ""}Projeto aberto: o gerente está montando o plano`);
         recarregar();
@@ -1384,7 +1494,10 @@ async function pararGravacao() {
 
 function balao(m) {
   const origem = m.origem === "janela" ? '<span class="msg-origem">pela janela de voz</span>' : "";
-  if (m.papel === "usuario") return `<div class="msg eu"><p>${esc(m.texto)}</p>${origem}</div>`;
+  if (m.papel === "usuario") {
+    const { texto, ids } = separarAnexos(m.texto);
+    return `<div class="msg eu">${texto ? `<p>${esc(texto)}</p>` : ""}${htmlAnexos(ids)}${origem}</div>`;
+  }
   const acoes = (m.acoes || []).map((a) => JARVIS_NOMES[a] || a);
   const unicas = [...new Set(acoes)];
   return `<div class="msg ele"><div class="md">${mdSimples(m.texto)}</div>${unicas.length ? `<span class="msg-acoes">Usou: ${esc(unicas.join(", "))}</span>` : ""}${origem}</div>`;
@@ -1425,13 +1538,19 @@ const jarvisWeb = async () => {
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z" fill="currentColor"/></svg>
           <span id="mic-rotulo">Falar</span></button>
         <button type="button" class="botao conversa-botao" id="modo-conversa" aria-pressed="false" ${estado.ouvido ? "" : "disabled"}>Conversa</button>
-        <textarea id="entrada" rows="1" placeholder="Escreva para o Jarvis" aria-label="Mensagem para o Jarvis"></textarea>
+        <button type="button" class="botao clipe" id="clipe" title="Enviar fotos, vídeos ou arquivos" aria-label="Anexar arquivos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 6.5v10a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6.5H9v9a3 3 0 0 0 6 0V5a4.5 4.5 0 0 0-9 0v11.5a6 6 0 0 0 12 0v-10h-1.5Z" fill="currentColor"/></svg></button>
+        <div class="compositor-texto"><div id="anexos-chat" class="anexos-chat"></div>
+        <textarea id="entrada" rows="1" placeholder="Escreva para o Jarvis (pode arrastar ou colar fotos aqui)" aria-label="Mensagem para o Jarvis"></textarea></div>
         <button class="botao primario" type="submit" id="enviar">Enviar</button>
       </form>
     </div>`;
   const conversa = $("#conversa");
   const rolar = () => { conversa.scrollTop = conversa.scrollHeight; };
   rolar();
+  hidratarAnexos(conversa);
+  const anexosChat = seletorAnexos($("#anexos-chat"), $(".jarvis"), { compacto: true });
+  $("#clipe").addEventListener("click", () => anexosChat.abrir());
   mostrarConfirmacao(estado.confirmacao);
 
   // O que foi dito na janela de voz do PC aparece aqui sem recarregar.
@@ -1446,20 +1565,26 @@ const jarvisWeb = async () => {
       if (ultima(h) === vista || JARVIS.ocupado) return;
       vista = ultima(h);
       conversa.innerHTML = h.map(balao).join("");
+      hidratarAnexos(conversa);
       rolar();
     } catch (e) { /* PC ocupado ou sem rede: tenta de novo na próxima volta */ }
   }, 5000);
 
   const enviar = async (texto, porVoz = false, opcoes = {}) => {
     texto = texto.trim();
-    if (!texto || JARVIS.ocupado) return null;
+    if (anexosChat.enviando()) { avisar("Espere os arquivos terminarem de enviar."); return null; }
+    const anexos = anexosChat.ids();
+    if ((!texto && !anexos.length) || JARVIS.ocupado) return null;
     JARVIS.ocupado = true;
+    anexosChat.limpar();
     $(".boas-vindas", conversa)?.remove();
-    conversa.insertAdjacentHTML("beforeend", balao({ papel: "usuario", texto }) + '<div class="msg ele pensando" id="pensando"><p>Pensando…</p></div>');
+    const marcas = anexos.map((id) => `\n[anexo:${id}]`).join("");
+    conversa.insertAdjacentHTML("beforeend", balao({ papel: "usuario", texto: texto + marcas }) + '<div class="msg ele pensando" id="pensando"><p>Pensando…</p></div>');
+    hidratarAnexos(conversa);
     rolar();
     $("#enviar").disabled = true;
     try {
-      const r = await api("POST", "jarvis/mensagem", { texto, voz: porVoz });
+      const r = await api("POST", "jarvis/mensagem", { texto, voz: porVoz, anexos });
       $("#pensando")?.remove();
       conversa.insertAdjacentHTML("beforeend", balao({ papel: "jarvis", texto: r.resposta, acoes: r.acoes }));
       rolar();

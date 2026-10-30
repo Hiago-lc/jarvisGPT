@@ -32,13 +32,28 @@ def _quem(a: agentes.Agente, forcado: str = "") -> tuple[str, str]:
     return quem, ""
 
 
+def _com_material(pedido: str, anexos: list | None) -> tuple[str, list[str]]:
+    """Confere os anexos e anota no pedido o que foi enviado (os agentes leem)."""
+    if not anexos:
+        return pedido, []
+    from haizen.central import anexos as _anexos
+    lista = _anexos.varios(anexos)
+    nomes = ", ".join(d["nome"] for d in lista)
+    return (f"{pedido}\n\nMaterial enviado pelo usuário (na pasta \"{MATERIAL}\"): {nomes}",
+            [d["id"] for d in lista])
+
+
+MATERIAL = "00 - Material enviado"
+
+
 def delegar(agente: str, pedido: str, cliente: str = "",
-            executor_forcado: str = "") -> dict:
+            executor_forcado: str = "", anexos: list | None = None) -> dict:
     """Coloca um trabalho na fila. Devolve o trabalho e um aviso, se houver."""
     a = agentes.carregar(agente)
     cli, aviso = _cliente(cliente)
     quem, aviso2 = _quem(a, executor_forcado)
-    t = store.criar_trabalho(a.nome, pedido, quem, cli["id"] if cli else None)
+    pedido, ids = _com_material(pedido, anexos)
+    t = store.criar_trabalho(a.nome, pedido, quem, cli["id"] if cli else None, anexos=ids)
     return {"trabalho": t, "aviso": (aviso + aviso2).strip()}
 
 
@@ -47,17 +62,20 @@ def _equipe() -> list[agentes.Agente]:
     return [a for a in agentes.listar() if a.nome != "gerente"]
 
 
-def criar_projeto(pedido: str, cliente: str = "", titulo: str = "", marca: str = "") -> dict:
+def criar_projeto(pedido: str, cliente: str = "", titulo: str = "", marca: str = "",
+                  anexos: list | None = None) -> dict:
     """Abre o projeto e põe o gerente para montar o plano (a primeira etapa)."""
     pedido = (pedido or "").strip()
     if not pedido:
         raise ValueError("Diga o que o projeto precisa.")
+    titulo = titulo or pedido[:80]
+    pedido, ids = _com_material(pedido, anexos)
     cli, aviso = _cliente(cliente)
     pasta = store.pasta_da_marca(cli["id"] if cli else None, f"{pedido} {cliente}", marca)
     if not pasta:
         aviso += ("Não sei qual pasta de cliente usar: os arquivos vão para Documentos\\HAIZEN\\entregas. "
                   "Escolha a marca no projeto para os agentes usarem o material do cliente. ")
-    proj = store.criar_projeto(titulo or pedido[:80], pedido, cli["id"] if cli else None, pasta)
+    proj = store.criar_projeto(titulo, pedido, cli["id"] if cli else None, pasta, ids)
     equipe = "\n".join(f"- {a.nome}: {a.titulo}. {a.descricao}" for a in _equipe())
     try:
         gerente = agentes.carregar("gerente")
@@ -214,7 +232,7 @@ def situacao_projeto(etapas: list[dict]) -> str:
     return "andamento"
 
 
-def refazer(tid: int, ajuste: str) -> dict:
+def refazer(tid: int, ajuste: str, anexos: list | None = None) -> dict:
     """Devolve à fila com o ajuste pedido, mantendo o histórico no pedido."""
     t = store.trabalho(tid)
     if t is None:
@@ -224,10 +242,12 @@ def refazer(tid: int, ajuste: str) -> dict:
         pedido += f"\n\nAjuste pedido na revisão: {ajuste.strip()}"
         if t["arquivo"]:
             pedido += f"\nVersão anterior: {t['arquivo']}"
+    pedido, ids = _com_material(pedido, anexos)
+    ids = list(dict.fromkeys(json.loads(t.get("anexos") or "[]") + ids))
     novo = store.criar_trabalho(t["agente"], pedido, t["executor"], t["cliente_id"],
                                 projeto_id=t.get("projeto_id"), etapa=t.get("etapa") or 0,
                                 titulo=t.get("titulo") or "", aprovacao=bool(t.get("aprovacao", 1)),
-                                depende_de=json.loads(t.get("depende_de") or "[]"))
+                                depende_de=json.loads(t.get("depende_de") or "[]"), anexos=ids)
     store.atualizar(tid, status="rejeitado", observacao=(ajuste or "").strip())
     _aprender(t, ajuste, "ajuste pedido")
     if t.get("projeto_id"):

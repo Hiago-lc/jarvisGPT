@@ -197,13 +197,15 @@ def whatsapp_enviar(contato: str, texto: str) -> dict:
 
 # ── projetos, agentes e produção ────────────────────────────────────────────
 @mcp.tool()
-def projeto_criar(pedido: str, cliente: str = "", marca: str = "") -> dict:
+def projeto_criar(pedido: str, cliente: str = "", marca: str = "", anexos: list[str] | None = None) -> dict:
     """Abre um projeto para a equipe de agentes (gerente planeja; criativos, designer,
     vídeo, dev, tráfego, social, comercial... produzem os arquivos na pasta do cliente,
     em "JARVIS - para revisar"; o usuário aprova nas etapas importantes). Use para
     qualquer produção (peças, vídeos, sites, propostas, planos). `marca` = nome da
-    marca/pasta do cliente quando o cliente tem várias."""
-    return _api("POST", "projetos", {"pedido": pedido, "cliente": cliente, "marca": marca})
+    marca/pasta do cliente quando o cliente tem várias. `anexos`: caminhos dos arquivos que
+    o usuário enviou na conversa (fotos, vídeos, logos) para a equipe usar."""
+    return _api("POST", "projetos", {"pedido": pedido, "cliente": cliente, "marca": marca,
+                                     "anexos": anexos or []})
 
 
 @mcp.tool()
@@ -213,10 +215,11 @@ def projetos() -> list[dict]:
 
 
 @mcp.tool()
-def trabalho_delegar(agente: str, pedido: str, cliente: str = "") -> dict:
+def trabalho_delegar(agente: str, pedido: str, cliente: str = "", anexos: list[str] | None = None) -> dict:
     """Uma tarefa só para um agente (criativos, video, designer, dev, comercial, trafego,
     social, financeiro, atendimento, revisor)."""
-    return _api("POST", "trabalhos", {"agente": agente, "pedido": pedido, "cliente": cliente})
+    return _api("POST", "trabalhos", {"agente": agente, "pedido": pedido, "cliente": cliente,
+                                      "anexos": anexos or []})
 
 
 @mcp.tool()
@@ -244,9 +247,10 @@ def trabalho_aprovar(id: int) -> dict:
 
 
 @mcp.tool()
-def trabalho_refazer(id: int, ajuste: str) -> dict:
-    """Pede uma nova versão de uma entrega, com o ajuste que o usuário quer."""
-    return _api("POST", f"trabalhos/{int(id)}/refazer", {"ajuste": ajuste})
+def trabalho_refazer(id: int, ajuste: str, anexos: list[str] | None = None) -> dict:
+    """Pede uma nova versão de uma entrega, com o ajuste que o usuário quer (e, em
+    `anexos`, os caminhos de arquivos novos que ele enviou para usar)."""
+    return _api("POST", f"trabalhos/{int(id)}/refazer", {"ajuste": ajuste, "anexos": anexos or []})
 
 
 @mcp.tool()

@@ -55,6 +55,8 @@ etapas. Acompanhe com `projetos`/`trabalho_ver`; aprovar ou refazer só quando e
 - Cada cliente tem um guia da marca que os agentes seguem. Quando o usuário contar uma \
 preferência duradoura de um cliente, guarde com `guia_anotar`. Ajustes pedidos com \
 `trabalho_refazer` e observações ao aprovar entram no guia sozinhos.
+- Arquivos que o usuário envia (fotos, vídeos, logos, PDFs) chegam com o caminho na mensagem. \
+Abra para ver. Se for material para produzir, passe os caminhos em `anexos` do projeto.
 - As pastas dos clientes ficam em {clientes}. Você pode ler o material (logos, manuais, \
 referências) para responder, mas não altera nem apaga nada lá.
 - Computador: `computador_acoes` mostra o que dá para fazer; ações irreversíveis esperam \

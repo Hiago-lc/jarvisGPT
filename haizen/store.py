@@ -182,8 +182,10 @@ _COLUNAS_NOVAS = {
         "depende_de": "TEXT NOT NULL DEFAULT '[]'",
         "aprovacao": "INTEGER NOT NULL DEFAULT 1",
         "pasta": "TEXT NOT NULL DEFAULT ''",          # onde o agente grava os arquivos
+        "anexos": "TEXT NOT NULL DEFAULT '[]'",       # arquivos que você enviou (ids)
     },
-    "projetos": {"marca_pasta": "TEXT NOT NULL DEFAULT ''"},
+    "projetos": {"marca_pasta": "TEXT NOT NULL DEFAULT ''",
+                 "anexos": "TEXT NOT NULL DEFAULT '[]'"},       # arquivos que você enviou
 }
 
 
@@ -284,7 +286,7 @@ def cliente_por_id(cid) -> dict | None:
 def criar_trabalho(agente: str, pedido: str, executor: str,
                    cliente_id: int | None = None, *, projeto_id: int | None = None,
                    etapa: int = 0, titulo: str = "", depende_de: list | None = None,
-                   aprovacao: bool = True, status: str = "na_fila") -> dict:
+                   aprovacao: bool = True, status: str = "na_fila", anexos: list | None = None) -> dict:
     if not (pedido or "").strip():
         raise ValueError("o trabalho precisa de um pedido")
     if status not in STATUS:
@@ -293,11 +295,12 @@ def criar_trabalho(agente: str, pedido: str, executor: str,
     with conexao() as con:
         cur = con.execute(
             "INSERT INTO trabalhos(agente, cliente_id, pedido, executor, status,"
-            " criado_em, atualizado_em, projeto_id, etapa, titulo, depende_de, aprovacao)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            " criado_em, atualizado_em, projeto_id, etapa, titulo, depende_de, aprovacao, anexos)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (agente, cliente_id, pedido.strip(), executor, status, agora, agora,
              projeto_id, int(etapa), (titulo or "").strip()[:80],
-             json.dumps([int(x) for x in (depende_de or [])]), 1 if aprovacao else 0))
+             json.dumps([int(x) for x in (depende_de or [])]), 1 if aprovacao else 0,
+             json.dumps([str(a) for a in (anexos or [])])))
         return dict(con.execute("SELECT * FROM trabalhos WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -393,15 +396,16 @@ def gravar_entrega(tid: int, conteudo: str) -> Path:
 
 
 # ── projetos ───────────────────────────────────────────────────────────────
-def criar_projeto(titulo: str, pedido: str, cliente_id: int | None = None, marca_pasta: str = "") -> dict:
+def criar_projeto(titulo: str, pedido: str, cliente_id: int | None = None, marca_pasta: str = "",
+                  anexos: list | None = None) -> dict:
     if not (pedido or "").strip():
         raise ValueError("o projeto precisa de um pedido")
     agora = time.time()
     with conexao() as con:
-        cur = con.execute("INSERT INTO projetos(titulo, pedido, cliente_id, criado_em, atualizado_em, marca_pasta)"
-                          " VALUES(?,?,?,?,?,?)",
+        cur = con.execute("INSERT INTO projetos(titulo, pedido, cliente_id, criado_em, atualizado_em, marca_pasta,"
+                          " anexos) VALUES(?,?,?,?,?,?,?)",
                           ((titulo or pedido).strip()[:120], pedido.strip(), cliente_id, agora, agora,
-                           (marca_pasta or "").strip()))
+                           (marca_pasta or "").strip(), json.dumps([str(a) for a in (anexos or [])])))
         return dict(con.execute("SELECT * FROM projetos WHERE id=?", (cur.lastrowid,)).fetchone())
 
 

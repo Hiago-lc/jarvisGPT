@@ -155,7 +155,7 @@ class RotasTests(_Base):
             s, _, d = self.pedir("POST", "/api/jarvis/mensagem", json.dumps({"texto": "oi", "voz": True}))
         self.assertEqual(s, 200)
         self.assertEqual(json.loads(d)["resposta"], "Oi")
-        resp.assert_called_once_with("oi", True)
+        resp.assert_called_once_with("oi", True, [])
 
     def test_voice_routes(self):
         with patch.object(self.cerebro, "ouvir", side_effect=lambda pcm, taxa: f"{len(pcm)}@{taxa}"):

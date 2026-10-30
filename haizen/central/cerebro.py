@@ -556,7 +556,7 @@ def _mensagens_anteriores() -> list[dict]:
     return list(reversed(out))
 
 
-def _pelo_claude(texto: str, por_voz: bool) -> dict | None:
+def _pelo_claude(texto: str, por_voz: bool, arquivos: list | None = None) -> dict | None:
     """O Claude responde e age. None = cair no cérebro local (Claude indisponível)."""
     from haizen.central import claude_cerebro
     from haizen.central.atalhos import desligar_direto
@@ -564,30 +564,46 @@ def _pelo_claude(texto: str, por_voz: bool) -> dict | None:
     acoes = ["desligar"] if resposta else []
     if resposta is None:
         try:
-            r = claude_cerebro.responder(texto, por_voz)
+            extra = ""
+            if arquivos:
+                from haizen.central import anexos
+                extra = anexos.texto_para_o_claude(arquivos)
+            r = claude_cerebro.responder(texto + extra, por_voz)
             resposta, acoes = r["resposta"], r["acoes"]
         except PermissionError as e:           # Claude Code sem login: dizer como resolver
             resposta, acoes = str(e), []
         except Exception as e:  # noqa: BLE001
             print(f"[Jarvis web] o Claude falhou, uso o cérebro local: {e}")
             return None
-    _guardar("usuario", texto)
+    _guardar("usuario", texto + marcar_anexos(arquivos))
     _guardar("jarvis", resposta, acoes)
     return {"resposta": resposta, "acoes": acoes, "confirmacao": confirmacao_pendente(),
             "cerebro": "claude"}
 
 
-def responder(texto: str, por_voz: bool = False) -> dict:
+def marcar_anexos(arquivos: list | None) -> str:
+    """Os anexos ficam no histórico como [anexo:id] (a página mostra a miniatura)."""
+    return "".join(f"\n[anexo:{d['id']}]" for d in (arquivos or []))
+
+
+def responder(texto: str, por_voz: bool = False, anexos: list | None = None) -> dict:
     """Uma volta completa: pergunta → (ferramentas) → resposta."""
     texto = (texto or "").strip()
+    arquivos = []
+    if anexos:
+        from haizen.central import anexos as _anexos
+        arquivos = _anexos.varios(anexos)
+        texto = texto or "Veja os arquivos que enviei."
     if not texto:
         raise ValueError("mensagem vazia")
     ligar_confirmacoes()
     from haizen.central import claude_cerebro
     if claude_cerebro.ativo():
-        r = _pelo_claude(texto, por_voz)
+        r = _pelo_claude(texto, por_voz, arquivos)
         if r is not None:
             return r
+    if arquivos:     # o modelo local não abre arquivos; ao menos sabe que vieram
+        texto += "\n(Arquivos enviados: " + ", ".join(d["nome"] for d in arquivos) + ")"
     # Registro de receita/despesa com tudo na frase: o código grava, sem modelo.
     # e consulta da agenda: o código resolve, sem o modelo.
     from haizen.central.atalhos import responder_direto

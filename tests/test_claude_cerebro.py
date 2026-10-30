@@ -160,3 +160,53 @@ class GuiaDaMarcaTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnexosTests(Base):
+    def test_salva_e_nao_deixa_sair_da_pasta(self):
+        from haizen.central import anexos
+        d = anexos.salvar("../../foto praia.jpg", b"\xff\xd8jpg")
+        self.assertEqual(d["nome"], "foto praia.jpg")
+        self.assertTrue(d["imagem"])
+        self.assertEqual(anexos.caminho(d["id"]).read_bytes(), b"\xff\xd8jpg")
+        self.assertEqual(anexos.caminho(d["caminho"]).name, d["id"])     # o Claude passa o caminho
+        fora = self.base / "segredo.txt"
+        fora.write_text("x")
+        with self.assertRaises(KeyError):
+            anexos.caminho(str(fora))
+        with self.assertRaises(KeyError):
+            anexos.caminho("../segredo.txt")
+
+    def test_mensagem_com_foto_vai_para_o_claude_e_fica_no_historico(self):
+        from haizen.central import anexos, cerebro, claude_cerebro
+        d = anexos.salvar("logo.png", b"png")
+        with patch.object(claude_cerebro, "ativo", return_value=True), \
+                patch.object(claude_cerebro, "responder", return_value={"resposta": "Vi o logo.", "acoes": ["Read"]}) as resp:
+            r = cerebro.responder("", anexos=[d["id"]])
+        enviado = resp.call_args[0][0]
+        self.assertIn(d["caminho"], enviado)
+        self.assertIn("Veja os arquivos", enviado)
+        self.assertEqual(r["resposta"], "Vi o logo.")
+        self.assertIn(f"[anexo:{d['id']}]", cerebro.historico(5)[0]["texto"])
+
+    def test_material_do_projeto_vai_para_a_pasta_do_projeto(self):
+        from haizen import executor, servicos, store
+        from haizen.central import anexos, dados
+        marca = self.base / "CLIENTES" / "Viagens Sol"
+        marca.mkdir(parents=True)
+        c = dados.criar("clientes", {"nome": "Viagens Sol"})
+        dados.criar("marcas", {"nome": "Viagens Sol", "cliente_id": c["id"], "pasta": str(marca)})
+        foto = anexos.salvar("praia.jpg", b"jpg")
+        with patch.object(executor, "claude_disponivel", return_value="/bin/claude"):
+            r = servicos.criar_projeto("Post com a foto da praia", "Viagens Sol", anexos=[foto["id"]])
+        proj = store.projeto(r["projeto"]["id"])
+        self.assertIn("praia.jpg", proj["pedido"])
+        t = store.criar_trabalho("criativos", "post", "claude", c["id"], projeto_id=proj["id"], etapa=1)
+        pasta, _, raiz = executor.pastas_do_trabalho(t)
+        destino = executor.copiar_material(t, pasta, raiz)
+        self.assertEqual((destino / "praia.jpg").read_bytes(), b"jpg")
+        executor.copiar_material(t, pasta, raiz)               # de novo: não duplica
+        self.assertEqual(len(list(destino.iterdir())), 1)
+        txt = executor.instrucoes_da_pasta(pasta, marca, raiz)
+        self.assertIn("00 - Material enviado", txt)
+        self.assertEqual(executor.arquivos_da_pasta(str(raiz)), [])    # não aparece como entrega
