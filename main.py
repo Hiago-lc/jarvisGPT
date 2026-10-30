@@ -100,6 +100,10 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+# O modelo local lê o pedido inteiro antes da primeira palavra: o prompt do
+# Gemini (16 mil caracteres, em inglês) custava mais de um minuto numa placa
+# modesta e puxava respostas em inglês. Este é curto e em português.
+PROMPT_LOCAL_PATH = BASE_DIR / "core" / "prompt_local.txt"
 # The conversation's model. A NAME, not a decision: the ladder lives in
 # core/gemini.py and this is only whichever rung is currently in use, kept here
 # as a module attribute because plugins read it (chat_takeover asks main for it
@@ -630,6 +634,12 @@ class JarvisLive:
         self.ui.on_text_command   = self._on_text_command
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
+        # Desligar só o agente (voz e conversa): a central, o WhatsApp e os
+        # agentes da HAIZEN continuam. Ligado ao abrir.
+        self._agente_ligado = threading.Event()
+        self._agente_ligado.set()
+        self.ui.on_agent_toggle   = self.ligar_agente
+        self.ui.agent_on          = self._agente_ligado.is_set
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
@@ -838,7 +848,22 @@ class JarvisLive:
         into a dead socket would keep resetting the very timer meant to catch it.
         """
         if self._rx_deadline is None:
-            self._rx_deadline = time.monotonic() + _STALL_LIMIT
+            self._rx_deadline = time.monotonic() + self._stall_limit()
+
+    def _stall_limit(self) -> float:
+        """30 s fit Gemini Live, which answers in one or two. A local model has
+        to load into the GPU and read the whole prompt before its first word,
+        which on a modest card takes longer than that: the watchdog then threw
+        the answer away and reconnected. With the pipeline engine, wait as long
+        as the model connection itself is allowed to take."""
+        if self._engine is None:
+            return _STALL_LIMIT
+        try:
+            from memory.config_manager import get_provider_config
+            t = float(get_provider_config("openai_compat").get("timeout") or 0)
+        except Exception:
+            t = 0.0
+        return max(_STALL_LIMIT, t + 30.0, 120.0)
 
     def _clear_stall(self) -> None:
         """The server spoke, so the return path is alive."""
@@ -857,7 +882,7 @@ class JarvisLive:
             if deadline is None or time.monotonic() < deadline:
                 continue
             self._clear_stall()
-            print(f"[JARVIS] ⚠️  No response for {_STALL_LIMIT:.0f}s — "
+            print(f"[JARVIS] ⚠️  No response for {self._stall_limit():.0f}s — "
                   f"the live session is not answering. Rebuilding it.")
             self.ui.write_log("SYS: The model stopped answering — reconnecting.")
             self.request_reconnect(keep_context=True, reason="no response")
@@ -877,6 +902,31 @@ class JarvisLive:
         self._reconnect_reason = reason
         if loop and ev is not None:
             loop.call_soon_threadsafe(ev.set)
+
+    def ligar_agente(self, ligado: bool) -> None:
+        """Botão "Desligar o Jarvis (só a voz)": fecha a conversa, o microfone e
+        tira o modelo da placa de vídeo; o resto do sistema segue. Ligar reabre."""
+        if bool(ligado) == self._agente_ligado.is_set():
+            return
+        if ligado:
+            self.ui.write_log("SYS: Ligando o Jarvis…")
+            self._agente_ligado.set()
+            return
+        self._agente_ligado.clear()
+        self.ui.write_log("SYS: Jarvis desligado. A central, a agenda, o WhatsApp e os agentes continuam funcionando.")
+        self.request_reconnect(keep_context=True, reason="desligar o Jarvis")
+        threading.Thread(target=self._liberar_modelo, daemon=True, name="liberar-modelo").start()
+
+    def _liberar_modelo(self) -> None:
+        time.sleep(3)                  # a conversa termina de fechar antes
+        if self._agente_ligado.is_set():
+            return
+        try:
+            from start_local import liberar_outros
+            if liberar_outros(""):
+                self.ui.write_log("SYS: Modelo do Jarvis retirado da placa de vídeo.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[JARVIS] não liberei o modelo: {e}")
 
     def _on_voice_change(self):
         """Voice picker applied.
@@ -927,6 +977,9 @@ class JarvisLive:
                 getattr(self._dashboard, "_bind_error", "") or "")
 
     def _on_text_command(self, text: str):
+        if not self._agente_ligado.is_set():
+            self.ui.write_log("SYS: O Jarvis está desligado. Use o botão Ligar Jarvis na barra lateral.")
+            return
         if not self._loop or not self.session:
             return
         # Respect wake-word sleep: a typed command must not be answered while
@@ -937,6 +990,17 @@ class JarvisLive:
             return
         self._session_log.append(f"User: {text}")
         self._persist_turn("user", text)
+        resposta = self._atalho_central(text)
+        if resposta:
+            if self._engine is not None:
+                # O motor fala a resposta e encerra a volta; o registro no
+                # histórico acontece no fim da volta, como numa resposta normal.
+                asyncio.run_coroutine_threadsafe(
+                    self._engine.answer_directly(text, resposta), self._loop)
+            else:
+                self.ui.write_log(f"{self._asst_name}: {resposta}")
+                self._persist_turn("assistant", resposta)
+            return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -1111,6 +1175,14 @@ class JarvisLive:
         except Exception:
             self.ui.write_log("SYS: O histórico recente não pôde ser carregado.")
         sys_prompt = _load_system_prompt()
+        _local = self._engine_caps is not None
+        if _local:
+            try:
+                sys_prompt = PROMPT_LOCAL_PATH.read_text(encoding="utf-8")
+            except Exception:
+                pass
+            # A memória inteira também pesa: no modelo local vai só o começo.
+            mem_str = mem_str[:1500]
 
         now      = datetime.now()
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
@@ -1119,6 +1191,10 @@ class JarvisLive:
             f"Right now it is: {time_str}\n"
             f"Use this to calculate exact times for reminders.\n\n"
         )
+        if _local:
+            _dias = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+            time_ctx = (f"Agora: {_dias[now.weekday()]}, {now.strftime('%d/%m/%Y %H:%M')} "
+                        "(use para calcular horários de lembretes).\n\n")
 
         # Identity injection — overrides any hardcoded name in prompt.txt
         # Address form is a property of the language being spoken, so it is
@@ -1138,6 +1214,9 @@ class JarvisLive:
             f"Always refer to yourself as {self._asst_name}.\n"
             f"{_addr}\n\n"
         )
+        if _local:
+            identity_ctx = (f"O usuário se chama {_user_name}.\n\n" if _user_name
+                            else "Você ainda não sabe o nome do usuário: não invente um.\n\n")
 
         # Everything the model is told about *itself* is derived here, not
         # written into prompt.txt: the name comes from config, the platform from
@@ -1496,8 +1575,22 @@ class JarvisLive:
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
+        # Diagnóstico: o microfone descartava a fala em silêncio quando estava
+        # mudo, dormindo ou no push-to-talk, e a pessoa só via "não responde".
+        # Agora, quando alguém fala alto e o áudio é barrado, o motivo vai para
+        # o registro (no máximo a cada 30 s); e um microfone que não capta nada
+        # nos primeiros 20 s também é avisado.
+        diag = {"motivo": "", "quando": 0.0, "pico": 0.0, "desde": time.monotonic(),
+                "avisado": 0.0, "mudo_avisado": False}
+
+        def _barrado(motivo, nivel):
+            if nivel >= 0.2:
+                diag["motivo"], diag["quando"] = motivo, time.monotonic()
 
         def callback(indata, frames, time_info, status):
+            nivel = _pcm_level(indata)
+            if nivel > diag["pico"]:
+                diag["pico"] = nivel
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JARVIS can't respond to speech not addressed to it and
@@ -1509,6 +1602,8 @@ class JarvisLive:
                 det = self._wake_detector
                 if det is not None:
                     det.feed(indata)
+                _barrado("o Jarvis está dormindo: diga a palavra de ativação ou toque em WAKE NOW "
+                         "(ou desligue a palavra de ativação no menu 🎛)", nivel)
                 return
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
@@ -1555,7 +1650,12 @@ class JarvisLive:
             # opens it, which is the whole point: nothing leaves the machine
             # unless you are holding the key.
             if self._ptt_enabled and not self._ptt_held:
+                _barrado("o push-to-talk está ligado: segure o atalho enquanto fala "
+                         "(ou desligue o push-to-talk no menu 🎛)", nivel)
                 return
+            if self.ui.muted:
+                _barrado("o microfone está desligado no Jarvis: aperte F4 ou o botão "
+                         "Ligar microfone", nivel)
             
             if not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
@@ -1607,8 +1707,22 @@ class JarvisLive:
 
             with _mic_stream:
                 print("[JARVIS] 🎤 Mic stream open")
+                _nome_mic = _mic_name or "padrão do Windows"
                 while True:
                     await asyncio.sleep(0.1)
+                    agora = time.monotonic()
+                    if diag["motivo"] and agora - diag["quando"] > 2:
+                        diag["motivo"] = ""        # já foi resolvido (ex.: ligou o microfone)
+                    if diag["motivo"] and agora - diag["avisado"] > 30:
+                        self.ui.write_log(f"SYS: ouvi você, mas não estou escutando: {diag['motivo']}.")
+                        diag["avisado"], diag["motivo"] = agora, ""
+                    if (not diag["mudo_avisado"] and agora - diag["desde"] > 20
+                            and diag["pico"] == 0.0 and not self.ui.muted):
+                        diag["mudo_avisado"] = True
+                        self.ui.write_log(
+                            f"SYS: o microfone '{_nome_mic}' não captou nenhum som em 20 s. "
+                            "Confira se é o microfone certo (⚙ → AUDIO DEVICES) e se o Windows "
+                            "deixa os apps usarem o microfone.")
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
@@ -2075,6 +2189,34 @@ class JarvisLive:
             record_turn(role, text)
         except Exception:
             self.ui.write_log("SYS: Não foi possível salvar esta mensagem na memória permanente. Confira o espaço em disco e as permissões.")
+        # A mesma conversa aparece no chat da central (web e celular).
+        try:
+            from haizen import store
+            store.guardar_mensagem("usuario" if role == "user" else "jarvis", text,
+                                   origem="janela")
+        except Exception as e:
+            print(f"[HAIZEN] histórico da central indisponível: {e}")
+
+    def _ferramentas_do_pedido(self, text: str) -> list:
+        """Ferramentas na ordem de importância para este pedido: o modelo local
+        só recebe algumas, e "agenda" tem de trazer a do Google Agenda, "arquivo"
+        a de arquivos, em vez de sempre as mesmas seis."""
+        try:
+            from haizen.central.cerebro import escolher_acoes
+            return ["haizen", *escolher_acoes(text)]
+        except Exception:
+            return []
+
+    def _atalho_central(self, text: str) -> str:
+        """Registro de receita/despesa feito pelo código, sem o modelo.
+        Vazio quando a frase não é um pedido de registro."""
+        try:
+            from haizen.central.atalhos import responder_direto
+            r = responder_direto(text)
+        except Exception as e:
+            print(f"[HAIZEN] atalho da central falhou: {e}")
+            return ""
+        return r[0] if r else ""
 
     async def _save_session_summary(self) -> None:
         """Summarise the current session in 1-2 sentences and save to long_term.json."""
@@ -2372,6 +2514,8 @@ class JarvisLive:
         # engine finds it in the audio. With push-to-talk the key release is the
         # signal and the detector stays out of the way.
         engine.auto_turn = not self._ptt_enabled
+        engine.interceptor = self._atalho_central
+        engine.tool_priority = self._ferramentas_do_pedido
         self._engine = engine
         try:
             yield engine
@@ -2416,6 +2560,14 @@ class JarvisLive:
             self._dashboard = None
 
         while True:
+            if not self._agente_ligado.is_set():
+                # Desligado pelo botão: sem conversa nem microfone até ligar de novo.
+                self.session = None
+                self.ui.set_state("SLEEPING")
+                self.ui.set_connection_status("offline")
+                while not self._agente_ligado.is_set():
+                    await asyncio.sleep(0.4)
+                self._conn_backoff = 0
             try:
                 print("[JARVIS] Connecting...")
                 self.ui.set_state("THINKING")

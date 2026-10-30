@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -405,6 +406,11 @@ def get_providers() -> dict:
 
 def get_provider_mode() -> str:
     """Which engine holds the conversation. Defaults to Gemini Live."""
+    # start_local.py fixa o modo no ambiente: mesmo que o arquivo seja lido
+    # vazio ou corrompido, o Jarvis local nunca cai no Gemini Live.
+    forcado = os.environ.get("JARVIS_PROVIDER_MODE", "").strip().lower()
+    if forcado in (PROVIDER_MODE_GEMINI, PROVIDER_MODE_PIPELINE):
+        return forcado
     mode = str(get_providers().get("mode", "") or "").strip().lower()
     return mode if mode in (PROVIDER_MODE_GEMINI, PROVIDER_MODE_PIPELINE) \
         else PROVIDER_MODE_GEMINI

@@ -69,6 +69,49 @@ Na primeira fala, o Piper baixa a voz `pt_BR-faber-medium` (cerca de 60 MB). Par
 
 Variáveis opcionais: `JARVIS_LOCAL_MODEL`, `JARVIS_GROQ_MODEL` (padrão `openai/gpt-oss-120b`), `JARVIS_PIPER_VOICE`, `JARVIS_WHISPER_MODEL` (padrão `small`; use `base` se a transcrição estiver lenta).
 
+## Iniciar junto com o Windows
+
+```powershell
+py start_local.py --perfil local --iniciar-com-windows
+```
+
+Ao ligar o PC, abre só a janela do Jarvis, com voz e controle do computador. Ela espera o Ollama subir (até 3 minutos). A central da HAIZEN (painel, financeiro e acesso pelo celular em `http://127.0.0.1:8765`) roda dentro dela, sem outro processo. Esse comando substitui o atalho do `jarvis_web.py`. Para desfazer: `py start_local.py --nao-iniciar-com-windows`.
+
+Sem console, o que acontece fica em `%LOCALAPPDATA%\JarvisGPT\jarvis_janela.log`.
+
+O Whisper recebe uma lista de palavras esperadas (nomes de apps, HAIZEN e os clientes ativos da central), para errar menos nomes como "WhatsApp Business". Os nomes dos clientes ficam só na memória, nunca no arquivo de configuração.
+
+## Tudo dentro da janela do Jarvis
+
+O Jarvis abre na interface nova: barra lateral com Jarvis, Painel, Financeiro, Clientes, Tarefas, Pipeline e Agentes, e no rodapé o microfone e os Ajustes.
+
+- **Jarvis**: a conversa (por voz ou escrita) com o mesmo Jarvis que ouve e controla o PC. O círculo no topo mostra o que ele está fazendo: ouvindo, pensando, respondendo, microfone desligado ou em espera. **Registro** mostra o que acontece por dentro, e **Interromper** para uma resposta ou tarefa.
+- **Microfone** (na barra lateral): liga e desliga, como o F4.
+- **Ajustes**: áudio, memória, modelo e voz, plugins, controle pelo celular e o **visual clássico** (o avatar antigo). F9 alterna entre os dois visuais.
+
+Na primeira vez, instale o componente que desenha a interface (uma vez só, com o Jarvis fechado):
+
+```powershell
+py -m pip install PyQt6-WebEngine
+```
+
+Sem ele, o Jarvis abre no visual clássico, como antes. Para preferir sempre o clássico: `setx JARVIS_VISUAL_CLASSICO 1`.
+
+## WhatsApp
+
+Na agenda, o Jarvis cria, remarca, muda nome, horário de início ou fim, duração, descrição e local, e exclui na hora quando você pede ("exclui o Estudos de amanhã", "remove elas", "exclui os das 14h"), sem tela de confirmação.
+
+A tela **WhatsApp** (na barra lateral) usa o WhatsApp Web rodando escondido, sem janela nem aba: tudo aparece só dentro do Jarvis. Na primeira vez, o **QR Code aparece na própria tela do Jarvis**: escaneie pelo celular (WhatsApp, Aparelhos conectados, Conectar um aparelho). O login fica guardado. Só para diagnóstico, `setx JARVIS_WHATSAPP_VISIVEL 1` mostra a janela do navegador.
+
+- **Não lidas**: lista quem mandou mensagem e a prévia, sem abrir as conversas (nada é marcado como lido).
+- Ao **abrir uma conversa**, ela é marcada como lida e você vê as últimas mensagens. Se o contato estiver nos clientes da central, aparece o vínculo.
+- **Sugerir resposta** escreve um rascunho de resposta, que você pode editar. **Enviar** sempre pergunta antes ("Enviar para…?").
+- **Criar tarefa** e **Criar evento** já vêm preenchidos com o pedido do cliente. **Ver disponibilidade** mostra os horários livres do dia no Google Agenda, com o botão "Marcar aqui".
+
+Pela voz: "quais mensagens chegaram no WhatsApp?", "lê a conversa com a Padaria Sol", "responde a Padaria Sol dizendo que amanhã às 10h está ótimo" (o envio aparece para você confirmar na tela) e "tenho horário livre amanhã?".
+
+É uma integração não oficial: se o WhatsApp mudar o site, a leitura pode parar até um ajuste. Quem envia é sempre você, ao confirmar.
+
 ## O que muda em relação ao Gemini
 
 - A conversa é ouvir → pensar → falar em sequência, então há uma pausa antes da resposta, maior no perfil local.

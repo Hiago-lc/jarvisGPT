@@ -4251,6 +4251,8 @@ class MainWindow(QMainWindow):
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
     _confirm_sig    = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
+    _central_sig    = pyqtSignal(str)        # abrir a central da HAIZEN (rota)
+    _chamar_sig     = pyqtSignal(object)     # roda uma função na thread da interface
     _wake_dl_sig    = pyqtSignal(bool, str)  # wake-word install finished (ok, message)
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
@@ -4290,6 +4292,8 @@ class MainWindow(QMainWindow):
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JarvisLive
         self.on_wake_manual    = None   # callable: () -> None — manual sleep/wake
+        self.on_agent_toggle   = None   # callable: (ligado: bool) -> None — desligar só o agente
+        self.agent_on          = None   # callable: () -> bool
         self.on_push_to_talk   = None   # callable: (enable: bool) -> str scope
         self.ptt_hold          = None   # callable: (held: bool) -> None — windowed chord
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
@@ -4305,7 +4309,11 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._build_header())
+        self._estado_atual = "LISTENING"
+        self._atividade = []              # [(id, texto)] do registro, para a interface
+        self._atividade_id = 0
+        self._header_w = self._build_header()
+        root.addWidget(self._header_w)
 
         body = QHBoxLayout()
         body.setContentsMargins(14, 14, 14, 14)
@@ -4522,8 +4530,22 @@ class MainWindow(QMainWindow):
         self._right_panel = self._build_right_panel()
         body.addWidget(self._right_panel, stretch=3)
 
-        root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        # Duas páginas na mesma janela: o HUD do Jarvis e a central da HAIZEN.
+        # A central só é montada no primeiro clique (o navegador embutido do Qt
+        # custa memória, e quem não abre a central não paga por ela).
+        self._hud_page = QWidget()
+        self._hud_page.setLayout(body)
+        self._paginas = QStackedWidget()
+        self._paginas.addWidget(self._hud_page)
+        self._central_page = None
+        self._central_view = None
+        self._central_url = ""
+        root.addWidget(self._paginas, stretch=1)
+        self._footer_w = self._build_footer()
+        root.addWidget(self._footer_w)
+        # A interface nova (barra lateral, conversa, central) abre de cara;
+        # sem o componente do Qt, fica o visual clássico, como sempre foi.
+        QTimer.singleShot(0, self._abrir_visual_inicial)
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -4559,6 +4581,9 @@ class MainWindow(QMainWindow):
         self._camera_sig.connect(self._show_camera_frame)
         self._confirm_sig.connect(self._show_confirm_banner)
         self._confirm_hide_sig.connect(self._hide_confirm_banner)
+        self._central_sig.connect(self._mostrar_central)
+        self._chamar_sig.connect(lambda f: f())
+        self._log_sig.connect(self._guardar_atividade)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
         self._wake_btns_sig.connect(self._refresh_wake_btns)
@@ -4591,6 +4616,8 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         self._desktop_shortcut = QShortcut(QKeySequence("F8"), self)
         self._desktop_shortcut.activated.connect(self._show_desktop_monitor)
+        self._central_shortcut = QShortcut(QKeySequence("F9"), self)
+        self._central_shortcut.activated.connect(self._toggle_central)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
@@ -5398,6 +5425,19 @@ class MainWindow(QMainWindow):
         self._desktop_btn.clicked.connect(self._show_desktop_monitor)
         lay.addSpacing(8)
         lay.addWidget(self._desktop_btn)
+        # Faturamento, clientes, tarefas, pipeline e agentes da HAIZEN, aqui
+        # dentro: a área principal troca para a central, sem abrir navegador.
+        self._central_btn = QPushButton("Visual novo")
+        self._central_btn.setObjectName("central_haizen_button")
+        self._central_btn.setFixedSize(138, 30)
+        self._central_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self._central_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._central_btn.setCheckable(True)
+        self._central_btn.setToolTip("Interface nova: conversa, financeiro, clientes, tarefas e agentes (F9)")
+        self._central_btn.setStyleSheet(self._desktop_btn.styleSheet() + f" QPushButton:checked {{color:{C.DARK}; background:{C.PRI}; border-color:{C.PRI};}}")
+        self._central_btn.clicked.connect(self._toggle_central)
+        lay.addSpacing(6)
+        lay.addWidget(self._central_btn)
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -6878,6 +6918,101 @@ class MainWindow(QMainWindow):
         if self.on_audio_device_change:
             self.on_audio_device_change()
 
+    # ── Interface nova (HTML da central, dentro da janela) ───────────────────
+
+    _ROTAS_CENTRAL = ("jarvis", "painel", "financeiro", "clientes", "tarefas", "pipeline", "agentes")
+
+    @staticmethod
+    def _tem_webengine() -> bool:
+        try:
+            import PyQt6.QtWebEngineWidgets  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def _abrir_visual_inicial(self):
+        if os.environ.get("JARVIS_VISUAL_CLASSICO") or not self._tem_webengine():
+            return
+        self._mostrar_central("jarvis")
+
+    def _toggle_central(self):
+        if self._central_page is not None and self._paginas.currentWidget() is self._central_page:
+            self._mostrar_hud()
+        else:
+            self._mostrar_central("")
+
+    def _mostrar_hud(self):
+        self._paginas.setCurrentWidget(self._hud_page)
+        self._central_btn.setChecked(False)
+        self._header_w.show()
+        self._footer_w.show()
+
+    def _mostrar_central(self, rota: str = ""):
+        if self._central_page is None:
+            self._central_page = self._build_central_page()
+            self._paginas.addWidget(self._central_page)
+        rota = rota if rota in self._ROTAS_CENTRAL else ""
+        if rota and self._central_view is not None:
+            from PyQt6.QtCore import QUrl
+            self._central_view.setUrl(QUrl(f"{self._central_url}?app=1#/{rota}"))
+        self._paginas.setCurrentWidget(self._central_page)
+        self._central_btn.setChecked(True)
+        if self._central_view is not None:
+            # A interface tem a própria barra lateral e o próprio topo.
+            self._header_w.hide()
+            self._footer_w.hide()
+
+    def _build_central_page(self) -> QWidget:
+        page = QWidget()
+        page.setStyleSheet("background: #F3F5F4;")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        try:
+            from haizen.central import servidor
+            self._central_url = servidor.iniciar(abrir_navegador=False).rstrip("/") + "/"
+        except Exception as e:  # noqa: BLE001
+            v.addWidget(self._central_aviso(f"A central não iniciou: {e}"), 1)
+            return page
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            v.addWidget(self._central_aviso(
+                "Falta um componente do Qt para mostrar a interface nova.\n\n"
+                "Feche o Jarvis e rode uma vez no PowerShell, na pasta C:\\JARVIS:\n\n"
+                "    py -m pip install PyQt6-WebEngine\n\n"
+                "Depois abra o Jarvis de novo. Aperte F9 para voltar ao visual clássico."), 1)
+            return page
+        view = QWebEngineView(page)
+        view.setUrl(QUrl(f"{self._central_url}?app=1#/jarvis"))
+        v.addWidget(view, 1)
+        self._central_view = view
+        return page
+
+    def _central_aviso(self, texto: str) -> QWidget:
+        l = QLabel(texto)
+        l.setWordWrap(True)
+        l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        l.setFont(QFont("Segoe UI", 11))
+        l.setStyleSheet("color: #3A4A4F; background: transparent; padding: 40px;")
+        return l
+
+    def _guardar_atividade(self, texto: str):
+        self._atividade_id += 1
+        self._atividade.append((self._atividade_id, str(texto)[:500]))
+        del self._atividade[:-200]
+
+    def _abrir_ajuste(self, nome: str):
+        acoes = {"audio": self._open_audio_devices, "memoria": self._open_memory_panel,
+                 "plugins": self._open_plugin_manager, "plugins_ajustes": self._open_plugin_settings,
+                 "motor": self._open_providers, "personalizar": self._open_customize,
+                 "remoto": self._open_remote, "classico": self._mostrar_hud}
+        f = acoes.get(nome)
+        if f is not None:
+            f()
+
     # ── Memory panel ─────────────────────────────────────────────────────────
 
     def _open_memory_panel(self):
@@ -7024,6 +7159,7 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
     def _apply_state(self, state: str):
+        self._estado_atual = state
         if hasattr(self, '_status_label'):
             labels = {'LISTENING':'Ouvindo', 'THINKING':'Preparando a próxima etapa…', 'SPEAKING':'Respondendo', 'SLEEPING':'Em espera', 'MUTED':'Microfone desligado'}
             self._status_label.setText(labels.get(state, 'Em atividade'))
@@ -7085,10 +7221,23 @@ class _RootShim:
 
 class JarvisUI:
     def __init__(self, face_path: str, size=None):
+        if QApplication.instance() is None:
+            # O navegador embutido do Qt (central da HAIZEN) só funciona se for
+            # preparado antes de a aplicação existir. Sem o pacote, segue igual.
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+            try:
+                import PyQt6.QtWebEngineWidgets  # noqa: F401
+            except Exception:
+                pass
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._win = MainWindow(face_path)
         self.root = _RootShim(self._app)
+        try:
+            from haizen.central import janela
+            janela.registrar(_PonteJanela(self))
+        except Exception as e:  # noqa: BLE001 - sem a central, a janela funciona igual
+            print(f"[HAIZEN] interface nova sem ponte: {e}")
         self._win.show()
 
     @property
@@ -7143,6 +7292,10 @@ class JarvisUI:
     @on_audio_device_change.setter
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
+
+    def show_central(self, rota: str = "") -> None:
+        """Mostra a central da HAIZEN dentro da janela (seguro de qualquer thread)."""
+        self._win._central_sig.emit(str(rota or ""))
 
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
@@ -7337,3 +7490,82 @@ class JarvisUI:
     def stop_speaking(self):
         if not self.muted:
             self.set_state("LISTENING")
+
+
+class _PonteJanela:
+    """O que a interface nova (HTML) pode ler e pedir à janela do Jarvis.
+
+    Chamada pelas threads do servidor da central: leitura de estado é só
+    leitura de atributos; tudo que mexe na janela passa por _chamar_sig, que
+    roda na thread da interface, como o Qt exige."""
+
+    def __init__(self, ui: "JarvisUI"):
+        self._ui = ui
+
+    def _na_interface(self, f):
+        self._ui._win._chamar_sig.emit(f)
+
+    def estado(self, desde: int = 0) -> dict:
+        w = self._ui._win
+        sono = {}
+        try:
+            cb = self._ui.wake_get_state
+            sono = cb() if callable(cb) else {}
+        except Exception:
+            sono = {}
+        return {
+            "estado": w._estado_atual,
+            "mudo": bool(w._muted),
+            "dormindo": bool(sono.get("enabled")) and not bool(sono.get("awake", True)),
+            "palavra_ativacao": bool(sono.get("enabled")),
+            "nome": w._assistant_name,
+            "agente": bool(self._ui.agent_on()) if callable(getattr(self._ui, "agent_on", None)) else True,
+            "atividade": [{"id": i, "texto": t} for i, t in list(w._atividade) if i > desde][-60:],
+        }
+
+    def enviar(self, texto: str) -> None:
+        cb = self._ui.on_text_command
+        if not callable(cb):
+            raise ValueError("o Jarvis ainda está iniciando; tente em alguns segundos")
+        # O registro da janela mostra o que foi digitado, como no campo dela.
+        self._ui.write_log(f"You: {texto}")
+        cb(texto)
+
+    def microfone(self, ligado: bool) -> None:
+        self._na_interface(lambda: self._ui._win._set_muted(not ligado))
+
+    def acordar(self) -> None:
+        cb = self._ui.on_wake_manual
+        if callable(cb):
+            cb()
+
+    def interromper(self) -> None:
+        cb = self._ui.on_interrupt
+        if callable(cb):
+            cb()
+
+    def abrir(self, nome: str) -> None:
+        self._na_interface(lambda: self._ui._win._abrir_ajuste(nome))
+
+    def agente(self, ligado: bool) -> None:
+        """Liga ou desliga só o assistente (voz e conversa); o resto continua."""
+        cb = getattr(self._ui, "on_agent_toggle", None)
+        if not callable(cb):
+            raise ValueError("o Jarvis ainda está iniciando; tente em alguns segundos")
+        cb(bool(ligado))
+
+    def desligar(self) -> None:
+        """O botão Desligar da interface: fecha a janela e encerra o Jarvis."""
+        import os as _os
+        import threading as _threading
+
+        def _fim():
+            try:
+                self._ui._win.close()
+            except Exception:
+                pass
+            from PyQt6.QtWidgets import QApplication
+            QApplication.quit()
+        self._na_interface(_fim)
+        # Linhas de voz e da fila podem segurar o processo: encerra de vez.
+        _threading.Timer(2.5, lambda: _os._exit(0)).start()

@@ -28,15 +28,20 @@ Variáveis opcionais:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import copy
 import json
 import os
 import platform
 import sys
+import time
 from importlib.util import find_spec
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 GROQ_URL = "https://api.groq.com/openai/v1"
+# A API do Gemini também fala o protocolo da OpenAI. No plano gratuito
+# (projeto sem cobrança ativada) não há crédito: só um limite de pedidos.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 # Escolhido para uma GPU de 4 GB (ex.: RX 580) com 16 GB de RAM: cabe inteiro
 # na placa via Vulkan, chama ferramentas de forma confiável e é a variante
@@ -53,11 +58,28 @@ DEFAULT_WHISPER = "small"
 LOCAL_TOOL_BUDGET = {"max_tools": "10", "max_tool_chars": "8000",
                      "history_chars": "8000"}
 
+
+def orcamento_local(contexto: int) -> dict:
+    """Ferramentas e histórico que cabem no contexto escolhido.
+
+    Um contexto menor faz o modelo caber inteiro numa placa de 4 GB (bem mais
+    rápido), mas aí o pedido também precisa ser menor: senão o Ollama corta o
+    começo, que são justamente as instruções."""
+    if contexto >= 12288:
+        return dict(LOCAL_TOOL_BUDGET)
+    if contexto >= 8192:
+        return {"max_tools": "10", "max_tool_chars": "7000", "history_chars": "5000"}
+    return {"max_tools": "8", "max_tool_chars": "6000", "history_chars": "3000"}
+
 # Quanto esperar pela primeira palavra do modelo local, em segundos. O padrão
 # do provedor (60 s) é pouco para uma placa modesta: antes de responder, o
 # modelo lê ~7 mil tokens de instruções, e na primeira vez ainda carrega o
 # modelo na memória. Nas vezes seguintes o Ollama reaproveita essa leitura.
 LOCAL_TIMEOUT = "180"
+# Na nuvem cabe muito mais, mas mandar as 29 ferramentas com as descrições
+# longas em toda mensagem deixa cada resposta mais lenta. Com um limite, o
+# Jarvis escolhe as que combinam com o pedido (e usa as descrições curtas).
+NUVEM_TOOL_BUDGET = {"max_tools": "16", "max_tool_chars": "24000"}
 
 # O Ollama abre modelos com 4096 tokens de contexto por padrão, e só as
 # instruções e ferramentas do Jarvis passam de 7 mil. A API compatível com a
@@ -67,7 +89,9 @@ LOCAL_TIMEOUT = "180"
 DEFAULT_CONTEXT = 12288
 DERIVED_PREFIX = "jarvis-"
 
-PERFIS = ("local", "hibrido")
+PERFIS = ("local", "hibrido", "gemini")
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_RESERVAS = "gemini-flash-lite-latest,gemini-2.5-flash"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +106,18 @@ def _ollama_models(base: str = OLLAMA_URL) -> list[str] | None:
         return [m.get("name", "") for m in r.json().get("models", [])]
     except Exception:
         return None
+
+
+def verificar_aguardando(perfil: str, modelo: str, segundos: float = 0,
+                         passo: float = 5) -> list[str]:
+    """Como verificar(), mas espera o Ollama subir (logo depois de ligar o PC
+    ele ainda não está pronto)."""
+    limite = time.monotonic() + segundos
+    while True:
+        problemas = verificar(perfil, modelo)
+        if not any("Ollama" in p for p in problemas) or time.monotonic() >= limite:
+            return problemas
+        time.sleep(passo)
 
 
 def verificar(perfil: str, modelo: str) -> list[str]:
@@ -100,6 +136,15 @@ def verificar(perfil: str, modelo: str) -> list[str]:
             problemas.append(
                 f"O modelo '{modelo}' não está no Ollama (instalados: {instalados}). "
                 f"Rode: ollama pull {modelo}")
+        if find_spec("faster_whisper") is None:
+            problemas.append(
+                "Falta o reconhecimento de voz local. Rode: "
+                "python -m pip install faster-whisper")
+    elif perfil == "gemini":
+        if not chave_gemini():
+            problemas.append(
+                "Falta a chave do Gemini. Crie uma gratuita em "
+                "https://aistudio.google.com/apikey e salve com: setx GEMINI_API_KEY \"sua-chave\"")
         if find_spec("faster_whisper") is None:
             problemas.append(
                 "Falta o reconhecimento de voz local. Rode: "
@@ -151,6 +196,35 @@ def preparar_ollama(base: str, contexto: int = DEFAULT_CONTEXT,
         return base
 
 
+def liberar_outros(modelo: str, url: str = OLLAMA_URL) -> list[str]:
+    """Tira da placa de vídeo as outras versões do modelo do Jarvis.
+
+    Com OLLAMA_KEEP_ALIVE=-1 um modelo carregado fica na placa para sempre; ao
+    trocar de contexto (ou de modelo), o antigo continuava ocupando a memória e
+    empurrava o novo para o processador, que é várias vezes mais lento."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url + "/api/ps", timeout=5) as r:
+            carregados = [m.get("name") or m.get("model") or "" for m in json.loads(r.read()).get("models", [])]
+    except Exception:  # noqa: BLE001
+        return []
+    atual = {modelo, f"{modelo}:latest"}
+    liberados = []
+    for nome in carregados:
+        if nome in atual or not nome.startswith(DERIVED_PREFIX):
+            continue
+        try:
+            req = urllib.request.Request(url + "/api/generate", headers={"Content-Type": "application/json"},
+                                         data=json.dumps({"model": nome, "keep_alive": 0}).encode())
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+            liberados.append(nome)
+            print(f"  • Liberei '{nome}' da placa de vídeo.")
+        except Exception:  # noqa: BLE001
+            pass
+    return liberados
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Configuração
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +236,21 @@ def _env(name: str, default: str) -> str:
 def modelo_padrao(perfil: str) -> str:
     if perfil == "local":
         return _env("JARVIS_LOCAL_MODEL", DEFAULT_LOCAL_MODEL)
+    if perfil == "gemini":
+        return _env("JARVIS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     return _env("JARVIS_GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def chave_gemini() -> str:
+    """GEMINI_API_KEY do ambiente, ou a chave já salva pela tela inicial do Jarvis."""
+    chave = os.environ.get("GEMINI_API_KEY", "").strip()
+    if chave:
+        return chave
+    try:
+        from memory import config_manager as cm
+        return str(cm.load_api_keys().get("gemini_api_key") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _os_name() -> str:
@@ -185,16 +273,25 @@ def montar_config(data: dict, perfil: str, modelo: str) -> dict:
     if perfil == "local":
         llm.update(base_url=OLLAMA_URL + "/v1", model=modelo, api_key="",
                    vision=False, timeout=_env("JARVIS_TIMEOUT", LOCAL_TIMEOUT),
-                   **LOCAL_TOOL_BUDGET)
+                   **orcamento_local(int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))))
+        llm.pop("reasoning_effort", None)
+        llm.pop("fallback_models", None)
     else:
-        llm.update(base_url=GROQ_URL, model=modelo, vision=False,
-                   max_tools="0", max_tool_chars="0")
+        llm.update(base_url=GROQ_URL if perfil == "hibrido" else GEMINI_URL,
+                   model=modelo, vision=False, **NUVEM_TOOL_BUDGET)
         llm.pop("api_key", None)          # a chave só existe em memória
-        llm.pop("history_chars", None)    # o Groq tem contexto de sobra
-        llm.pop("timeout", None)          # e responde em segundos
+        llm.pop("history_chars", None)    # na nuvem há contexto de sobra
+        llm["timeout"] = "90"
+        if perfil == "gemini":
+            llm["reasoning_effort"] = "low"   # pensa menos antes de responder
+            # Se o principal estiver sobrecarregado (503) ou no limite (429).
+            llm["fallback_models"] = _env("JARVIS_GEMINI_RESERVAS", GEMINI_RESERVAS)
+        else:
+            llm.pop("reasoning_effort", None)
+            llm.pop("fallback_models", None)
 
     stt = creds.setdefault("whisper", {})
-    if perfil == "local":
+    if perfil in ("local", "gemini"):
         stt.update(backend="local", base_url="", api_key="", device="cpu",
                    model=_env("JARVIS_WHISPER_MODEL", DEFAULT_WHISPER),
                    language="pt")
@@ -215,28 +312,123 @@ def configure(perfil: str = "local", modelo: str = "") -> None:
     from memory import config_manager as cm
 
     modelo = modelo or modelo_padrao(perfil)
-    chave = os.environ.get("GROQ_API_KEY", "").strip()
-    if perfil == "hibrido" and not chave:
-        raise SystemExit("Defina GROQ_API_KEY no ambiente antes de usar o perfil hibrido.")
+    chave, destinos = "", ()
+    if perfil == "hibrido":
+        chave, destinos = os.environ.get("GROQ_API_KEY", "").strip(), ("openai_compat", "whisper")
+        if not chave:
+            raise SystemExit("Defina GROQ_API_KEY no ambiente antes de usar o perfil hibrido.")
+    elif perfil == "gemini":
+        chave, destinos = chave_gemini(), ("openai_compat",)
+        if not chave:
+            raise SystemExit("Falta a chave do Gemini (GEMINI_API_KEY ou a salva no Jarvis).")
 
     data = montar_config(cm.load_api_keys(), perfil, modelo)
     cm.ensure_config_dir()
-    cm.CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Gravação atômica: outro processo lendo ao mesmo tempo nunca vê o arquivo
+    # pela metade. Foi isso que, com a web e a janela subindo juntas, fez a
+    # janela achar a configuração vazia e cair no Gemini Live.
+    from core.atomic_storage import write_json
+    write_json(cm.CONFIG_FILE, data)
 
     # Nenhuma chamada ao Gemini, nem como reserva.
     os.environ["JARVIS_NO_GEMINI"] = "1"
+    os.environ["JARVIS_PROVIDER_MODE"] = "pipeline"
 
-    if chave:
-        original = cm.load_api_keys
+    original = cm.load_api_keys
+    vocabulario = vocabulario_whisper()
 
-        def runtime_config():
-            current = original()
-            block = current.setdefault("providers", {}).setdefault("creds", {})
-            for pid in ("openai_compat", "whisper"):
-                block.setdefault(pid, {})["api_key"] = chave
-            return current
+    def runtime_config():
+        current = original()
+        block = current.setdefault("providers", {})
+        block["mode"] = "pipeline"           # mesmo se o arquivo for lido vazio
+        creds = block.setdefault("creds", {})
+        for pid in destinos:
+            creds.setdefault(pid, {})["api_key"] = chave
+        if vocabulario:
+            creds.setdefault("whisper", {})["initial_prompt"] = vocabulario
+        return current
 
-        cm.load_api_keys = runtime_config
+    cm.load_api_keys = runtime_config
+
+
+# Grafias que o Whisper pequeno erra no dia a dia. Os nomes dos clientes da
+# central entram na hora (só em memória, nunca no arquivo de configuração).
+VOCABULARIO = ("Jarvis, HAIZEN, WhatsApp, WhatsApp Business, Google Agenda, Google Chrome, "
+               "Spotify, YouTube, Instagram, Canva, Photoshop, Illustrator, Premiere, "
+               "Visual Studio Code, Explorador de Arquivos, Downloads, Documentos, "
+               "receita, despesa, faturamento, tarefa, proposta, e-commerce, tráfego pago")
+
+
+def vocabulario_whisper(limite: int = 60) -> str:
+    nomes = []
+    try:
+        from haizen import store
+        nomes = [c["nome"] for c in store.listar_clientes() if c.get("status", "Ativo") == "Ativo"][:limite]
+    except Exception:  # noqa: BLE001 - sem central, só o vocabulário fixo
+        pass
+    return VOCABULARIO + (". Clientes: " + ", ".join(nomes) if nomes else "") + "."
+
+
+# ── iniciar com o Windows (só a janela) ─────────────────────────────────────
+NOME_ATALHO = "Jarvis HAIZEN.cmd"
+
+
+def _pasta_inicializar() -> Path:
+    return (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu"
+            / "Programs" / "Startup")
+
+
+def iniciar_com_windows(perfil: str, ligar: bool) -> str:
+    if sys.platform != "win32":
+        return "Início automático só está pronto para o Windows."
+    atalho = _pasta_inicializar() / NOME_ATALHO
+    if not ligar:
+        atalho.unlink(missing_ok=True)
+        return "O Jarvis não inicia mais sozinho com o Windows."
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    exe = pythonw if pythonw.is_file() else Path(sys.executable)
+    raiz = Path(__file__).resolve().parent
+    atalho.write_text("\r\n".join([
+        "@echo off", f'cd /d "{raiz}"',
+        f'start "" "{exe}" "{raiz / "start_local.py"}" --perfil {perfil} --aguardar', ""]),
+        encoding="utf-8")
+    return ("Pronto: ao ligar o PC, abre o Jarvis (a janela com voz), com a central da HAIZEN "
+            f"dentro dele. ({atalho})")
+
+
+def aquecer_modelo(modelo: str, url: str = OLLAMA_URL) -> None:
+    """Carrega o modelo na placa de vídeo em segundo plano, logo ao abrir.
+
+    Sem isso, o primeiro "oi" pagava a carga do modelo (dezenas de segundos
+    numa placa modesta) e parecia que o Jarvis não respondia. Um pedido vazio
+    ao Ollama só carrega o modelo, e keep_alive=-1 o mantém carregado.
+    """
+    import threading
+    import urllib.request
+
+    def _carregar():
+        corpo = json.dumps({"model": modelo, "prompt": "", "keep_alive": -1}).encode()
+        req = urllib.request.Request(f"{url}/api/generate", data=corpo,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                r.read()
+            print(f"[Ollama] {modelo} carregado e pronto.")
+        except Exception as e:  # noqa: BLE001 - só adianta o trabalho; sem ele, carrega na 1ª fala
+            print(f"[Ollama] não consegui pré-carregar {modelo}: {e}")
+
+    threading.Thread(target=_carregar, daemon=True, name="aquecer-modelo").start()
+
+
+def ligar_central() -> None:
+    """A central (painel, financeiro, celular) roda dentro da janela, sem
+    outro processo. Se outra cópia já ocupa a porta, usa aquela."""
+    try:
+        from haizen.central import servidor
+        url = servidor.iniciar(abrir_navegador=False)
+        print(f"[HAIZEN] Central em {url}")
+    except Exception as e:  # noqa: BLE001 - sem central, o Jarvis funciona igual
+        print(f"[HAIZEN] Central não iniciou: {e}")
 
 
 def _args(argv=None):
@@ -245,13 +437,34 @@ def _args(argv=None):
     p.add_argument("--modelo", default="", help="sobrescreve o modelo do perfil")
     p.add_argument("--verificar", action="store_true",
                    help="só confere a instalação e sai")
+    p.add_argument("--aguardar", action="store_true",
+                   help="espera o Ollama subir (usado ao iniciar com o Windows)")
+    p.add_argument("--iniciar-com-windows", action="store_true",
+                   help="abre esta janela sozinha quando o PC liga")
+    p.add_argument("--nao-iniciar-com-windows", action="store_true")
+    p.add_argument("--sem-central", action="store_true",
+                   help="não abre a central da HAIZEN junto")
     return p.parse_args(argv)
 
 
 if __name__ == "__main__":
+    if sys.stdout is None or sys.stderr is None:   # pythonw: sem janela de console
+        _log = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "JarvisGPT" / "jarvis_janela.log"
+        _log.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(_log, "a", encoding="utf-8", buffering=1)
     a = _args()
+    try:
+        # O atalho da área de trabalho (Jarvis.vbs) abre com este mesmo Python.
+        _pyw = Path(sys.executable).with_name("pythonw.exe")
+        (Path(__file__).resolve().parent / "config" / "python_local.txt").write_text(
+            str(_pyw if _pyw.is_file() else Path(sys.executable)), encoding="utf-8")
+    except OSError:
+        pass
+    if a.iniciar_com_windows or a.nao_iniciar_com_windows:
+        print(iniciar_com_windows(a.perfil, a.iniciar_com_windows))
+        sys.exit(0)
     modelo = a.modelo or modelo_padrao(a.perfil)
-    problemas = verificar(a.perfil, modelo)
+    problemas = verificar_aguardando(a.perfil, modelo, 180 if a.aguardar else 0)
     for p in problemas:
         print("  •", p)
     if a.verificar:
@@ -263,6 +476,11 @@ if __name__ == "__main__":
     if a.perfil == "local":
         contexto = int(_env("JARVIS_CONTEXT", str(DEFAULT_CONTEXT)))
         modelo = preparar_ollama(modelo, contexto)
+        liberar_outros(modelo)
     configure(a.perfil, modelo)
+    if a.perfil == "local":
+        aquecer_modelo(modelo)
+    if not a.sem_central:
+        ligar_central()
     from main import main
     main()

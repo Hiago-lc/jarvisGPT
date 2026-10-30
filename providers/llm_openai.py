@@ -337,6 +337,13 @@ class OpenAICompatLLM:
         self.model = (cfg.get("model") or "").strip()
         self.key = (cfg.get("api_key") or "").strip()
         self.timeout = float(cfg.get("timeout") or 60.0)
+        # Gemini (e outros) pensam antes de responder; "low" encurta essa espera
+        # sem tirar a capacidade de usar ferramentas. Vazio = padrão do servidor.
+        self.reasoning_effort = (cfg.get("reasoning_effort") or "").strip()
+        # Outros modelos do mesmo serviço, para quando o principal está
+        # sobrecarregado (503) ou no limite (429): cada um tem fila e cota próprias.
+        self.fallback_models = [m.strip() for m in str(cfg.get("fallback_models") or "").split(",")
+                                if m.strip() and m.strip() != self.model]
 
         # A budget on a model running on your own hardware, unless the user
         # chose one themselves.
@@ -393,7 +400,7 @@ class OpenAICompatLLM:
         return h
 
     def _body(self, messages: list[dict], tools: list[dict] | None,
-              stream: bool, temperature: float | None) -> dict:
+              stream: bool, temperature: float | None, max_tokens: int | None = None) -> dict:
         body: dict[str, Any] = {"model": self.model, "messages": messages,
                                 "stream": stream}
         if tools and self.caps["tools"]:
@@ -401,12 +408,17 @@ class OpenAICompatLLM:
             body["tool_choice"] = "auto"
         if temperature is not None:
             body["temperature"] = temperature
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
+        if max_tokens:
+            body["max_tokens"] = max_tokens
         return body
 
     # -- one-shot, synchronous: this is what core/gemini.py's ladder uses ----
     def complete(self, messages: list[dict], tools: list[dict] | None = None,
                  *, timeout: float | None = None,
-                 temperature: float | None = None) -> tuple[str, list[FunctionCall]]:
+                 temperature: float | None = None,
+                 max_tokens: int | None = None) -> tuple[str, list[FunctionCall]]:
         """Text and any tool calls. Raises on failure so the ladder can read the
         error, classify it and rest this rung exactly as it rests a Gemini one."""
         try:
@@ -414,7 +426,7 @@ class OpenAICompatLLM:
                                     trust_env=self._trust_env) as cl:
                 r = cl.post(f"{self.base}/chat/completions",
                             headers=self._headers(),
-                            json=self._body(messages, tools, False, temperature))
+                            json=self._body(messages, tools, False, temperature, max_tokens))
                 if r.status_code >= 400:
                     raise RuntimeError(f"{r.status_code} {_terse(r.text)}")
                 data = r.json()
@@ -461,11 +473,8 @@ class OpenAICompatLLM:
                 return
 
             buf = _ToolCallBuffer()
-            async with cl.stream("POST", f"{self.base}/chat/completions",
-                                 headers=self._headers(), json=body) as r:
-                if r.status_code >= 400:
-                    detail = _terse((await r.aread()).decode("utf-8", "replace"))
-                    raise RuntimeError(f"{r.status_code} {detail}")
+            r = await self._abrir_stream(cl, body)
+            try:
                 async for line in r.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -483,10 +492,50 @@ class OpenAICompatLLM:
                         yield {"text": delta["content"]}
                     if delta.get("tool_calls"):
                         buf.feed(delta["tool_calls"])
+            finally:
+                await r.aclose()
 
             calls = buf.drain()
             if calls:
                 yield {"tool_calls": calls}
+
+    async def _abrir_stream(self, cl, body: dict):
+        """A resposta em streaming, já com status 200.
+
+        Tudo aqui acontece ANTES do primeiro pedaço da resposta, então repetir é
+        seguro (depois disso, repetir duplicaria a fala):
+          - nada chegou a tempo: mais uma tentativa;
+          - serviço sobrecarregado (500/502/503/504): espera um instante e tenta
+            de novo; continuando, passa ao próximo modelo da lista;
+          - limite atingido (429) ou modelo reserva inexistente (404): próximo modelo.
+        """
+        import asyncio
+        modelos = [self.model, *self.fallback_models]
+        ultimo = None
+        for i, modelo in enumerate(modelos):
+            corpo = {**body, "model": modelo}
+            for tentativa in (1, 2):
+                try:
+                    r = await cl.send(cl.build_request(
+                        "POST", f"{self.base}/chat/completions",
+                        headers=self._headers(), json=corpo), stream=True)
+                except (self._httpx.ReadTimeout, self._httpx.ConnectTimeout) as e:
+                    ultimo = e
+                    continue
+                if r.status_code < 400:
+                    if i:
+                        print(f"[LLM] {self.model} indisponível; respondendo com {modelo}.")
+                    return r
+                detail = _terse((await r.aread()).decode("utf-8", "replace"))
+                await r.aclose()
+                ultimo = RuntimeError(f"{r.status_code} {detail}")
+                if r.status_code in (500, 502, 503, 504) and tentativa == 1:
+                    await asyncio.sleep(1.5)
+                    continue
+                if r.status_code in (429, 500, 502, 503, 504) or (r.status_code == 404 and i):
+                    break               # próximo modelo
+                raise ultimo            # erro de verdade (chave, pedido): não adianta insistir
+        raise ultimo if ultimo else RuntimeError("sem resposta do modelo")
 
     # -- for the settings panel ---------------------------------------------
     def models(self, timeout: float = 8.0) -> list[str]:

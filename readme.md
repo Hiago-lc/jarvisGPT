@@ -1,3 +1,9 @@
+> **Jarvis web:** o assistente e a central no navegador, no PC e no celular. Inicie com `py jarvis_web.py`. Veja [o guia](LEIA-ME-WEB.md).
+
+> **Central HAIZEN:** faturamento, clientes, tarefas e pipeline no seu PC. Veja [o guia](LEIA-ME-CENTRAL.md).
+
+> **HAIZEN:** agentes da agência comandados por voz e criados com o Claude. Veja [o guia](LEIA-ME-HAIZEN.md).
+
 > **Sem API de créditos:** inicie com `python start_local.py` (tudo no seu PC) ou `python start_local.py --perfil hibrido` (Groq gratuito). Veja [o guia](LEIA-ME-LOCAL.md).
 
 > **Atualização: agilidade, Google Agenda e memória persistente:** leia [este guia](GOOGLE-AGENDA-E-MEMORIA.md).
