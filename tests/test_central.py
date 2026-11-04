@@ -345,10 +345,17 @@ class TrocaDeVersaoTests(unittest.TestCase):
 
     def test_version_check(self):
         from haizen.central import servidor
-        with patch.object(servidor, "VERSAO_INICIAL", servidor.versao_no_disco()):
+        agora = servidor._arquivos_de_codigo()
+        with patch.object(servidor, "_CODIGO_INICIAL", dict(agora)):
             self.assertFalse(servidor.desatualizado())
-        with patch.object(servidor, "VERSAO_INICIAL", servidor.versao_no_disco() - 3600):
+        # Um arquivo que já existia mudou: versão nova.
+        um = next(iter(agora))
+        with patch.object(servidor, "_CODIGO_INICIAL", {**agora, um: agora[um] - 3600}):
             self.assertTrue(servidor.desatualizado())
+        # Um script novo solto na pasta (ex.: de um agente) não é versão nova.
+        sem_um = {k: v for k, v in agora.items() if k != um}
+        with patch.object(servidor, "_CODIGO_INICIAL", sem_um):
+            self.assertFalse(servidor.desatualizado())
 
     def test_restart_needs_the_launcher(self):
         from haizen.central import servidor

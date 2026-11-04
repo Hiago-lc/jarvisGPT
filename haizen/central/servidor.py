@@ -43,31 +43,40 @@ RAIZ = Path(__file__).resolve().parents[2]
 _PASTAS_CODIGO = ("haizen", "actions", "plugins", "core", "providers", "memory")
 
 
-def versao_no_disco() -> float:
-    ultima = 0.0
+def _arquivos_de_codigo() -> dict[str, float]:
+    datas = {}
     for pasta in _PASTAS_CODIGO:
         for arq in (RAIZ / pasta).rglob("*"):
             if arq.suffix in (".py", ".js", ".css", ".html") and "__pycache__" not in arq.parts:
                 try:
-                    ultima = max(ultima, arq.stat().st_mtime)
+                    datas[str(arq)] = arq.stat().st_mtime
                 except OSError:
                     pass
-    for arq in ("jarvis_web.py", "start_local.py"):
+    for nome in ("jarvis_web.py", "start_local.py"):
         try:
-            ultima = max(ultima, (RAIZ / arq).stat().st_mtime)
+            datas[str(RAIZ / nome)] = (RAIZ / nome).stat().st_mtime
         except OSError:
             pass
-    return ultima
+    return datas
 
 
-VERSAO_INICIAL = versao_no_disco()
+def versao_no_disco() -> float:
+    return max(_arquivos_de_codigo().values(), default=0.0)
+
+
+# Só conta mudança em arquivo que JÁ existia quando o Jarvis abriu: um script
+# solto que alguém (ou um agente) grave na pasta não é versão nova. Uma
+# atualização de verdade sempre altera arquivos que já existiam.
+_CODIGO_INICIAL = _arquivos_de_codigo()
+VERSAO_INICIAL = max(_CODIGO_INICIAL.values(), default=0.0)
 # Definido por jarvis_web.py: como iniciar de novo. Sem ele (central aberta
 # pela janela antiga), a página não oferece reiniciar.
 COMANDO_REINICIO: list[str] | None = None
 
 
 def desatualizado() -> bool:
-    return versao_no_disco() > VERSAO_INICIAL + 1
+    agora = _arquivos_de_codigo()
+    return any(agora.get(arq, data) > data + 1 for arq, data in _CODIGO_INICIAL.items())
 
 
 def reiniciar() -> None:

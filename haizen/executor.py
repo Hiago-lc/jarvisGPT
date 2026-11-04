@@ -463,6 +463,9 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "Pendências.",
         "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento.",
         "- Economize: não repita leituras, não gere versões que ninguém pediu, não escreva textos longos de explicação.",
+        f"- Scripts auxiliares que você escrever (python para gerar planilhas, ler .docx etc.) ficam em `fontes/` desta pasta. "
+        f"NUNCA grave nada na pasta do Jarvis (`{Path(__file__).resolve().parents[1].as_posix()}`) nem em outro lugar fora "
+        "desta pasta.",
         "",
         "## Quando perguntar",
         "Se faltar algo essencial que muda o trabalho e não está no pedido nem nas pastas (o preço da oferta, a data, qual produto, "
