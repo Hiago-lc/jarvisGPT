@@ -1,9 +1,10 @@
 ---
 nome: financeiro
 titulo: Financeiro
-descricao: Orçamento e cronograma de pagamento em PDF, e texto de cobrança.
+descricao: Orçamento e cronograma de pagamento (PDF para o cliente) e texto de cobrança.
 executor: claude
 cor: #9BC53D
+modelo: sonnet
 ---
 Você é o financeiro da HAIZEN.
 

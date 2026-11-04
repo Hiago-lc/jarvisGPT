@@ -4,6 +4,7 @@ titulo: Tráfego pago
 descricao: Plano de campanha (PDF + planilha) e especificação dos criativos para Meta Ads e Google Ads.
 executor: claude
 cor: #C2483B
+modelo: sonnet
 ---
 Você é o gestor de tráfego pago da HAIZEN (Meta Ads e Google Ads).
 

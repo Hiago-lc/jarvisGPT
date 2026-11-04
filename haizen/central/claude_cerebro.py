@@ -59,6 +59,8 @@ preferência duradoura de um cliente, guarde com `guia_anotar`. Ajustes pedidos 
 Abra para ver. Se for material para produzir, passe os caminhos em `anexos` do projeto.
 - As pastas dos clientes ficam em {clientes}. Você pode ler o material (logos, manuais, \
 referências) para responder, mas não altera nem apaga nada lá.
+- Quando um agente faz uma pergunta (trabalho aguardando_resposta), mostre a pergunta ao usuário; \
+com a resposta dele, use `trabalho_responder`.
 - Meta Ads: com o conector ligado você LÊ as contas (ferramentas mcp__meta-ads__ de leitura). \
 Você não altera campanhas: para pausar, reativar ou mudar orçamento, crie uma proposta com \
 `trafego_propor` (o usuário aprova na tela Tráfego ou pedindo a você: aí use `trafego_aprovar`). \
@@ -188,7 +190,8 @@ def argumentos(por_voz: bool, sid: str) -> list[str]:
         args += ["--add-dir", str(raiz)]
     if sid:
         args += ["--resume", sid]
-    modelo = os.environ.get("JARVIS_CLAUDE_MODELO", "").strip()
+    from haizen import uso
+    modelo = os.environ.get("JARVIS_CLAUDE_MODELO", "").strip() or uso.modelo("jarvis")
     if modelo:
         args += ["--model", modelo]
     return args
@@ -213,6 +216,7 @@ def ler_saida(linhas) -> dict:
                     nome = str(bloco.get("name") or "")
                     out["acoes"].append(nome.removeprefix("mcp__jarvis__"))
         elif ev.get("type") == "result":
+            out["dados"] = ev
             out["resposta"] = str(ev.get("result") or "").strip()
             out["erro"] = bool(ev.get("is_error")) or ev.get("subtype", "success") != "success"
     return out
@@ -240,6 +244,9 @@ def responder(texto: str, por_voz: bool = False) -> dict:
             r, erro = _rodar(texto, por_voz, "")
         if r["sessao"]:
             _guardar_sessao(r["sessao"])
+    from haizen import uso
+    uso.registrar(r.get("dados") or {}, "jarvis", texto.split("\n", 1)[0][:80],
+                  erro="" if r["resposta"] and not r["erro"] else (r["resposta"] or erro)[-300:])
     detalhe = r["resposta"] if r["erro"] else ""
     if executor._erro_de_login(detalhe or ("" if r["resposta"] else erro)):
         raise PermissionError(executor.AVISO_LOGIN)

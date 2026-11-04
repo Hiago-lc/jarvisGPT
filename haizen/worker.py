@@ -21,6 +21,14 @@ _avisar: Callable[[str], None] = lambda msg: None
 SAIDA_PARA_STDERR = False
 
 
+def _notificar(titulo: str, texto: str, tipo: str, t: dict) -> None:
+    try:
+        from . import notificar
+        notificar.avisar(titulo, texto, tipo, f"#/agentes/{t['id']}")
+    except Exception as e:  # noqa: BLE001 - o aviso nunca trava a fila
+        print(f"[HAIZEN] aviso não saiu: {e}", file=sys.stderr)
+
+
 def _rodar() -> None:
     global _thread
     try:
@@ -39,17 +47,25 @@ def _rodar() -> None:
                           else contextlib.nullcontext())
                 with desvio:
                     arq = executor.executar(t)
+                if arq is None:                   # o agente parou para perguntar
+                    _avisar(f"{t.get('titulo') or t['agente']} tem uma pergunta para você.")
+                    _notificar("Um agente tem uma pergunta", f"{t.get('titulo') or t['agente']}: "
+                               f"{(store.trabalho(t['id']) or {}).get('pergunta', '')[:160]}", "pergunta", t)
+                    continue
                 if t.get("projeto_id"):
                     from . import servicos
                     servicos.apos_entrega(t)
                     feito = store.trabalho(t["id"]) or {}
                     if feito.get("status") == "aguardando_aprovacao":
                         _avisar(f"Etapa \"{t.get('titulo') or t['agente']}\" do projeto {t['projeto_id']} pronta para sua aprovação.")
+                        _notificar("Pronto para aprovar", t.get("titulo") or t["agente"], "aprovacao", t)
                 else:
                     _avisar(f"Trabalho {t['id']} ({t['agente']}) pronto para aprovação: {arq.name}")
+                    _notificar("Pronto para aprovar", t.get("titulo") or t["agente"], "aprovacao", t)
             except Exception as e:
                 store.atualizar(t["id"], status="erro", erro=f"{type(e).__name__}: {e}"[:500])
                 _avisar(f"Trabalho {t['id']} ({t['agente']}) falhou: {e}")
+                _notificar("Um trabalho travou", f"{t.get('titulo') or t['agente']}: {e}"[:200], "erro", t)
     except Exception:
         with _lock:
             _thread = None

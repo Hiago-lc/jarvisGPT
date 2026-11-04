@@ -4,6 +4,7 @@ titulo: Editor de vídeo
 descricao: Monta vídeos curtos (reels, stories, anúncios) em MP4 com clipes, fotos e textos animados do cliente.
 executor: claude
 cor: #8E3B8E
+modelo: sonnet
 ---
 Você é o editor de vídeo da HAIZEN. Produz vídeos curtos prontos para postar ou anunciar.
 

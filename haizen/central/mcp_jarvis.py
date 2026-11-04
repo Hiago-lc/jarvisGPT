@@ -241,6 +241,22 @@ def trabalho_ver(id: int) -> dict:
 
 
 @mcp.tool()
+def trabalho_responder(id: int, resposta: str) -> dict:
+    """Responde a pergunta que um agente fez (status aguardando_resposta); ele continua o
+    trabalho de onde parou. Use com as palavras do usuário."""
+    return _api("POST", f"trabalhos/{int(id)}/responder", {"resposta": resposta})
+
+
+@mcp.tool()
+def uso_do_claude(dias: int = 7) -> dict:
+    """Quanto o sistema gastou do Claude: hoje, últimas 5 h, por área (jarvis, agentes, tráfego),
+    os trabalhos que mais pesaram e se o limite foi atingido."""
+    r = _api("GET", "uso", dias=dias)
+    r.pop("recentes", None)
+    return r
+
+
+@mcp.tool()
 def trabalho_aprovar(id: int) -> dict:
     """Aprova uma entrega. Só quando o usuário pedir explicitamente."""
     return _api("POST", f"trabalhos/{int(id)}/aprovar", {})

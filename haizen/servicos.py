@@ -10,6 +10,7 @@ _NOMES_STATUS = {
     "na_fila": "na fila", "executando": "em execução",
     "aguardando_aprovacao": "aguardando sua aprovação", "aprovado": "aprovado",
     "rejeitado": "rejeitado", "erro": "com erro", "esperando": "esperando as etapas anteriores",
+    "aguardando_resposta": "esperando a sua resposta",
 }
 
 
@@ -136,24 +137,24 @@ _SERVICOS = (
 
 
 def _plano_padrao(pedido: str) -> dict:
-    """Quando o gerente não devolve um plano usável: as etapas pelos serviços citados."""
-    etapas = [{"n": 1, "agente": "atendimento", "titulo": "Briefing", "depende_de": [], "aprovacao": False,
-               "tarefa": "Organize o pedido do projeto num briefing para a equipe."}]
+    """Quando o gerente não devolve um plano usável: as etapas pelos serviços
+    citados, enxutas (sem briefing e sem revisão, que gastam limite à toa)."""
+    etapas = []
     nomes = {a.nome for a in _equipe()}
     for agente, titulo, padrao, aprova in _SERVICOS:
         if agente in nomes and re.search(padrao, pedido, re.I):
-            deps = [1] + [e["n"] for e in etapas if e["agente"] == "designer" and agente in ("dev", "criativos", "social", "video")]
+            deps = [e["n"] for e in etapas if e["agente"] == "designer" and agente in ("dev", "criativos", "social", "video")]
             deps += [e["n"] for e in etapas if e["agente"] == "criativos" and agente == "video"]
             deps += [e["n"] for e in etapas if e["agente"] == "trafego" and agente == "criativos"]
             etapas.append({"n": len(etapas) + 1, "agente": agente, "titulo": titulo, "depende_de": sorted(set(deps)),
-                           "aprovacao": aprova, "tarefa": f"{titulo} para este projeto, conforme o pedido e o briefing."})
-    if len(etapas) == 1:
-        etapas.append({"n": 2, "agente": "comercial", "titulo": "Proposta comercial", "depende_de": [1],
+                           "aprovacao": True, "tarefa": f"{titulo} para este projeto, conforme o pedido."})
+    if not etapas:
+        etapas.append({"n": 1, "agente": "comercial", "titulo": "Proposta comercial", "depende_de": [],
                        "aprovacao": True, "tarefa": "Proposta comercial para este projeto."})
-    producao = [e["n"] for e in etapas[1:] if e["agente"] != "comercial"]
-    if producao and "revisor" in nomes:
+    if len(etapas) >= 3 and "revisor" in nomes:
         etapas.append({"n": len(etapas) + 1, "agente": "revisor", "titulo": "Revisão final", "aprovacao": True,
-                       "depende_de": producao, "tarefa": "Revise as entregas do projeto antes de irem ao cliente."})
+                       "depende_de": [e["n"] for e in etapas],
+                       "tarefa": "Revise as entregas do projeto antes de irem ao cliente."})
     return {"titulo": "", "etapas": [e for e in etapas if e["agente"] in nomes]}
 
 
@@ -225,7 +226,7 @@ def situacao_projeto(etapas: list[dict]) -> str:
         return "planejando"
     if any(t["status"] == "erro" for t in validas):
         return "erro"
-    if any(t["status"] == "aguardando_aprovacao" for t in validas):
+    if any(t["status"] in ("aguardando_aprovacao", "aguardando_resposta") for t in validas):
         return "aguardando"
     if all(t["status"] == "aprovado" for t in validas):
         return "concluido"
@@ -274,6 +275,27 @@ def _aprender(t: dict, nota: str, como: str) -> None:
         print(f"[HAIZEN] não anotei no guia da marca: {e}")
 
 
+def responder(tid: int, resposta: str) -> dict:
+    """A sua resposta à pergunta de um agente: ele volta para a fila e continua
+    a mesma conversa de onde parou."""
+    t = store.trabalho(tid)
+    if t is None:
+        raise KeyError(f"não existe o trabalho {tid}")
+    if t["status"] != "aguardando_resposta":
+        raise ValueError(f"o trabalho {tid} está {_NOMES_STATUS[t['status']]}, sem pergunta para responder")
+    resposta = (resposta or "").strip()
+    if not resposta:
+        raise ValueError("escreva a resposta")
+    if not t.get("sessao"):
+        # Sem a conversa anterior: recomeça com a pergunta e a resposta no pedido.
+        store.atualizar(tid, status="na_fila", resposta="", pergunta="")
+        with store.conexao() as con:
+            con.execute("UPDATE trabalhos SET pedido = pedido || ? WHERE id=?",
+                        (f"\n\nVocê perguntou: {t['pergunta']}\nResposta do dono: {resposta}", tid))
+        return store.trabalho(tid)
+    return store.atualizar(tid, status="na_fila", resposta=resposta)
+
+
 def tentar_de_novo(tid: int) -> dict:
     """Um trabalho que deu erro volta para a fila, com o mesmo pedido."""
     t = store.trabalho(tid)
@@ -297,6 +319,11 @@ def aprovar(tid: int, observacao: str = "") -> dict:
         raise ValueError(f"o trabalho {tid} está {_NOMES_STATUS[t['status']]}, "
                          "não aguardando aprovação")
     feito = store.atualizar(tid, status="aprovado", observacao=(observacao or "").strip())
+    try:
+        from haizen import executor
+        executor.guardar_aprovado(feito)          # a régua de qualidade dos agentes
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] não guardei nos aprovados: {e}")
     _aprender(t, observacao, "aprovado com observação")
     if feito.get("projeto_id"):
         liberar(feito["projeto_id"])

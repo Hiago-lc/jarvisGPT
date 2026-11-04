@@ -156,7 +156,7 @@ class ExecutorTests(_Temp):
         with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk-cobrada'}), \
              patch('haizen.executor.claude_disponivel', return_value='claude'), \
              patch('subprocess.run', return_value=done) as run:
-            self.assertEqual(executor.executar_claude('prompt', Path(self.dir.name) / 'w'), 'Proposta')
+            self.assertEqual(executor.executar_claude('prompt', Path(self.dir.name) / 'w')["result"], 'Proposta')
         kwargs = run.call_args.kwargs
         self.assertNotIn('ANTHROPIC_API_KEY', kwargs['env'])
         self.assertEqual(kwargs['input'], 'prompt')

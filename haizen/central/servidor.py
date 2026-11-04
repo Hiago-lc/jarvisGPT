@@ -88,6 +88,7 @@ def reiniciar() -> None:
 
 def _trabalho(t: dict, com_entrega: bool = False) -> dict:
     out = dict(t)
+    out.pop("sessao", None)
     cli = store.cliente_por_id(t["cliente_id"])
     out["cliente_nome"] = cli["nome"] if cli else None
     if com_entrega and t.get("arquivo"):
@@ -126,6 +127,7 @@ def escritorio() -> dict:
 
     def resumo(t):
         return {"id": t["id"], "titulo": t.get("titulo") or "", "pedido": t["pedido"][:220],
+                "pergunta": (t.get("pergunta") or "")[:300] if t["status"] == "aguardando_resposta" else "",
                 "status": t["status"], "cliente": cliente(t["cliente_id"]),
                 "projeto": projetos.get(t.get("projeto_id")), "atualizado_em": t["atualizado_em"]}
     saida = []
@@ -134,7 +136,7 @@ def escritorio() -> dict:
         atual = next((t for t in meus if t["status"] == "executando"), None)
         fila = [t for t in meus if t["status"] == "na_fila"]
         esperando = [t for t in meus if t["status"] == "esperando"]
-        aprovar = [t for t in meus if t["status"] == "aguardando_aprovacao"]
+        aprovar = [t for t in meus if t["status"] in ("aguardando_aprovacao", "aguardando_resposta")]
         # Só o erro mais recente conta: depois de um trabalho bem feito, ele some.
         erro = meus[0] if meus and meus[0]["status"] == "erro" else None
         estado = ("trabalhando" if atual else "esperando_voce" if aprovar else "erro" if erro
@@ -278,6 +280,23 @@ class _Handler(BaseHTTPRequestHandler):
             if len(partes) == 2 and metodo == "GET":
                 arq = anexos.caminho(unquote(partes[1]))
                 return _Arquivo(arq.read_bytes(), anexos.tipo(arq))
+        if partes and partes[0] == "uso":
+            from haizen import uso
+            if len(partes) == 1 and metodo == "GET":
+                return uso.resumo(int(q.get("dias") or 7))
+            if partes[1:] == ["config"] and metodo == "POST":
+                uso.salvar_config(self._corpo())
+                return uso.resumo(7)
+        if partes and partes[0] == "notificacoes":
+            from haizen import notificar
+            if len(partes) == 1 and metodo == "GET":
+                return {"ultimo": notificar.ultimo_id(), "avisos": notificar.listar(int(q.get("desde") or 0))}
+            if partes[1:] == ["lidas"] and metodo == "POST":
+                notificar.marcar_lidas()
+                return {"ok": True}
+            if partes[1:] == ["teste"] and metodo == "POST":
+                return notificar.avisar("Teste de aviso", "Se você ouviu o som e viu este aviso, está funcionando.",
+                                        "info", "#/uso")
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:])
         if partes and partes[0] == "pc":
@@ -378,6 +397,10 @@ class _Handler(BaseHTTPRequestHandler):
                     raise ValueError("este trabalho não tem pasta de arquivos")
                 _abrir_pasta(t["pasta"])
                 return {"ok": True}
+            if len(partes) == 2 and partes[1] == "responder" and metodo == "POST":
+                t = servicos.responder(tid, str(self._corpo().get("resposta") or ""))
+                worker.iniciar()
+                return _trabalho(t)
             if len(partes) == 2 and partes[1] == "tentar" and metodo == "POST":
                 t = servicos.tentar_de_novo(tid)
                 worker.iniciar()

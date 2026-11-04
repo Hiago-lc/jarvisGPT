@@ -18,8 +18,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # "esperando": etapa de um projeto que espera as etapas de que depende.
+# "aguardando_resposta": o agente parou para perguntar algo a você.
 STATUS = ("na_fila", "executando", "aguardando_aprovacao",
-          "aprovado", "rejeitado", "erro", "esperando")
+          "aprovado", "rejeitado", "erro", "esperando", "aguardando_resposta")
 
 
 def _dados_dir() -> Path:
@@ -230,6 +231,9 @@ _COLUNAS_NOVAS = {
         "aprovacao": "INTEGER NOT NULL DEFAULT 1",
         "pasta": "TEXT NOT NULL DEFAULT ''",          # onde o agente grava os arquivos
         "anexos": "TEXT NOT NULL DEFAULT '[]'",       # arquivos que você enviou (ids)
+        "pergunta": "TEXT NOT NULL DEFAULT ''",       # o que o agente perguntou
+        "resposta": "TEXT NOT NULL DEFAULT ''",       # a sua resposta
+        "sessao": "TEXT NOT NULL DEFAULT ''",         # conversa do Claude Code para continuar
     },
     "projetos": {"marca_pasta": "TEXT NOT NULL DEFAULT ''",
                  "anexos": "TEXT NOT NULL DEFAULT '[]'"},       # arquivos que você enviou
@@ -370,7 +374,8 @@ def listar_trabalhos(status: str | None = None, limite: int = 20) -> list[dict]:
 def atualizar(tid: int, **campos) -> dict:
     if "status" in campos and campos["status"] not in STATUS:
         raise ValueError(f"status inválido: {campos['status']}")
-    permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de", "pasta"}
+    permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de", "pasta",
+                  "pergunta", "resposta", "sessao"}
     if isinstance(campos.get("depende_de"), list):
         campos["depende_de"] = json.dumps([int(x) for x in campos["depende_de"]])
     sets = {k: v for k, v in campos.items() if k in permitidos}

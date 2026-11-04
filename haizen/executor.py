@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import agentes, store
@@ -190,49 +191,102 @@ def _python_console() -> str:
     return str(console if console.is_file() else exe)
 
 
-def _rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: dict | None = None) -> str:
+def _rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: dict | None = None,
+                  origem: str = "agente", referencia: str = "") -> str:
+    return rodar_claude(args, prompt, pasta, timeout, env, origem, referencia)["result"]
+
+
+def rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: dict | None = None,
+                 origem: str = "agente", referencia: str = "") -> dict:
+    """Roda o Claude Code (--output-format json) e devolve o resultado inteiro
+    (texto em "result", "session_id"...). O uso fica anotado em haizen.uso."""
+    from haizen import uso
     exe = claude_disponivel()
     if not exe:
         raise RuntimeError("o Claude Code não foi encontrado neste PC. Instale pelo PowerShell com: "
                            "irm https://claude.ai/install.ps1 | iex")
     pasta.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [exe, *args], input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(pasta), env=env or _ambiente_assinatura(), timeout=timeout)
+    try:
+        proc = subprocess.run(
+            [exe, *args], input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(pasta), env=env or _ambiente_assinatura(), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        uso.registrar({}, origem, referencia, erro=f"passou de {timeout // 60} min")
+        raise RuntimeError(f"o Claude Code passou de {timeout // 60} minutos e foi interrompido") from None
     saida = (proc.stdout or "").strip()
     try:
         dados = json.loads(saida.splitlines()[-1]) if saida else {}
     except ValueError:
         dados = {}
+    erro = ""
     if proc.returncode != 0 or dados.get("is_error"):
-        detalhe = dados.get("result") or (proc.stderr or saida)[-400:]
-        raise RuntimeError(f"o Claude Code falhou: {detalhe.strip() or proc.returncode}")
-    texto = (dados.get("result") or "").strip()
-    if not texto:
+        erro = (dados.get("result") or (proc.stderr or saida)[-400:] or str(proc.returncode)).strip()
+    uso.registrar(dados, origem, referencia, erro=erro)
+    if erro:
+        raise RuntimeError(f"o Claude Code falhou: {erro}")
+    dados["result"] = (dados.get("result") or "").strip()
+    if not dados["result"]:
         raise RuntimeError("o Claude Code terminou sem entrega")
-    return texto
+    return dados
 
 
-def executar_claude(prompt: str, pasta: Path) -> str:
+def _modelo_args(modelo: str) -> list[str]:
+    return ["--model", modelo] if modelo else []
+
+
+def _retomar_args(sessao: str) -> list[str]:
+    return ["--resume", sessao] if sessao else []
+
+
+def executar_claude(prompt: str, pasta: Path, *, modelo: str = "", sessao: str = "",
+                    referencia: str = "") -> dict:
     """Só texto (o plano do gerente, por exemplo)."""
-    return _rodar_claude(["-p", "Execute a tarefa descrita na entrada. Responda apenas com a entrega.",
-                          "--output-format", "json", "--permission-mode", "dontAsk"],
-                         prompt, pasta, CLAUDE_TIMEOUT)
+    return rodar_claude(["-p", "Execute a tarefa descrita na entrada. Responda apenas com a entrega.",
+                         "--output-format", "json", "--permission-mode", "dontAsk",
+                         *_modelo_args(modelo), *_retomar_args(sessao)],
+                        prompt, pasta, CLAUDE_TIMEOUT, origem="agente", referencia=referencia)
 
 
-def executar_producao(prompt: str, pasta: Path, leitura: list[Path]) -> str:
+def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: str = "", sessao: str = "",
+                      referencia: str = "") -> dict:
     """O agente produz os arquivos na `pasta` do trabalho, lendo o material das
-    pastas em `leitura` (a do cliente, a do projeto). Devolve o relatório."""
+    pastas em `leitura` (a do cliente, a do projeto). Devolve o resultado do
+    Claude Code (relatório em "result", "session_id" para continuar)."""
     env = _ambiente_assinatura()
     env["PATH"] = str(Path(_python_console()).parent) + os.pathsep + env.get("PATH", "")
     env["PYTHONIOENCODING"] = "utf-8"
     args = ["-p", "Siga o CLAUDE.md desta pasta e faça a tarefa descrita na entrada. Grave os arquivos "
-                  "nesta pasta. No fim, responda só com o relatório da entrega.",
-            "--output-format", "json", "--permission-mode", "acceptEdits"]
+                  "nesta pasta. No fim, responda só com o relatório curto da entrega (ou com PERGUNTA:).",
+            "--output-format", "json", "--permission-mode", "acceptEdits", *_modelo_args(modelo),
+            *_retomar_args(sessao)]
     for d in leitura:
         args += ["--add-dir", str(d)]
     args += ["--allowedTools", ",".join(PERMISSOES)]
-    return _rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env)
+    return rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
+
+
+_PERGUNTA = re.compile(r"^\s*\**\s*PERGUNTA\s*:?\**\s*:?", re.I)
+
+
+def pergunta_do_agente(texto: str) -> str:
+    """O texto da pergunta, se o agente parou para perguntar; senão vazio."""
+    if not _PERGUNTA.match(texto or ""):
+        return ""
+    return _PERGUNTA.sub("", texto, count=1).strip()[:3000]
+
+
+def arrumar_entrega(pasta: Path, agente: str) -> None:
+    """Na raiz ficam só as peças finais: HTML (fonte das peças) vai para fontes/,
+    menos nos sites (dev), em que o HTML é a entrega."""
+    if agente == "dev" or not pasta.is_dir():
+        return
+    fontes = pasta / "fontes"
+    for f in pasta.glob("*.htm*"):
+        fontes.mkdir(exist_ok=True)
+        alvo = fontes / f.name
+        if alvo.exists():
+            alvo.unlink()
+        f.replace(alvo)
 
 
 # ── a pasta de cada trabalho ────────────────────────────────────────────────
@@ -294,7 +348,55 @@ def pasta_haizen() -> Path | None:
     return None
 
 
-def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None) -> str:
+VISUAIS = ("criativos", "designer", "social", "video")
+
+_DIRECAO_DE_ARTE = """## Padrão de criação da HAIZEN (peças visuais)
+Faça como um diretor de arte de agência, não como um template.
+
+1. Repertório (rápido, no máximo 4 referências):
+   - Veja as peças antigas e aprovadas do cliente na pasta dele e o guia da marca.
+   - Veja trabalhos já aprovados pela HAIZEN, a régua de qualidade: `{aprovados}` (as pastas mais recentes primeiro).
+   - Busque na web 2 a 3 referências do nicho e do formato (WebSearch: "anúncio <nicho> instagram design", Behance, Pinterest,
+     Biblioteca de Anúncios da Meta). Para VER uma referência, baixe a imagem com python para `fontes/referencias/` e abra com Read.
+2. Conceito em 3 linhas no topo do HTML (comentário): a ideia, a hierarquia e o porquê. Nada de documento.
+3. Execução:
+   - Uma mensagem principal por peça; título com no máximo ~7 palavras, grande e legível no celular.
+   - Hierarquia clara: título > apoio > CTA. Máximo 2 famílias de fonte (Google Fonts) e 3 pesos.
+   - Grade e margens generosas (6% a 8% da largura); alinhamentos consistentes; respiro.
+   - A foto/produto real do cliente protagonista; recorte, sobreposição ou moldura com intenção. Tratamento de cor coerente.
+   - Contraste forte (texto sobre foto: sombra suave, véu ou faixa); nada de texto pequeno sobre área movimentada.
+   - Paleta da marca com uma cor de destaque para o CTA. Logo presente e discreto.
+   - Evite cara de template: gradientes genéricos, excesso de elementos, emojis, ícones de banco, tudo centralizado sem motivo.
+   - Stories/reels: nada importante nos 250 px de cima nem nos 350 px de baixo.
+   - Quando fizer sentido, 2 variações de abordagem (ex.: foto x tipografia) em vez de 2 cópias iguais.
+4. Autocrítica antes de entregar: abra cada PNG e dê nota de 1 a 5 em impacto em 1 segundo, legibilidade no celular,
+   hierarquia, acabamento e fidelidade à marca. Abaixo de 4 em qualquer item: corrija e exporte de novo (no máximo 2 rodadas)."""
+
+
+def pasta_aprovados() -> Path | None:
+    """Trabalhos visuais que você aprovou: a régua de qualidade dos agentes."""
+    p = store.pasta_entregas().parent / "Referencias aprovadas"
+    return p if p.is_dir() and any(p.iterdir()) else None
+
+
+def guardar_aprovado(t: dict) -> Path | None:
+    """Ao aprovar uma peça visual, as finais (PNG/JPG) vão para a biblioteca."""
+    if t.get("agente") not in VISUAIS or not t.get("pasta") or not Path(t["pasta"]).is_dir():
+        return None
+    finais = [f for f in Path(t["pasta"]).iterdir() if f.suffix.lower() in (".png", ".jpg", ".jpeg") and f.is_file()]
+    if not finais:
+        return None
+    cli = store.cliente_por_id(t.get("cliente_id")) if t.get("cliente_id") else None
+    nome = _nome_seguro(f"{time.strftime('%Y-%m-%d')} - {(cli or {}).get('nome', 'sem cliente')} - "
+                        f"{t.get('titulo') or t['agente']}")
+    destino = store.pasta_entregas().parent / "Referencias aprovadas" / nome
+    destino.mkdir(parents=True, exist_ok=True)
+    for f in finais[:12]:
+        shutil.copy2(f, destino / f.name)
+    return destino
+
+
+def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "") -> str:
     """O CLAUDE.md que o agente lê ao começar: onde está o material, onde gravar,
     as ferramentas e o padrão de qualidade da HAIZEN."""
     f = FERRAMENTAS.as_posix()
@@ -348,25 +450,32 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None) -
         "",
         "## Como produzir",
         "- Peças gráficas (criativos, banners, posts, carrosséis, capas): monte em HTML/CSS com o logo, as cores, as fontes e as fotos "
-        "reais do cliente (caminhos absolutos para as imagens da pasta do cliente) e exporte com `render`. Use os mesmos tamanhos "
-        "das peças antigas do cliente; sem referência: feed 1080x1350, stories/reels 1080x1920, quadrado 1080x1080.",
-        "- Guarde os HTMLs-fonte em `fontes/` (para ajustes depois); as peças finais ficam na raiz desta pasta, com nomes claros: "
-        "`01 - Feed 1080x1350 - Oferta camisas.png`.",
-        "- Depois de exportar, ABRA cada PNG com a ferramenta de leitura e confira: texto cortado, sobreposição, contraste, logo. "
-        "Corrija e exporte de novo até ficar no padrão de uma agência.",
+        "reais do cliente (caminhos absolutos para as imagens) e exporte com `render`. A ENTREGA é só PNG (ou JPG quando a peça é "
+        "quase toda foto): o HTML é rascunho e fica em `fontes/`, nunca na raiz. Tamanhos: os das peças antigas do cliente; sem "
+        "referência, feed 1080x1350, stories/reels 1080x1920, quadrado 1080x1080.",
+        "- Nomes claros na raiz: `01 - Feed 1080x1350 - Oferta camisas.png`.",
         "- Vídeos: use os clipes e fotos do cliente; textos animados em HTML com `animar`; música só se houver na pasta do cliente.",
-        "- Sites e landing pages: código completo nesta pasta (index.html + assets), responsivo; tire um PNG da página com `render "
+        "- Sites e landing pages: código completo nesta pasta (index.html + assets), responsivo; um PNG da página com `render "
         "--pagina-inteira` para a revisão.",
-        "- Documentos (briefing, roteiro, proposta, plano, calendário): escreva em HTML bem diagramado e exporte para PDF; tabelas "
-        "também em .csv quando forem planilhas.",
+        "- Documentos só quando o documento É a entrega (proposta, plano para o cliente, manual de marca): HTML bem diagramado "
+        "exportado para PDF. Planilhas em .csv. Não crie PDF, HTML ou documento de relatório, briefing interno ou revisão.",
         "- Não existe gerador de imagens por IA aqui: não invente fotos. Se faltar uma foto ou um dado, use o que existe e liste em "
         "Pendências.",
-        "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento: o que faltar vai em Pendências.",
+        "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento.",
+        "- Economize: não repita leituras, não gere versões que ninguém pediu, não escreva textos longos de explicação.",
+        "",
+        "## Quando perguntar",
+        "Se faltar algo essencial que muda o trabalho e não está no pedido nem nas pastas (o preço da oferta, a data, qual produto, "
+        "o texto obrigatório), NÃO produza no escuro: ANTES de produzir, responda só com uma linha começando por `PERGUNTA:` e até 3 "
+        "perguntas objetivas. O dono responde e você continua daqui. Dúvidas menores: decida como um profissional e anote em "
+        "Pendências.",
         "",
         "## Relatório (sua resposta final)",
-        "Em Markdown: o que foi feito; a lista de arquivos gerados (nome e tamanho em pixels/segundos); as decisões de design; "
-        "Pendências e perguntas para o cliente.",
+        "Curto, no máximo 10 linhas em Markdown: os arquivos entregues (nome e tamanho) e, se houver, Pendências/perguntas para o "
+        "cliente. Sem contar o processo.",
     ]
+    if agente in VISUAIS:
+        linhas += ["", _DIRECAO_DE_ARTE.format(aprovados=(pasta_aprovados() or Path("—")).as_posix())]
     return "\n".join(linhas) + "\n"
 
 
@@ -404,17 +513,35 @@ def executar(t: dict) -> Path:
     prompt = montar_prompt(agente, cliente, t["pedido"],
                            contexto_projeto(t, CONTEXTO_LOCAL if local else CONTEXTO_CLAUDE))
     if t["executor"] == "claude" and not claude_sem_login():
+        from haizen import uso
+        sessao = t.get("sessao") or "" if t.get("resposta") else ""
+        if sessao:
+            # Continua a mesma conversa do agente, com a sua resposta.
+            prompt = (f"Resposta do dono da HAIZEN à sua pergunta:\n{t['resposta'].strip()}\n\n"
+                      "Continue a tarefa de onde parou, seguindo o CLAUDE.md.")
+        ref = f"{t['id']} {t.get('titulo') or t['agente']}"
         try:
             if t["agente"] == "gerente":
-                texto = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho")
+                r = executar_claude(prompt, store.pasta_entregas() / ".claude-trabalho",
+                                    modelo=uso.modelo("gerente"), sessao=sessao, referencia=ref)
             else:
                 pasta, marca, projeto = pastas_do_trabalho(t)
                 copiar_material(t, pasta, projeto)
-                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto), encoding="utf-8")
+                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto, t["agente"]),
+                                                 encoding="utf-8")
                 store.atualizar(t["id"], pasta=str(pasta))
-                leitura = [p for p in (marca, projeto, pasta_haizen()) if p is not None]
+                leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados()) if p is not None]
                 leitura = list(dict.fromkeys(leitura))
-                texto = executar_producao(prompt, pasta, leitura)
+                r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref,
+                                      modelo=uso.modelo("agentes", agente.extras.get("modelo", "")))
+                arrumar_entrega(pasta, t["agente"])
+            texto = r["result"]
+            pergunta = pergunta_do_agente(texto)
+            if pergunta:
+                store.atualizar(t["id"], status="aguardando_resposta", pergunta=pergunta, resposta="",
+                                sessao=r.get("session_id") or "")
+                return None
+            if t["agente"] != "gerente":
                 (pasta / "RELATORIO.md").write_text(texto.strip() + "\n", encoding="utf-8")
         except RuntimeError as e:
             if not _erro_de_login(str(e)):
@@ -434,7 +561,10 @@ def executar(t: dict) -> Path:
             store.atualizar(t["id"], executor="local",
                             observacao="Feito com o modelo local: o Claude Code não está conectado à conta (rode claude e /login).")
         texto = _local_com_retentativa(agente, cliente, t, prompt)
-    return store.gravar_entrega(t["id"], texto)
+    arq = store.gravar_entrega(t["id"], texto)
+    if t.get("resposta"):
+        store.atualizar(t["id"], resposta="")
+    return arq
 
 
 def _local_com_retentativa(agente, cliente, t: dict, prompt: str | None = None) -> str:

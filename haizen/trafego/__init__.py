@@ -92,11 +92,13 @@ def _pasta() -> Path:
     return p
 
 
-def _claude(prompt: str, ferramentas: list[str], instrucao: str) -> str:
+def _claude(prompt: str, ferramentas: list[str], instrucao: str, referencia: str = "") -> str:
+    from haizen import uso
+    modelo = uso.modelo("trafego")
     args = ["-p", instrucao, "--output-format", "json", "--permission-mode", "dontAsk",
-            "--allowedTools", ",".join(ferramentas)]
+            "--allowedTools", ",".join(ferramentas), *(["--model", modelo] if modelo else [])]
     try:
-        return executor._rodar_claude(args, prompt, _pasta(), TIMEOUT)
+        return executor._rodar_claude(args, prompt, _pasta(), TIMEOUT, origem="trafego", referencia=referencia)
     except RuntimeError as e:
         if _sem_conexao(str(e)):
             raise ConnectionError(AVISO_CONEXAO) from None
@@ -310,7 +312,8 @@ def analisar_conta(cid: str) -> dict:
     hoje = dt.date.today()
     try:
         r = _json(_claude(prompt_analise(c, hoje), ferramentas_leitura(),
-                          "Analise a conta descrita na entrada só com ferramentas de leitura. Responda só com o JSON."))
+                          "Analise a conta descrita na entrada só com ferramentas de leitura. Responda só com o JSON.",
+                          f"análise {c['nome']}"))
     except Exception as e:  # noqa: BLE001 - a análise com erro fica registrada
         _guardar_analise(cid, hoje, {"situacao": "erro"}, erro=str(e)[:600])
         raise
@@ -396,6 +399,16 @@ def rodada(contas: list[str] | None = None, avisar=print) -> dict:
                 erros.append(f"{cid}: {e}")
                 avisar(f"[Tráfego] {cid}: {e}")
         ESTADO["erro"] = "; ".join(erros)[:800]
+        pend = acoes("proposta")
+        try:
+            from haizen import notificar
+            if pend:
+                notificar.avisar("Tráfego: otimizações para aprovar",
+                                 f"{len(pend)} sugestão(ões) do gestor de tráfego esperando você.", "trafego", "#/trafego")
+            elif erros:
+                notificar.avisar("Tráfego: a análise teve problemas", erros[0][:200], "erro", "#/trafego")
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         ESTADO.update(fazendo="", progresso="")
         _TRAVA.release()
@@ -502,11 +515,19 @@ def aplicar(aid: int) -> dict:
     a = acao(aid)
     try:
         r = _json(_claude(instrucao_aplicar(a), ferramentas_leitura() + ferramentas_escrita(),
-                          "Aplique só a mudança aprovada descrita na entrada. Responda só com o JSON."))
+                          "Aplique só a mudança aprovada descrita na entrada. Responda só com o JSON.",
+                          f"aplicar ação {aid}"))
         ok, detalhe = bool(r.get("ok")), str(r.get("detalhe") or "")
     except Exception as e:  # noqa: BLE001
         ok, detalhe = False, str(e)
-    return _mudar(aid, "aplicada" if ok else "falhou", detalhe or ("feito" if ok else "não aplicada"))
+    feito = _mudar(aid, "aplicada" if ok else "falhou", detalhe or ("feito" if ok else "não aplicada"))
+    try:
+        from haizen import notificar
+        notificar.avisar("Tráfego: mudança aplicada" if ok else "Tráfego: a mudança não foi aplicada",
+                         f"{a['alvo_nome']}: {detalhe}"[:200], "trafego" if ok else "erro", "#/trafego")
+    except Exception:  # noqa: BLE001
+        pass
+    return feito
 
 
 # ── resumo e agenda diária ──────────────────────────────────────────────────

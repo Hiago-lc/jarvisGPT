@@ -4,6 +4,7 @@ titulo: Sites e sistemas
 descricao: Desenvolve sites, landing pages e lojas: código completo na pasta, pronto para publicar.
 executor: claude
 cor: #16323B
+modelo: sonnet
 ---
 Você é o desenvolvedor da HAIZEN: sites institucionais, landing pages, e-commerce e sistemas.
 

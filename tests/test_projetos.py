@@ -120,7 +120,8 @@ class ProjetoTests(unittest.TestCase):
                                          "Loja X")["projeto"]["id"]
             self._rodar_fila()
         agentes_usados = [t["agente"] for t in store.trabalhos_do_projeto(pid)]
-        for a in ("gerente", "atendimento", "comercial", "trafego", "social", "revisor"):
+        # Plano padrão enxuto: sem briefing; revisão só com 3 ou mais etapas.
+        for a in ("gerente", "comercial", "trafego", "social", "revisor"):
             self.assertIn(a, agentes_usados)
         self.assertIn("plano padrão", store.trabalhos_do_projeto(pid)[0]["observacao"])
 
@@ -229,7 +230,7 @@ class ProducaoTests(unittest.TestCase):
         dados.criar("marcas", {"nome": "HAIZEN", "pasta": str(base / "CLIENTES" / "00 - HAIZEN")})
         self.chamadas = []
 
-        def produzir(prompt, pasta, leitura):
+        def produzir(prompt, pasta, leitura, **kw):
             self.chamadas.append({"prompt": prompt, "pasta": pasta, "leitura": leitura,
                                   "claude_md": (pasta / "CLAUDE.md").read_text(encoding="utf-8")})
             (pasta / "01 - Feed 1080x1350.png").write_bytes(b"\x89PNG fake")
@@ -237,12 +238,16 @@ class ProducaoTests(unittest.TestCase):
             (pasta / "fontes" / "feed.html").write_text("<html></html>", encoding="utf-8")
             if "Reels" in prompt:
                 (pasta / "Reels.mp4").write_bytes(b"mp4")
-            return "## Entrega\n- 01 - Feed 1080x1350.png"
+            if "PERGUNTE" in prompt:
+                return {"result": "PERGUNTA: Qual é o preço da oferta?", "session_id": "s-9"}
+            self.chamadas[-1]["sessao"] = kw.get("sessao", "")
+            (pasta / "rascunho.html").write_text("<html></html>", encoding="utf-8")   # HTML solto na raiz
+            return {"result": "## Entrega\n- 01 - Feed 1080x1350.png", "session_id": "s-1"}
 
         from haizen import executor
         self.p = [patch.object(executor, "claude_disponivel", return_value="claude"),
                   patch.object(executor, "executar_producao", side_effect=produzir),
-                  patch.object(executor, "executar_claude", return_value=PLANO_PRODUCAO),
+                  patch.object(executor, "executar_claude", return_value={"result": PLANO_PRODUCAO}),
                   patch("haizen.worker.iniciar")]
         for x in self.p:
             x.start()
@@ -310,6 +315,44 @@ class ProducaoTests(unittest.TestCase):
         self.assertEqual((arq.tipo, arq.dados), ("image/png", b"\x89PNG fake"))
         with self.assertRaises(KeyError):
             h._trabalhos("GET", [str(t["id"]), "arquivo"], {"nome": "../../00 - ID VISUAL/LOGO.png"})
+
+    def test_html_solto_vai_para_fontes_e_criativos_tem_padrao_de_criacao(self):
+        from haizen import servicos, store
+        r = servicos.criar_projeto("Criativos e reels da oferta de novembro", "Loja Teste")
+        self._rodar()
+        t = {x["titulo"]: x for x in store.trabalhos_do_projeto(r["projeto"]["id"])}["Criativos da oferta"]
+        pasta = Path(t["pasta"])
+        self.assertFalse((pasta / "rascunho.html").exists())
+        self.assertTrue((pasta / "fontes" / "rascunho.html").is_file())
+        md = self.chamadas[0]["claude_md"]
+        self.assertIn("Padrão de criação da HAIZEN", md)
+        self.assertIn("PERGUNTA:", md)
+        self.assertIn("Não crie PDF, HTML ou documento de relatório", md)
+
+    def test_agente_pergunta_e_continua_a_mesma_conversa(self):
+        from haizen import servicos, store
+        t = servicos.delegar("criativos", "Post da oferta. PERGUNTE o preço.", "Loja Teste")["trabalho"]
+        self._rodar()
+        t = store.trabalho(t["id"])
+        self.assertEqual((t["status"], t["pergunta"], t["sessao"]),
+                         ("aguardando_resposta", "Qual é o preço da oferta?", "s-9"))
+        with self.assertRaises(ValueError):
+            servicos.responder(t["id"], "  ")
+        servicos.responder(t["id"], "R$ 99,90")
+        self._rodar()
+        self.assertEqual(self.chamadas[-1]["sessao"], "s-9")
+        self.assertIn("R$ 99,90", self.chamadas[-1]["prompt"])
+        feito = store.trabalho(t["id"])
+        self.assertEqual((feito["status"], feito["resposta"]), ("aguardando_aprovacao", ""))
+
+    def test_aprovar_peca_visual_guarda_na_biblioteca_de_aprovados(self):
+        from haizen import executor, servicos, store
+        t = servicos.delegar("criativos", "Post da oferta", "Loja Teste")["trabalho"]
+        self._rodar()
+        servicos.aprovar(t["id"])
+        lib = executor.pasta_aprovados()
+        self.assertIsNotNone(lib)
+        self.assertTrue(any((d / "01 - Feed 1080x1350.png").is_file() for d in lib.iterdir()))
 
     def test_brand_cited_in_the_request_wins(self):
         from haizen import store

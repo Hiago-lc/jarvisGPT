@@ -628,3 +628,34 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .traf-relatorio { max-height: 60vh; overflow: auto; font-size: 14px; line-height: 1.5; }
 .traf-secao h2 .selo { margin-left: 0; }
 .traf-contas, .traf-acoes { align-items: start; }
+
+/* ── Uso do Claude ──────────────────────────────────────────────────────── */
+.uso-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.uso-cartao { background: var(--superficie); border: 1px solid var(--linha); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 3px; }
+.uso-cartao span { font-size: 13px; color: var(--cinza); }
+.uso-cartao strong { font-family: var(--display); font-size: 22px; font-variant-numeric: tabular-nums; }
+.uso-cartao small { font-size: 12.5px; color: var(--cinza); }
+.uso-cartao .uso-nota { font-size: 11.5px; opacity: .8; }
+.uso-explica { font-size: 12.5px; margin: 10px 0 16px; }
+.uso-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; }
+.uso-barra { display: grid; grid-template-columns: 140px 1fr auto; gap: 10px; align-items: center; padding: 6px 0; font-size: 14px; }
+.uso-barra small { color: var(--cinza); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.uso-trilho { height: 10px; background: var(--papel); border-radius: 5px; overflow: hidden; }
+.uso-trilho i { display: block; height: 100%; background: var(--petroleo-2); border-radius: 5px; }
+.uso-dias { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 8px; }
+.uso-dia { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.uso-dia i { width: 100%; max-width: 34px; background: var(--limao); border-radius: 4px 4px 0 0; }
+.uso-dia small { font-size: 10.5px; color: var(--cinza); }
+.uso-tabela { overflow-x: auto; }
+@media (max-width: 600px) { .uso-barra { grid-template-columns: 1fr auto; } .uso-barra .uso-trilho { grid-column: 1 / -1; grid-row: 2; } }
+
+/* ── avisos ─────────────────────────────────────────────────────────────── */
+.avisos-caixa { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
+.aviso-card { text-align: left; border: 1px solid var(--linha); border-left: 4px solid var(--foco); border-radius: 10px; background: var(--superficie); box-shadow: 0 10px 30px rgba(11, 29, 35, .18); padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; cursor: pointer; font: inherit; color: var(--tinta); }
+.aviso-card span { font-size: 13px; color: var(--cinza); }
+.aviso-card.tipo-aprovacao { border-left-color: var(--limao); }
+.aviso-card.tipo-pergunta { border-left-color: var(--ambar); }
+.aviso-card.tipo-erro { border-left-color: var(--tijolo); }
+.pergunta-agente { background: #FFF7E8; border: 1px solid #F0DDB5; border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
+.pergunta-agente p { margin: 0 0 6px; }
+.pergunta-agente .campos { margin-top: 10px; }

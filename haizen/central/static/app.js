@@ -679,7 +679,7 @@ ROTAS.pipeline = async () => {
 };
 
 // ── agentes ───────────────────────────────────────────────────────────────
-const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardando_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", rejeitado: "Refeito", erro: "Com erro", esperando: "Esperando etapas anteriores" };
+const STATUS_TRAB = { na_fila: "Na fila", executando: "Em execução", aguardando_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", rejeitado: "Refeito", erro: "Com erro", esperando: "Esperando etapas anteriores", aguardando_resposta: "Pergunta para você" };
 
 // Os arquivos que o agente produziu: miniaturas das imagens, vídeos e PDFs
 // (buscados com o cabeçalho da central e mostrados como blob).
@@ -841,6 +841,8 @@ async function abrirTrabalho(id, recarregar) {
       <p style="white-space:pre-wrap;margin:0 0 12px"><strong>Pedido:</strong> ${esc(t.pedido)}</p>
       ${t.erro ? `<p class="erro">${esc(t.erro)}</p>${/not logged in|\/login/i.test(t.erro) ? '<p class="sub">O Claude Code deste PC não está conectado à sua conta. Abra o Prompt de Comando, digite <code>claude</code>, Enter, depois <code>/login</code> e escolha a conta com assinatura. Depois clique em Tentar de novo (ou tente agora: sem a conexão, o agente usa o modelo local).</p>' : ""}` : ""}
       ${t.observacao ? `<p class="sub">${esc(t.observacao)}</p>` : ""}
+      ${t.status === "aguardando_resposta" ? `<div class="pergunta-agente"><p><strong>${esc(t.agente)} pergunta:</strong></p><div class="md">${mdSimples(t.pergunta)}</div>
+        <div class="campos">${campo({ nome: "resposta", rotulo: "Sua resposta", tipo: "textarea", largo: true })}</div></div>` : ""}
       <div id="galeria-trabalho"></div>
       ${t.entrega ? `<details class="relatorio"${t.pasta ? "" : " open"}><summary>Relatório do agente</summary><div class="entrega">${esc(t.entrega)}</div></details>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
       ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}
@@ -855,7 +857,12 @@ async function abrirTrabalho(id, recarregar) {
       } },
       { texto: "Fechar", acao: () => {} },
       { texto: "Aprovar", classe: "primario", acao: async () => { await api("POST", `trabalhos/${t.id}/aprovar`, {}); avisar("Entrega aprovada"); recarregar(); } },
-    ] : [...excluir,
+    ] : t.status === "aguardando_resposta" ? [...excluir,
+      { texto: "Fechar", acao: () => {} },
+      { texto: "Responder e continuar", classe: "primario", acao: async (v) => {
+        if (!v.resposta.trim()) throw new Error("Escreva a resposta.");
+        await api("POST", `trabalhos/${t.id}/responder`, { resposta: v.resposta }); avisar("Respondido: o agente continua"); recarregar();
+      } }] : [...excluir,
       ...(t.pasta ? [{ texto: "Abrir pasta", acao: async () => { await api("POST", `trabalhos/${t.id}/pasta`, {}); return false; } }] : []),
       ...(t.status === "erro" ? [{ texto: "Tentar de novo", classe: "primario", acao: async () => {
         await api("POST", `trabalhos/${t.id}/tentar`, {}); avisar("De volta à fila"); recarregar(); } }] : []),
@@ -1233,7 +1240,7 @@ function pessoa(a) {
 function balaoAgente(a) {
   const alvo = (t) => [t.titulo || t.pedido, t.cliente].filter(Boolean).join(" · ");
   if (a.estado === "trabalhando") return `Fazendo agora: ${alvo(a.atual)}`;
-  if (a.estado === "esperando_voce") return `Terminei "${a.aprovar[0].titulo || a.aprovar[0].pedido.slice(0, 50)}". Pode conferir?`;
+  if (a.estado === "esperando_voce") return a.aprovar[0].pergunta ? `Tenho uma pergunta: ${a.aprovar[0].pergunta}` : `Terminei "${a.aprovar[0].titulo || a.aprovar[0].pedido.slice(0, 50)}". Pode conferir?`;
   if (a.estado === "erro") return /not logged in|\/login/i.test(a.erro.erro || "") ? "Travei: o Claude Code não está conectado à sua conta. Clique para ver como resolver." : `Travei: ${a.erro.erro || "erro sem detalhe"}`;
   if (a.estado === "na_fila") return `Próximo: ${alvo(a.proximo)}`;
   if (a.esperando) return `Aguardando a etapa anterior (${a.esperando})`;
@@ -2282,7 +2289,127 @@ $("#desligar-jarvis").addEventListener("click", async () => {
   document.body.innerHTML = `<main class="desligado"><div><h1>Jarvis desligado</h1><p>Para ligar de novo, use o atalho <strong>Jarvis HAIZEN</strong> na área de trabalho.</p></div></main>`;
 });
 
+// ── avisos: agentes, perguntas, erros, tráfego ──────────────────────────────
+const AVISOS = { ultimo: null, perguntou: false };
+const NO_PC = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+
+function bip() {
+  try {
+    const ctx = new AudioContext();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sine"; o.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
+    o.connect(g).connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + 0.5);
+    o.onended = () => ctx.close();
+  } catch (_) { /* sem áudio */ }
+}
+
+function mostrarAviso(a) {
+  const caixa = $("#avisos-caixa") || (() => {
+    const c = document.createElement("div");
+    c.id = "avisos-caixa"; c.className = "avisos-caixa"; c.setAttribute("aria-live", "polite");
+    document.body.appendChild(c); return c;
+  })();
+  const el = document.createElement("button");
+  el.className = `aviso-card tipo-${a.tipo}`;
+  el.innerHTML = `<strong>${esc(a.titulo)}</strong>${a.texto ? `<span>${esc(a.texto)}</span>` : ""}`;
+  el.addEventListener("click", () => { if (a.link) location.hash = a.link; el.remove(); });
+  caixa.appendChild(el);
+  setTimeout(() => el.remove(), 12000);
+  // No PC o Windows já toca o som; no celular (ou outro aparelho) toca aqui.
+  if (!NO_PC) bip();
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    try { const n = new Notification(`Jarvis: ${a.titulo}`, { body: a.texto || "", tag: `haizen-${a.id}` }); n.onclick = () => { window.focus(); if (a.link) location.hash = a.link; }; } catch (_) { /* ignora */ }
+  }
+}
+
+async function lacoAvisos() {
+  try {
+    const r = await api("GET", `notificacoes?desde=${AVISOS.ultimo ?? 0}`);
+    if (AVISOS.ultimo === null) AVISOS.ultimo = r.ultimo;     // a primeira olhada só marca onde parou
+    else {
+      for (const a of [...r.avisos].reverse()) if (a.id > AVISOS.ultimo) mostrarAviso(a);
+      AVISOS.ultimo = Math.max(AVISOS.ultimo, r.ultimo);
+      if (r.avisos.length) atualizarSelo();
+    }
+  } catch (_) { /* tenta de novo */ }
+  setTimeout(lacoAvisos, 12000);
+}
+
+// O navegador só pede permissão de notificação depois de um clique seu.
+document.addEventListener("click", () => {
+  if (AVISOS.perguntou || !("Notification" in window) || Notification.permission !== "default") return;
+  AVISOS.perguntou = true;
+  Notification.requestPermission().catch(() => {});
+}, { once: false });
+
+// ── Uso do Claude ───────────────────────────────────────────────────────────
+const ORIGEM_USO = { jarvis: "Jarvis (conversa)", agente: "Agentes", trafego: "Gestor de tráfego" };
+const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi` : n >= 1e3 ? `${Math.round(n / 1e3).toLocaleString("pt-BR")} mil` : String(n));
+const fmtUsd = (v) => `US$ ${(+v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+ROTAS.uso = async () => {
+  const dias = +(lembrar("uso.dias", 7)) || 7;
+  const r = await api("GET", `uso?dias=${dias}`);
+  const cartao = (rot, s, extra = "") => `<div class="uso-cartao"><span>${rot}</span><strong>${s.chamadas} chamada${s.chamadas === 1 ? "" : "s"}</strong>
+    <small>${fmtTokens(s.tokens)} tokens · ${s.minutos.toLocaleString("pt-BR")} min · ${fmtUsd(s.custo_usd)}</small>${extra}</div>`;
+  const maxDia = Math.max(0.0001, ...r.por_dia.map((d) => d.custo_usd));
+  const totalOrigem = Math.max(0.0001, ...Object.values(r.por_origem).map((s) => s.custo_usd));
+  const opcoesModelo = (area) => [["", "Padrão"], ["sonnet", "Sonnet (econômico)"], ["opus", "Opus (máxima qualidade)"], ["haiku", "Haiku (mais leve)"]]
+    .map(([v, t]) => `<option value="${v}"${(r.modelos[area] || "") === v ? " selected" : ""}>${t}</option>`).join("");
+  main.innerHTML = `
+    <div class="topo"><div><h1>Uso do Claude</h1><p class="sub">Quanto cada parte do sistema pesa no limite da sua assinatura.</p></div>
+      <label class="voz-opcao">Período <select id="uso-dias">${[1, 7, 30].map((d) => `<option value="${d}"${d === dias ? " selected" : ""}>${d === 1 ? "hoje" : `${d} dias`}</option>`).join("")}</select></label></div>
+    ${r.limite ? `<div class="traf-faixa erro"><strong>O Claude atingiu o limite de uso.</strong> ${esc(r.limite.mensagem)}</div>` : ""}
+    <div class="uso-cartoes">
+      ${cartao("Hoje", r.hoje)}
+      ${cartao("Últimas 5 horas", r.ultimas_5h, '<small class="uso-nota">a janela em que o limite da assinatura costuma ser contado</small>')}
+      ${cartao(dias === 1 ? "Hoje" : `Últimos ${dias} dias`, r.periodo)}
+    </div>
+    <p class="sub uso-explica">Os valores em US$ são o equivalente em API que o próprio Claude Code informa. A assinatura não cobra isso: serve para comparar o peso de cada chamada.</p>
+    <div class="uso-grade">
+      <section class="bloco"><h2>Por área</h2>
+        ${Object.keys(r.por_origem).length ? Object.entries(r.por_origem).sort((a, b) => b[1].custo_usd - a[1].custo_usd).map(([o, s]) => `
+          <div class="uso-barra"><span>${esc(ORIGEM_USO[o] || o)}</span><div class="uso-trilho"><i style="width:${Math.max(2, (s.custo_usd / totalOrigem) * 100)}%"></i></div><small>${s.chamadas} · ${fmtUsd(s.custo_usd)}</small></div>`).join("") : '<p class="vazio">Nada ainda.</p>'}
+      </section>
+      <section class="bloco"><h2>Por dia</h2>
+        ${r.por_dia.length ? `<div class="uso-dias">${r.por_dia.map((d) => `<div class="uso-dia" title="${esc(d.dia)}: ${d.chamadas} chamadas, ${fmtUsd(d.custo_usd)}"><i style="height:${Math.max(3, (d.custo_usd / maxDia) * 100)}%"></i><small>${esc(d.dia.slice(8, 10))}/${esc(d.dia.slice(5, 7))}</small></div>`).join("")}</div>` : '<p class="vazio">Nada ainda.</p>'}
+      </section>
+    </div>
+    <section class="bloco" style="margin-top:16px"><h2>O que mais pesou</h2>
+      ${r.maiores.length ? `<div class="uso-tabela"><table class="tabela"><thead><tr><th>O quê</th><th>Área</th><th>Chamadas</th><th>Tokens</th><th>Equivalente</th></tr></thead><tbody>
+        ${r.maiores.map((m) => `<tr><td>${esc(m.referencia)}</td><td>${esc(ORIGEM_USO[m.origem] || m.origem)}</td><td>${m.chamadas}</td><td>${fmtTokens(m.tokens)}</td><td>${fmtUsd(m.custo_usd)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="vazio">Nada ainda.</p>'}
+    </section>
+    <section class="bloco" style="margin-top:16px"><h2>Modelos</h2>
+      <p class="sub" style="margin-top:0">Sonnet gasta bem menos limite e dá conta da maioria do trabalho. Opus fica para o que precisa de mais qualidade. Em "Agentes", o padrão usa o modelo de cada agente (Criativos e Identidade visual em Opus, os outros em Sonnet).</p>
+      <div class="campos">${Object.entries(r.areas).map(([area, nome]) => `<label>${esc(nome)}<select data-modelo="${area}">${opcoesModelo(area)}</select></label>`).join("")}</div>
+    </section>
+    <section class="bloco" style="margin-top:16px"><h2>Avisos</h2>
+      <p class="sub" style="margin-top:0">Quando um agente termina, pergunta algo ou trava, e quando o gestor de tráfego tem otimizações.</p>
+      <label class="caixa"><input type="checkbox" data-aviso="som"${r.notificacoes.som ? " checked" : ""}> Tocar som no computador</label>
+      <label class="caixa"><input type="checkbox" data-aviso="windows"${r.notificacoes.windows ? " checked" : ""}> Mostrar notificação do Windows</label>
+      <div class="traf-botoes"><button class="botao" id="aviso-teste">Testar aviso</button></div>
+    </section>
+    <section class="bloco" style="margin-top:16px"><h2>Últimas chamadas</h2>
+      ${r.recentes.length ? `<div class="uso-tabela"><table class="tabela"><thead><tr><th>Quando</th><th>Área</th><th>O quê</th><th>Modelo</th><th>Tokens</th><th>Tempo</th><th></th></tr></thead><tbody>
+        ${r.recentes.map((x) => `<tr><td>${new Date(x.criado_em * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td><td>${esc(ORIGEM_USO[x.origem] || x.origem)}</td><td>${esc(x.referencia)}</td><td>${esc(x.modelo || "—")}</td><td>${fmtTokens(x.entrada + x.saida + x.cache_escrita)}</td><td>${Math.round(x.duracao_ms / 1000)} s</td><td>${x.erro ? `<span class="erro" title="${esc(x.erro)}">erro</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<p class="vazio">Nada ainda.</p>'}
+    </section>`;
+  $("#uso-dias").addEventListener("change", (e) => { guardar("uso.dias", +e.target.value); ROTAS.uso(); });
+  $$("[data-modelo]").forEach((s) => s.addEventListener("change", async () => {
+    try { await api("POST", "uso/config", { modelos: { [s.dataset.modelo]: s.value } }); avisar("Modelo salvo"); } catch (e) { avisar(e.message); }
+  }));
+  $$("[data-aviso]").forEach((c) => c.addEventListener("change", async () => {
+    try { await api("POST", "uso/config", { notificacoes: { [c.dataset.aviso]: c.checked } }); avisar("Salvo"); } catch (e) { avisar(e.message); }
+  }));
+  $("#aviso-teste").addEventListener("click", async () => { try { await api("POST", "notificacoes/teste", {}); avisar("Aviso enviado"); } catch (e) { avisar(e.message); } });
+};
+
 async function iniciar() {
+  lacoAvisos();
   try { await api("GET", "janela/estado"); PONTE = true; } catch (_) { PONTE = false; }
   if (PONTE) {
     $("#sistema").hidden = false;

@@ -37,7 +37,7 @@ class TrafegoTests(unittest.TestCase):
         self.chamadas = []
         self.respostas = []
 
-        def falso(args, prompt, pasta, timeout, env=None):
+        def falso(args, prompt, pasta, timeout, env=None, **kw):
             self.chamadas.append((args, prompt))
             return self.respostas.pop(0)
         self.p = patch("haizen.executor._rodar_claude", side_effect=falso)
