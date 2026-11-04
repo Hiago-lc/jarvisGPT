@@ -268,6 +268,66 @@ def guia_anotar(cliente: str, nota: str, marca: str = "") -> dict:
     return _api("POST", f"clientes/{_cliente_id(cliente)}/guia", {"nota": nota, "marca": marca})
 
 
+# ── tráfego (Meta Ads) ─────────────────────────────────────────────────────
+@mcp.tool()
+def trafego_painel() -> dict:
+    """A gestão de tráfego: contas do Meta Ads, a última análise de cada uma (situação, resumo,
+    métricas de 7 dias) e as otimizações propostas esperando aprovação (com id)."""
+    p = _api("GET", "trafego")
+    for a in p.get("analises", {}).values():
+        a.pop("relatorio", None)
+    return {"conectado": p["conectado"], "aviso": p["config"].get("aviso_conexao"),
+            "fazendo": p["estado"], "contas": [{k: c.get(k) for k in ("id", "nome", "cliente_nome", "ativo",
+                                                                         "meta_cpa", "meta_roas", "verba_mensal")}
+                                               for c in p["contas"]],
+            "analises": p["analises"], "acoes_pendentes": p["acoes"]}
+
+
+@mcp.tool()
+def trafego_relatorio(analise_id: int) -> dict:
+    """O relatório completo de uma análise (pegue o id em trafego_painel)."""
+    return _api("GET", f"trafego/analises/{int(analise_id)}")
+
+
+@mcp.tool()
+def trafego_analisar(contas: list[str] | None = None) -> dict:
+    """Roda a análise agora (todas as contas ativas, ou os ids act_... pedidos). Leva alguns
+    minutos por conta; o resultado aparece em trafego_painel e na tela Tráfego."""
+    return _api("POST", "trafego/analisar", {"contas": contas or []})
+
+
+@mcp.tool()
+def trafego_propor(conta_id: str, tipo: str, alvo_nome: str, motivo: str, nivel: str = "",
+                   alvo_id: str = "", de: str = "", para: str = "", impacto: str = "") -> dict:
+    """Cria uma otimização para o usuário aprovar (nada muda no Meta antes disso).
+    tipo: pausar | reativar | orcamento | criativo | manual. nivel: campanha | conjunto | anuncio.
+    alvo_id: o id do Meta (obrigatório para pausar/reativar/orcamento). de/para: valores em reais
+    (orçamento) ou status."""
+    return _api("POST", "trafego/acoes", {"conta_id": conta_id, "tipo": tipo, "alvo_nome": alvo_nome,
+                                          "motivo": motivo, "nivel": nivel, "alvo_id": alvo_id, "de": de,
+                                          "para": para, "impacto": impacto})
+
+
+@mcp.tool()
+def trafego_aprovar(acao_id: int) -> dict:
+    """Aprova uma otimização: SÓ quando o usuário pediu explicitamente para aprovar aquela ação.
+    Pausar/reativar/orçamento são aplicados no Meta em seguida; criativo abre um projeto."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/aprovar", {})
+
+
+@mcp.tool()
+def trafego_rejeitar(acao_id: int, motivo: str = "") -> dict:
+    """Rejeita uma otimização proposta."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/rejeitar", {"motivo": motivo})
+
+
+@mcp.tool()
+def trafego_conta(conta_id: str, campos: dict) -> dict:
+    """Ajusta uma conta: ativo (entra na análise diária), cliente_id, objetivo, meta_cpa (R$),
+    meta_roas, verba_mensal (R$), notas."""
+    return _api("PATCH", f"trafego/contas/{urllib.parse.quote(conta_id, safe='')}", dict(campos or {}))
+
+
 # ── computador ──────────────────────────────────────────────────────────────
 @mcp.tool()
 def computador_acoes() -> list[dict]:

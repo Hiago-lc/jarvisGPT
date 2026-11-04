@@ -170,6 +170,14 @@ async function atualizarSelo() {
     s.textContent = t.length;
     s.title = `${t.length} entrega(s) aguardando sua aprovação`;
   } catch (_) { /* silencioso */ }
+  try {
+    const tr = await api("GET", "trafego");
+    const n = tr.acoes.filter((a) => a.status === "proposta").length;
+    const s = $("#selo-trafego");
+    s.hidden = !n;
+    s.textContent = n;
+    s.title = `${n} otimização(ões) do Meta Ads esperando sua aprovação`;
+  } catch (_) { /* silencioso */ }
 }
 
 // ── período ───────────────────────────────────────────────────────────────
@@ -1293,6 +1301,157 @@ function fichaAgente(a, recarregar) {
     aoAbrir: (corpo) => $$("[data-abrir]", corpo).forEach((l) => l.addEventListener("click", (e) => { e.preventDefault(); abrirTrabalho(+l.dataset.abrir, recarregar); })),
   });
 }
+
+// ── Tráfego: análise diária do Meta Ads, otimizações com a sua aprovação ────
+const TRAF_TIPOS = { pausar: "Pausar", reativar: "Reativar", orcamento: "Orçamento", criativo: "Criativo novo", manual: "Recomendação" };
+const TRAF_SIT = { bem: "Bem", atencao: "Atenção", critico: "Crítico", erro: "Erro" };
+const TRAF_NIVEL = { campanha: "campanha", conjunto: "conjunto", anuncio: "anúncio", conta: "conta" };
+const numBR = (v, casas = 0) => (v === null || v === undefined || v === "" || Number.isNaN(+v) ? "—" : (+v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas }));
+
+function cartaoAcao(a) {
+  const mud = a.de || a.para ? `<span class="traf-mudanca">${esc(a.tipo === "orcamento" ? `R$ ${a.de}` : a.de)} → <strong>${esc(a.tipo === "orcamento" ? `R$ ${a.para}` : a.para)}</strong></span>` : "";
+  const estado = a.status === "aplicando" ? '<span class="traf-estado">Aplicando no Meta…</span>'
+    : a.status === "falhou" ? `<span class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</span>` : "";
+  const botoes = a.status === "aplicando" ? "" : `<div class="traf-botoes">
+      <button class="botao" data-rejeitar="${a.id}">Rejeitar</button>
+      <button class="botao primario" data-aprovar="${a.id}">${a.tipo === "criativo" ? "Pedir à equipe" : a.tipo === "manual" ? "Anotar" : a.status === "falhou" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div>`;
+  return `<article class="traf-acao prioridade-${esc(a.prioridade)}">
+    <div class="traf-acao-topo"><span class="traf-tipo tipo-${esc(a.tipo)}">${esc(TRAF_TIPOS[a.tipo] || a.tipo)}</span>
+      <span class="sub">${esc(a.conta_nome || a.conta_id)}${a.nivel ? ` · ${esc(TRAF_NIVEL[a.nivel] || a.nivel)}` : ""}</span></div>
+    <p class="traf-alvo">${esc(a.alvo_nome || "—")} ${mud}</p>
+    <p class="traf-motivo">${esc(a.motivo)}</p>
+    ${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
+    ${estado}${botoes}</article>`;
+}
+
+function cartaoConta(c, an) {
+  const m = an?.metricas || {};
+  const sit = an ? an.situacao : "";
+  const kpi = (rot, val) => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong></div>`;
+  return `<article class="traf-conta${c.ativo ? "" : " inativa"}">
+    <div class="traf-conta-topo">
+      <div><h3>${sit ? `<span class="traf-sit sit-${esc(sit)}" title="${esc(TRAF_SIT[sit] || sit)}"></span>` : ""}${esc(c.cliente_nome || c.nome)}</h3>
+        <p class="sub">${esc(c.nome)} · ${esc(c.id)}${an ? ` · análise de ${esc(an.dia.split("-").reverse().join("/"))}` : ""}</p></div>
+      <label class="caixa traf-ativo"><input type="checkbox" data-ativo="${esc(c.id)}"${c.ativo ? " checked" : ""}> Análise diária</label>
+    </div>
+    ${an && !an.erro ? `<div class="traf-kpis">
+      ${kpi("Gasto 7 dias", `R$ ${numBR(m.gasto_7d)}`)}
+      ${kpi(esc(m.nome_resultado ? `${m.nome_resultado} 7d` : "Resultados 7d"), numBR(m.resultados_7d))}
+      ${kpi("Custo por resultado", m.custo_resultado_7d ? `R$ ${numBR(m.custo_resultado_7d, 2)}` : "—")}
+      ${m.roas_7d ? kpi("ROAS", numBR(m.roas_7d, 2)) : kpi("CTR", m.ctr_7d ? `${numBR(m.ctr_7d, 2)}%` : "—")}
+      ${kpi("Frequência", numBR(m.frequencia_7d, 1))}
+      ${m.variacao_custo_resultado_pct ? kpi("Custo vs semana anterior", `${m.variacao_custo_resultado_pct > 0 ? "+" : ""}${numBR(m.variacao_custo_resultado_pct)}%`) : ""}
+    </div>
+    <p class="traf-resumo">${esc(an.resumo)}</p>
+    ${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}` : an?.erro ? `<p class="erro">${esc(an.erro)}</p>` : `<p class="sub">${c.ativo ? "Ainda sem análise." : "Fora da análise diária."}</p>`}
+    <div class="traf-botoes">
+      <button class="botao" data-metas="${esc(c.id)}">Metas e cliente</button>
+      ${an && !an.erro ? `<button class="botao" data-relatorio="${an.id}">Relatório</button>` : ""}
+      <button class="botao" data-analisar="${esc(c.id)}">Analisar agora</button>
+    </div></article>`;
+}
+
+function metasConta(c, recarregar) {
+  dialogo({
+    titulo: `Metas: ${c.nome}`,
+    corpo: `<p class="sub" style="margin-top:0">Com metas o gestor sabe o que é bom para esta conta. Sem elas, ele compara com a média dos últimos 30 dias.</p>
+      <div class="campos">
+        ${campo({ nome: "cliente_id", rotulo: "Cliente", tipo: "select", opcoes: [["", "Sem cliente"], ...OPCOES.clientes.map((x) => [x.id, x.nome])], valor: c.cliente_id ?? "", largo: true })}
+        ${campo({ nome: "objetivo", rotulo: "Objetivo principal", valor: c.objetivo || "", largo: true, ajuda: "Ex.: vendas no site, mensagens no WhatsApp, leads, seguidores" })}
+        ${campo({ nome: "meta_cpa", rotulo: "Custo por resultado alvo (R$)", tipo: "dinheiro", valor: c.meta_cpa ? String(c.meta_cpa).replace(".", ",") : "" })}
+        ${campo({ nome: "meta_roas", rotulo: "ROAS alvo", valor: c.meta_roas ? String(c.meta_roas).replace(".", ",") : "" })}
+        ${campo({ nome: "verba_mensal", rotulo: "Verba do mês (R$)", tipo: "dinheiro", valor: c.verba_mensal ? String(c.verba_mensal).replace(".", ",") : "" })}
+        ${campo({ nome: "notas", rotulo: "Observações para o gestor", tipo: "textarea", valor: c.notas || "", largo: true })}
+      </div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("PATCH", `trafego/contas/${encodeURIComponent(c.id)}`, v); avisar("Metas salvas"); recarregar(); } }],
+  });
+}
+
+function configTrafego(cfg, recarregar) {
+  dialogo({
+    titulo: "Tráfego: configurações",
+    corpo: `<div class="campos">
+        ${campo({ nome: "horario", rotulo: "Horário da análise diária", tipo: "time", valor: cfg.horario })}
+        <div></div>
+        ${campo({ nome: "whatsapp_ativo", rotulo: "Mandar o resumo no meu WhatsApp depois da análise", tipo: "checkbox", valor: cfg.whatsapp_ativo, largo: true })}
+        ${campo({ nome: "whatsapp_contato", rotulo: "Para qual conversa (o seu número ou a conversa \"Você\", igual ao WhatsApp)", valor: cfg.whatsapp_contato, largo: true })}
+      </div>
+      <p class="sub">O resumo vai só para essa conversa. O Jarvis nunca manda nada para clientes sem você confirmar.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+        if (v.whatsapp_ativo && !v.whatsapp_contato.trim()) throw new Error("Diga para qual conversa mandar o resumo.");
+        await api("POST", "trafego/config", v); avisar("Configurações salvas"); recarregar();
+      } }],
+  });
+}
+
+ROTAS.trafego = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>Tráfego</h1><p class="sub" id="traf-sub">Meta Ads: análise diária e otimizações com a sua aprovação.</p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="traf-config">Configurar</button><button class="botao primario" id="traf-analisar">Analisar agora</button></div></div>
+    <div id="traf-corpo"><p class="vazio">Carregando…</p></div>`;
+  let dados = null;
+  let timer = null;
+  const corpo = $("#traf-corpo");
+  const desenhar = async () => {
+    if (!document.body.contains(corpo)) { clearInterval(timer); return; }
+    dados = await api("GET", "trafego");
+    const { config: cfg, estado, contas, analises, acoes, historico } = dados;
+    $("#traf-sub").textContent = `Meta Ads: análise todo dia às ${cfg.horario}${cfg.whatsapp_ativo ? ", resumo no seu WhatsApp" : ""}. Nada muda nas campanhas sem a sua aprovação.`;
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc({ analisando: "Analisando as contas", conectando: "Conectando ao Meta Ads" }[estado.fazendo] || estado.fazendo)}${estado.progresso ? ` (${esc(estado.progresso)})` : ""}… pode levar alguns minutos por conta.</div>` : "";
+    const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    const aviso = cfg.aviso_conexao ? `<div class="traf-faixa erro">${esc(cfg.aviso_conexao)} <button class="botao" data-conectar>Já entrei, conferir</button></div>` : "";
+    if (!dados.conectado) {
+      corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar ao Meta Ads</h2>
+        <p>O Jarvis usa o conector oficial da Meta. Uma vez só:</p>
+        <ol><li>Dê dois cliques em <code>conectar-meta.bat</code>, em <code>C:\\JARVIS</code>, e siga o passo a passo que aparece (precisa do ID de um app seu no Meta for Developers; o arquivo explica como criar).</li>
+          <li>No Claude Code que abrir, digite <code>/mcp</code>, escolha <strong>meta-ads</strong> e faça o login no Facebook, marcando as contas dos clientes.</li>
+          <li>Volte aqui e clique no botão abaixo: o Jarvis confere a conexão e traz as suas contas de anúncio.</li></ol>
+        <button class="botao primario" data-conectar ${estado.fazendo ? "disabled" : ""}>Já fiz o login, buscar minhas contas</button></section>`;
+    } else {
+      const ordem = { critico: 0, atencao: 1, erro: 2, bem: 3 };
+      const lista = [...contas].sort((a, b) => (b.ativo - a.ativo) || ((ordem[analises[a.id]?.situacao] ?? 4) - (ordem[analises[b.id]?.situacao] ?? 4)));
+      corpo.innerHTML = `${fazendo}${erro}${aviso}
+        <section class="traf-secao"><h2>Esperando sua aprovação ${acoes.length ? `<span class="selo">${acoes.length}</span>` : ""}</h2>
+          ${acoes.length ? `<div class="traf-acoes">${acoes.map(cartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma otimização pendente.</p>'}</section>
+        <section class="traf-secao"><div class="bloco-topo"><h2>Contas</h2><button class="botao" data-conectar ${estado.fazendo ? "disabled" : ""}>Atualizar lista de contas</button></div>
+          ${lista.length ? `<div class="traf-contas">${lista.map((c) => cartaoConta(c, analises[c.id])).join("")}</div>` : '<p class="vazio">Nenhuma conta encontrada. Confira se marcou as contas no login do Facebook.</p>'}</section>
+        ${historico.length ? `<section class="traf-secao"><h2>Decidido recentemente</h2><ul class="lista bloco">${historico.map((a) => `<li><span>${esc(TRAF_TIPOS[a.tipo] || a.tipo)}: ${esc(a.alvo_nome || "—")} <span class="sub">(${esc(a.conta_nome || a.conta_id)})</span></span><span class="meta">${esc({ aplicada: "aplicada", rejeitada: "rejeitada", anotada: "anotada" }[a.status] || a.status)}</span></li>`).join("")}</ul></section>` : ""}`;
+    }
+    $$("[data-conectar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try { await api("POST", "trafego/conectar", {}); avisar("Conferindo a conexão com o Meta…"); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { const r = await api("POST", `trafego/acoes/${b.dataset.aprovar}/aprovar`, {}); avisar(r.status === "aplicando" ? "Aprovada: aplicando no Meta" : r.resultado || "Feito"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+    }));
+    $$("[data-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try { await api("POST", `trafego/acoes/${b.dataset.rejeitar}/rejeitar`, {}); avisar("Rejeitada"); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-ativo]", corpo).forEach((cx) => cx.addEventListener("change", async () => {
+      try { await api("PATCH", `trafego/contas/${encodeURIComponent(cx.dataset.ativo)}`, { ativo: cx.checked }); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-metas]", corpo).forEach((b) => b.addEventListener("click", () => metasConta(dados.contas.find((c) => c.id === b.dataset.metas), desenhar)));
+    $$("[data-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try { await api("POST", "trafego/analisar", { contas: [b.dataset.analisar] }); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-relatorio]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const an = await api("GET", `trafego/analises/${b.dataset.relatorio}`);
+      dialogo({ titulo: `Relatório de ${an.dia.split("-").reverse().join("/")}`, corpo: `<div class="md traf-relatorio">${mdSimples(an.relatorio || an.resumo)}</div>`, acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] });
+    }));
+    $("#traf-analisar").disabled = !!estado.fazendo || !dados.conectado;
+  };
+  $("#traf-analisar").addEventListener("click", async () => {
+    try { await api("POST", "trafego/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); }
+  });
+  $("#traf-config").addEventListener("click", () => dados && configTrafego(dados.config, desenhar));
+  await desenhar();
+  timer = setInterval(() => {
+    if (document.hidden || $("#dialogo").open) return;
+    if (dados?.estado?.fazendo || dados?.acoes?.some((a) => a.status === "aplicando")) desenhar().catch(() => {});
+  }, 8000);
+};
 
 ROTAS.escritorio = async () => {
   main.innerHTML = `

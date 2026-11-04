@@ -68,6 +68,53 @@ CREATE TABLE IF NOT EXISTS trabalhos (
     atualizado_em REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS trabalhos_status ON trabalhos(status);
+CREATE TABLE IF NOT EXISTS trafego_contas (
+    id TEXT PRIMARY KEY,                      -- act_123 (conta de anúncio do Meta)
+    nome TEXT NOT NULL DEFAULT '',
+    negocio TEXT NOT NULL DEFAULT '',
+    moeda TEXT NOT NULL DEFAULT 'BRL',
+    status_meta TEXT NOT NULL DEFAULT '',
+    cliente_id INTEGER,
+    ativo INTEGER NOT NULL DEFAULT 0,         -- entra na análise diária
+    objetivo TEXT NOT NULL DEFAULT '',
+    meta_cpa REAL,                            -- custo por resultado alvo (R$)
+    meta_roas REAL,
+    verba_mensal REAL,
+    notas TEXT NOT NULL DEFAULT '',
+    atualizado_em REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS trafego_analises (
+    id INTEGER PRIMARY KEY,
+    conta_id TEXT NOT NULL,
+    dia TEXT NOT NULL,
+    criado_em REAL NOT NULL,
+    situacao TEXT NOT NULL DEFAULT '',        -- bem | atencao | critico | erro
+    resumo TEXT NOT NULL DEFAULT '',
+    metricas TEXT NOT NULL DEFAULT '{}',
+    alertas TEXT NOT NULL DEFAULT '[]',
+    relatorio TEXT NOT NULL DEFAULT '',
+    erro TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS trafego_analises_conta ON trafego_analises(conta_id, dia);
+CREATE TABLE IF NOT EXISTS trafego_acoes (
+    id INTEGER PRIMARY KEY,
+    conta_id TEXT NOT NULL,
+    analise_id INTEGER,
+    criado_em REAL NOT NULL,
+    atualizado_em REAL NOT NULL,
+    tipo TEXT NOT NULL,                       -- pausar | reativar | orcamento | criativo | manual
+    nivel TEXT NOT NULL DEFAULT '',
+    alvo_id TEXT NOT NULL DEFAULT '',
+    alvo_nome TEXT NOT NULL DEFAULT '',
+    de TEXT NOT NULL DEFAULT '',
+    para TEXT NOT NULL DEFAULT '',
+    motivo TEXT NOT NULL DEFAULT '',
+    impacto TEXT NOT NULL DEFAULT '',
+    prioridade TEXT NOT NULL DEFAULT 'media',
+    status TEXT NOT NULL DEFAULT 'proposta',  -- proposta | aplicando | aplicada | rejeitada | falhou | substituida | anotada
+    resultado TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS trafego_acoes_status ON trafego_acoes(status);
 
 -- ── Central (faturamento, tarefas, pipeline) ───────────────────────────────
 -- Valores em centavos (inteiro): soma de dinheiro em ponto flutuante erra.

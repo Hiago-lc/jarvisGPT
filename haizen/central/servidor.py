@@ -278,6 +278,8 @@ class _Handler(BaseHTTPRequestHandler):
             if len(partes) == 2 and metodo == "GET":
                 arq = anexos.caminho(unquote(partes[1]))
                 return _Arquivo(arq.read_bytes(), anexos.tipo(arq))
+        if partes and partes[0] == "trafego":
+            return self._trafego(metodo, partes[1:])
         if partes and partes[0] == "pc":
             return self._pc(metodo, partes[1:])
 
@@ -506,6 +508,42 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         return _NAO_ACHOU
 
+    def _trafego(self, metodo, partes):
+        """O gestor de tráfego: análise diária do Meta Ads e otimizações com aprovação."""
+        from haizen import trafego
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return trafego.painel()
+        if rota == "conectar" and metodo == "POST":
+            trafego.em_segundo_plano(trafego.descobrir, "conectando")
+            return {"ok": True}
+        if rota == "analisar" and metodo == "POST":
+            contas = self._corpo().get("contas") or None
+            trafego.em_segundo_plano(lambda: trafego.rodada(contas), "analisando")
+            return {"ok": True}
+        if rota == "config" and metodo == "POST":
+            return trafego.salvar_config(self._corpo())
+        if rota == "resumo" and metodo == "GET":
+            return {"texto": trafego.resumo_texto()}
+        if rota == "contas" and len(partes) == 2 and metodo == "PATCH":
+            return trafego.atualizar_conta(unquote(partes[1]), self._corpo())
+        if rota == "analises" and len(partes) == 2 and metodo == "GET":
+            return trafego.analise(int(partes[1]))
+        if rota == "acoes" and len(partes) == 3 and metodo == "POST":
+            aid = int(partes[1])
+            if partes[2] == "aprovar":
+                return trafego.aprovar(aid)
+            if partes[2] == "rejeitar":
+                return trafego.rejeitar(aid, str(self._corpo().get("motivo") or ""))
+        if rota == "acoes" and len(partes) == 1 and metodo == "POST":
+            c = self._corpo()
+            return trafego.propor(str(c.get("conta_id") or ""), str(c.get("tipo") or "manual"),
+                                  str(c.get("alvo_nome") or ""), str(c.get("motivo") or ""),
+                                  str(c.get("nivel") or ""), str(c.get("alvo_id") or ""), str(c.get("de") or ""),
+                                  str(c.get("para") or ""), str(c.get("impacto") or ""),
+                                  str(c.get("prioridade") or "media"))
+        return _NAO_ACHOU
+
     def _pc(self, metodo, partes):
         """O Claude (cérebro do Jarvis) controlando o PC pelas ações do Jarvis.
         Ações irreversíveis caem na confirmação da tela, como na voz."""
@@ -701,6 +739,11 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                 threading.Thread(target=_servidor.serve_forever, name="central-haizen",
                                  daemon=True).start()
                 _retomar_fila()
+                try:
+                    from haizen import trafego
+                    trafego.iniciar_agenda()          # análise diária do Meta Ads
+                except Exception as e:  # noqa: BLE001
+                    print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:
         webbrowser.open(url())
     return url()

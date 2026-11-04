@@ -578,3 +578,53 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .msg-anexo img { max-width: 180px; max-height: 180px; border-radius: 10px; display: block; }
 .msg-anexo-img { display: block; width: 120px; height: 90px; border-radius: 10px; background: var(--linha); }
 @media (max-width: 600px) { .msg-anexo img { max-width: 140px; } .anexo-chip { max-width: 100%; } }
+
+/* ── Tráfego ────────────────────────────────────────────────────────────── */
+.traf-topo-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.traf-secao { margin-bottom: 28px; }
+.traf-secao h2 { display: flex; align-items: center; gap: 8px; }
+.traf-faixa { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; background: #EAF1EF; border: 1px solid var(--linha); border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; font-size: 14px; }
+.traf-faixa.erro { background: #FBEDEB; border-color: #EBC3BD; color: #7A2A21; }
+.traf-girando { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--linha); border-top-color: var(--petroleo); animation: traf-gira 0.9s linear infinite; }
+@keyframes traf-gira { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .traf-girando { animation: none; } }
+.traf-conectar ol { padding-left: 20px; line-height: 1.6; }
+.traf-acoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+.traf-acao { background: var(--superficie); border: 1px solid var(--linha); border-left: 4px solid var(--linha); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.traf-acao.prioridade-alta { border-left-color: var(--tijolo); }
+.traf-acao.prioridade-media { border-left-color: var(--ambar); }
+.traf-acao.prioridade-baixa { border-left-color: var(--limao); }
+.traf-acao p { margin: 0; }
+.traf-acao-topo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.traf-tipo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: #EAF1EF; color: var(--petroleo); }
+.traf-tipo.tipo-pausar { background: #FBEDEB; color: #7A2A21; }
+.traf-tipo.tipo-orcamento { background: #FFF4E0; color: #6B4512; }
+.traf-tipo.tipo-criativo { background: #EEF5DF; color: var(--limao-escuro); }
+.traf-alvo { font-weight: 600; overflow-wrap: anywhere; }
+.traf-mudanca { font-weight: 400; color: var(--cinza); margin-left: 4px; white-space: nowrap; }
+.traf-mudanca strong { color: var(--tinta); }
+.traf-motivo { font-size: 14px; line-height: 1.45; }
+.traf-impacto { font-size: 13px; }
+.traf-estado { font-size: 13px; color: var(--foco); }
+.traf-estado.erro { color: var(--tijolo); }
+.traf-botoes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.traf-contas { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; margin-top: 12px; }
+.traf-conta { background: var(--superficie); border: 1px solid var(--linha); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.traf-conta.inativa { opacity: .72; }
+.traf-conta-topo { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.traf-conta h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.traf-conta .sub { margin: 2px 0 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.traf-ativo { white-space: nowrap; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+.traf-sit { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--linha); }
+.traf-sit.sit-bem { background: var(--limao); }
+.traf-sit.sit-atencao { background: var(--ambar); }
+.traf-sit.sit-critico, .traf-sit.sit-erro { background: var(--tijolo); }
+.traf-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin: 14px 0 10px; }
+.traf-kpi { background: var(--papel); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.traf-kpi span { font-size: 11.5px; color: var(--cinza); }
+.traf-kpi strong { font-family: var(--display); font-size: 17px; font-variant-numeric: tabular-nums; }
+.traf-resumo { font-size: 14px; line-height: 1.5; margin: 6px 0; }
+.traf-alertas { margin: 4px 0 6px; padding-left: 18px; font-size: 13px; color: #7A2A21; }
+.traf-relatorio { max-height: 60vh; overflow: auto; font-size: 14px; line-height: 1.5; }
+.traf-secao h2 .selo { margin-left: 0; }
+.traf-contas, .traf-acoes { align-items: start; }

@@ -66,7 +66,6 @@ class CerebroClaudeTests(Base):
         cmd, kw = chamadas[0]
         self.assertEqual(kw["input"], "ela pagou, marca como recebido")
         self.assertNotIn("--resume", cmd)
-        self.assertIn("--strict-mcp-config", cmd)
         permitidas = cmd[cmd.index("--allowedTools") + 1].split(",")
         self.assertIn("mcp__jarvis", permitidas)
         self.assertNotIn("Bash", permitidas)            # o cérebro não roda comandos

@@ -59,6 +59,10 @@ preferência duradoura de um cliente, guarde com `guia_anotar`. Ajustes pedidos 
 Abra para ver. Se for material para produzir, passe os caminhos em `anexos` do projeto.
 - As pastas dos clientes ficam em {clientes}. Você pode ler o material (logos, manuais, \
 referências) para responder, mas não altera nem apaga nada lá.
+- Meta Ads: com o conector ligado você LÊ as contas (ferramentas mcp__meta-ads__ de leitura). \
+Você não altera campanhas: para pausar, reativar ou mudar orçamento, crie uma proposta com \
+`trafego_propor` (o usuário aprova na tela Tráfego ou pedindo a você: aí use `trafego_aprovar`). \
+`trafego_painel` mostra a análise diária e as otimizações pendentes.
 - Computador: `computador_acoes` mostra o que dá para fazer; ações irreversíveis esperam \
 confirmação na tela.
 - Antes de afirmar algo sobre os dados, consulte. Diga exatamente o que mudou (qual registro, \
@@ -150,6 +154,19 @@ def _persona(por_voz: bool) -> str:
         memoria=f"\n\nO que você sabe sobre o usuário:\n{mem}" if mem.strip() else "")
 
 
+def permitidas() -> list[str]:
+    """As do Jarvis e, com o Meta Ads conectado, as de LEITURA do Meta. Alterar
+    campanhas só por proposta aprovada (trafego_propor / tela Tráfego)."""
+    lista = list(PERMITIDAS)
+    try:
+        from haizen import trafego
+        if trafego.config().get("conectado_em"):
+            lista += trafego.ferramentas_leitura()
+    except Exception:  # noqa: BLE001
+        pass
+    return lista
+
+
 def _gravar_persona(por_voz: bool) -> Path:
     arq = pasta() / ("persona-voz.md" if por_voz else "persona.md")
     arq.write_text(_persona(por_voz), encoding="utf-8")
@@ -159,8 +176,11 @@ def _gravar_persona(por_voz: bool) -> Path:
 def argumentos(por_voz: bool, sid: str) -> list[str]:
     args = ["-p", "--output-format", "stream-json", "--verbose",
             "--permission-mode", "dontAsk",
-            "--mcp-config", str(_config_mcp()), "--strict-mcp-config",
-            "--allowedTools", ",".join(PERMITIDAS),
+            # Sem --strict-mcp-config: o conector do Meta Ads ("meta-ads") fica no
+            # Claude Code do usuário (conectar-meta.bat) e entra junto. Só as
+            # ferramentas da lista abaixo podem ser usadas.
+            "--mcp-config", str(_config_mcp()),
+            "--allowedTools", ",".join(permitidas()),
             # Em arquivo: no Windows, um claude.cmd (npm) cortaria o texto nas quebras de linha.
             "--append-system-prompt-file", str(_gravar_persona(por_voz))]
     raiz = raiz_clientes()
