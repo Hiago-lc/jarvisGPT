@@ -324,7 +324,11 @@ def prompt_analise(c: dict, hoje: dt.date | None = None) -> str:
             "acoes": [{"tipo": "pausar | reativar | orcamento | publico | estrutura | criativo | manual",
                        "nivel": "campanha | conjunto | anuncio | conta", "alvo_id": "id no Meta",
                        "alvo_nome": "nome", "de": "valor atual (orçamento em reais) ou status", "para": "novo valor",
-                       "detalhes": {"o_que_muda": "para publico/estrutura: a especificação completa"},
+                       "detalhes": {"o_que_muda": "para publico/estrutura: a especificação completa",
+                                    "criativos": [{"id": "id do criativo", "nome": "nome do anúncio/criativo",
+                                                   "formato": "video | imagem | carrossel | catalogo",
+                                                   "custo_resultado_30d": 0, "resultados_30d": 0, "roas_30d": None,
+                                                   "ctr_30d": 0, "porque": "por que serve para ESTA campanha"}]},
                        "motivo": "números que justificam", "impacto": "o que se espera", "prioridade": "alta | media | baixa"}],
             "relatorio": "relatório em Markdown para o dono: números por campanha e conjunto, o que testar na semana",
         }, ensure_ascii=False, indent=1),
@@ -550,8 +554,12 @@ def instrucao_aplicar(a: dict) -> str:
         o_que = (f"Mude a segmentação do conjunto {a['alvo_id']} (\"{a['alvo_nome']}\") com ads_update_entity, "
                  f"exatamente assim (mantenha o resto da segmentação como está):\n{_detalhes_texto(a)}")
     elif a["tipo"] == "estrutura":
-        o_que = (f"Crie/ajuste a estrutura abaixo com ads_create_campaign / ads_create_ad_set / ads_update_entity. "
-                 f"Tudo o que for criado nasce PAUSADO.\n{_detalhes_texto(a)}")
+        o_que = (f"Crie/ajuste a estrutura abaixo com ads_create_campaign / ads_create_ad_set / ads_create_ad / "
+                 f"ads_update_entity. Tudo o que for criado nasce PAUSADO.\n{_detalhes_texto(a)}\n"
+                 "Anúncios: use SOMENTE os criativos listados em criativos (o dono aprovou exatamente esses). Se algum "
+                 "não puder ser usado (arquivado, reprovado, não existe), NÃO escolha outro por conta própria, a não ser "
+                 "que a resposta do dono abaixo diga qual usar ou dê o critério: crie com os válidos e, no detalhe, "
+                 "liste o que faltou e até 3 candidatos com custo por resultado, ROAS e relevância para o dono escolher.")
     elif a["tipo"] == "subir_criativo":
         o_que = _instrucao_subir(a)
     else:

@@ -679,3 +679,6 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .traf-falha p { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; }
 .traf-nota { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--cinza); }
 .traf-nota textarea { border: 1px solid var(--linha); border-radius: var(--raio); padding: 8px 10px; font: inherit; color: var(--tinta); resize: vertical; }
+.traf-criativos { font-size: 13px; background: var(--papel); border-radius: 8px; padding: 8px 10px; }
+.traf-criativos ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.traf-criativos li { display: flex; flex-direction: column; gap: 1px; }

@@ -1334,10 +1334,14 @@ function detalhesAcao(a) {
         <p class="sub"><strong>${esc(p.titulo || "")}</strong>${p.descricao ? ` · ${esc(p.descricao)}` : ""} · CTA ${esc(p.cta || d.cta || "")}</p></div></div>`).join("")}</div>
       <p class="sub">Campanha: ${esc(d.campanha || "—")} · destino: ${esc(d.destino || "o mesmo dos outros anúncios")}</p>`;
   }
-  const chaves = Object.keys(d);
-  if (!chaves.length) return "";
+  const criativos = Array.isArray(d.criativos) ? d.criativos : [];
+  const listaCriativos = criativos.length ? `<div class="traf-criativos"><strong>Criativos que vão entrar (${criativos.length})</strong><ul>${criativos.map((c) => `<li><span>${esc(c.nome || c.id)}</span>
+      <span class="sub">${esc(c.formato || "")}${c.custo_resultado_30d ? ` · R$ ${numBR(c.custo_resultado_30d, 2)}/resultado` : ""}${c.resultados_30d ? ` · ${numBR(c.resultados_30d)} result.` : ""}${c.roas_30d ? ` · ROAS ${numBR(c.roas_30d, 2)}` : ""}${c.ctr_30d ? ` · CTR ${numBR(c.ctr_30d, 2)}%` : ""}</span>
+      ${c.porque ? `<span class="sub">${esc(c.porque)}</span>` : ""}</li>`).join("")}</ul></div>` : "";
+  const chaves = Object.keys(d).filter((k) => k !== "criativos");
+  if (!chaves.length) return listaCriativos;
   const valor = (v) => (typeof v === "object" ? JSON.stringify(v, null, 1) : String(v));
-  return `<details class="traf-detalhes"><summary>O que muda exatamente</summary><ul>${chaves.map((k) => `<li><strong>${esc(k.replace(/_/g, " "))}:</strong> ${esc(valor(d[k]))}</li>`).join("")}</ul></details>`;
+  return `${listaCriativos}<details class="traf-detalhes"><summary>O que muda exatamente</summary><ul>${chaves.map((k) => `<li><strong>${esc(k.replace(/_/g, " "))}:</strong> ${esc(valor(d[k]))}</li>`).join("")}</ul></details>`;
 }
 
 async function hidratarPecas(caixa) {
@@ -1361,7 +1365,7 @@ function cartaoAcao(a) {
   const mud = a.de || a.para ? `<span class="traf-mudanca">${esc(a.tipo === "orcamento" ? `R$ ${a.de}` : a.de)} → <strong>${esc(a.tipo === "orcamento" ? `R$ ${a.para}` : a.para)}</strong></span>` : "";
   const estado = a.status === "aplicando" ? '<span class="traf-estado">Aplicando no Meta…</span>'
     : a.status === "falhou" ? `<details class="traf-falha" open><summary>Não terminou: o gestor explica e pergunta</summary><p>${esc(a.resultado)}</p></details>
-      <label class="traf-nota">Responda ao gestor antes de tentar de novo (opcional)<textarea data-nota="${a.id}" rows="2" placeholder="Ex.: pode trocar os criativos inválidos pelos de melhor CTR; mexi no Gerenciador, confira o estado atual"></textarea></label>` : "";
+      <label class="traf-nota">Responda ao gestor antes de tentar de novo (opcional)<textarea data-nota="${a.id}" rows="2" placeholder="Ex.: mexi no Gerenciador, confira o estado atual; no lugar do criativo arquivado use o vídeo Depoimento Ana"></textarea></label>` : "";
   const botoes = a.status === "aplicando" ? "" : `<div class="traf-botoes">
       <button class="botao" data-rejeitar="${a.id}">Rejeitar</button>
       ${TRAF_CRIAM.includes(a.tipo) ? `<button class="botao" data-aprovar="${a.id}">Criar pausado</button><button class="botao primario" data-aprovar="${a.id}" data-ativar="1">Criar e ativar</button>`

@@ -43,6 +43,19 @@ HAIZEN aprovar; você propõe, ele decide.
 - Sinal de conversão: o evento otimizado é o que importa ao cliente? Use os diagnósticos de sinais
   quando a ferramenta existir. Se a conversão acontece no WhatsApp, avalie custo por conversa.
 
+## Escolher criativos para uma campanha ou conjunto
+Nunca escolha criativo "pelo CTR" ou ao acaso. Para cada candidato, olhe os números e o conteúdo:
+- Desempenho no objetivo da campanha nova: custo por resultado (compra, conversa, lead) e ROAS dos
+  últimos 30 dias, com volume mínimo (gasto de pelo menos 2x o custo alvo ou 3+ resultados). CTR e
+  gancho só desempatam.
+- Relevância: o produto, a oferta e a época do criativo combinam com a campanha (não ponha "Black
+  Friday" numa campanha de catálogo nem criativo de produto esgotado; catálogo dinâmico só em campanha
+  de catálogo).
+- Saúde: não arquivado, não reprovado, sem fadiga (frequência alta com CTR caindo).
+- Mistura: formatos diferentes (vídeo, imagem, carrossel) e ângulos diferentes, 3 a 6 por conjunto.
+Liste os escolhidos em `detalhes.criativos`, cada um com id, nome, formato, números e o porquê. O
+dono aprova exatamente esses.
+
 ## Regras de otimização
 - Pausar anúncio: gastou pelo menos 2x o custo por resultado alvo sem resultado, ou custo por
   resultado acima de 1,5x a meta com volume suficiente, e há outros anúncios ativos no conjunto.
@@ -70,7 +83,8 @@ HAIZEN aprovar; você propõe, ele decide.
 - `publico`: mudar a segmentação de um conjunto (`detalhes` com o que muda: idade, local, interesses,
   exclusões, público personalizado, Advantage+).
 - `estrutura`: criar um conjunto ou campanha novos (nascem PAUSADOS) ou consolidar; `detalhes` com a
-  especificação completa (objetivo, evento, orçamento em reais, público, posicionamentos).
+  especificação completa (objetivo, evento, orçamento em reais, público, posicionamentos) e
+  `detalhes.criativos` com os anúncios que vão nela (ver "Escolher criativos").
 - `manual`: qualquer outra recomendação, para o dono fazer ou decidir.
 
 ## Nunca

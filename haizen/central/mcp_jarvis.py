@@ -320,7 +320,10 @@ def trafego_propor(conta_id: str, tipo: str, alvo_nome: str, motivo: str, nivel:
     tipo: pausar | reativar | orcamento | publico | estrutura | criativo | manual.
     nivel: campanha | conjunto | anuncio. alvo_id: o id do Meta (obrigatório para pausar/reativar/
     orcamento/publico). de/para: valores em reais (orçamento) ou status. detalhes: a especificação
-    completa para publico (o que muda na segmentação) e estrutura (o que criar; nasce pausado)."""
+    completa para publico (o que muda na segmentação) e estrutura (o que criar; nasce pausado).
+    Em estrutura com anúncios, ponha em detalhes["criativos"] a lista exata (id, nome, formato,
+    custo_resultado_30d, resultados_30d, roas_30d, porque), escolhida pelo custo por resultado no
+    objetivo da campanha e pela relevância da oferta, nunca só pelo CTR. Consulte os números antes."""
     return _api("POST", "trafego/acoes", {"conta_id": conta_id, "tipo": tipo, "alvo_nome": alvo_nome,
                                           "motivo": motivo, "nivel": nivel, "alvo_id": alvo_id, "de": de,
                                           "para": para, "impacto": impacto, "detalhes": detalhes or {}})
