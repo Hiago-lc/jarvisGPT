@@ -278,7 +278,7 @@ class ProducaoTests(unittest.TestCase):
         self.assertTrue((pasta / "RELATORIO.md").is_file())
         md = self.chamadas[0]["claude_md"]
         self.assertIn(self.cliente_dir.as_posix(), md)
-        self.assertIn("ferramentas.py", md)
+        self.assertIn("servidor `producao`", md)
         self.assertIn("00 - HAIZEN", md)
         self.assertIn(self.cliente_dir, self.chamadas[0]["leitura"])
         # A aprovação libera o vídeo, que recebe a lista de arquivos da etapa anterior.

@@ -81,3 +81,39 @@ class UsoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProducaoMcpTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.pasta = Path(self.dir.name) / "trabalho"
+        self.pasta.mkdir()
+        self.env = patch.dict(os.environ, {"HAIZEN_TRABALHO_PASTA": str(self.pasta)})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_so_grava_dentro_da_pasta_do_trabalho(self):
+        from haizen.producao import mcp_producao as m
+        self.assertEqual(m._dentro("saida.mp4"), (self.pasta / "saida.mp4").resolve())
+        with self.assertRaises(ValueError):
+            m._dentro(str(Path(self.dir.name) / "fora.mp4"))
+        with self.assertRaises(ValueError):
+            m._dentro("../fora.png")
+        self.assertEqual(m._dentro(str(Path(self.dir.name) / "cliente.png"), gravar=False).name, "cliente.png")
+
+    def test_producao_liga_o_servidor_de_ferramentas(self):
+        from haizen import executor
+        cp = subprocess.CompletedProcess([], 0, json.dumps({"result": "ok", "session_id": "s"}), "")
+        with patch.object(executor, "claude_disponivel", return_value="claude"), \
+                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+            executor.executar_producao("p", self.pasta, [])
+        cmd = run.call_args[0][0]
+        cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
+        self.assertEqual(cfg["mcpServers"]["producao"]["env"]["HAIZEN_TRABALHO_PASTA"], str(self.pasta))
+        permitidas = cmd[cmd.index("--allowedTools") + 1].split(",")
+        self.assertIn("mcp__producao", permitidas)
+        self.assertIn("PowerShell(python:*)", permitidas)
+        self.assertEqual(executor.arquivos_da_pasta(str(self.pasta)), [])        # a config não aparece como entrega

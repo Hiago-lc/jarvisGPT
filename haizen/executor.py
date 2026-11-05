@@ -181,7 +181,26 @@ FERRAMENTAS = Path(__file__).resolve().parent / "producao" / "ferramentas.py"
 PERMISSOES = ("Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch",
               "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)", "Bash(ffmpeg:*)", "Bash(ffprobe:*)",
               "Bash(node:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(mkdir:*)", "Bash(ls:*)", "Bash(dir:*)",
-              "Bash(cp:*)", "Bash(copy:*)", "Bash(mv:*)", "Bash(cd:*)")
+              "Bash(cp:*)", "Bash(copy:*)", "Bash(mv:*)", "Bash(cd:*)",
+              # No Windows o Claude Code pode usar o PowerShell no lugar do Bash.
+              "PowerShell(python:*)", "PowerShell(py:*)", "PowerShell(ffmpeg:*)", "PowerShell(ffprobe:*)",
+              "PowerShell(node:*)", "PowerShell(npm:*)", "PowerShell(npx:*)", "PowerShell(mkdir:*)",
+              "PowerShell(Get-ChildItem:*)", "PowerShell(dir:*)", "PowerShell(ls:*)",
+              # As ferramentas de produção como MCP: funcionam qualquer que seja o terminal.
+              "mcp__producao")
+MCP_PRODUCAO = Path(__file__).resolve().parent / "producao" / "mcp_producao.py"
+RECEITAS = Path(__file__).resolve().parent / "producao" / "receitas"
+
+
+def _config_mcp_producao(pasta: Path) -> Path:
+    d = pasta / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = {"mcpServers": {"producao": {"command": _python_console(), "args": [str(MCP_PRODUCAO)],
+                                       "env": {"HAIZEN_TRABALHO_PASTA": str(pasta), "PYTHONIOENCODING": "utf-8",
+                                               "PYTHONPATH": str(MCP_PRODUCAO.parents[2])}}}}
+    arq = d / "mcp-producao.json"
+    arq.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    return arq
 
 
 def _python_console() -> str:
@@ -258,8 +277,8 @@ def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: 
     args = ["-p", "Siga o CLAUDE.md desta pasta e faça a tarefa descrita na entrada. Grave os arquivos "
                   "nesta pasta. No fim, responda só com o relatório curto da entrega (ou com PERGUNTA:).",
             "--output-format", "json", "--permission-mode", "acceptEdits", *_modelo_args(modelo),
-            *_retomar_args(sessao)]
-    for d in leitura:
+            *_retomar_args(sessao), "--mcp-config", str(_config_mcp_producao(pasta))]
+    for d in [*leitura, RECEITAS]:
         args += ["--add-dir", str(d)]
     args += ["--allowedTools", ",".join(PERMISSOES)]
     return rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
@@ -399,7 +418,6 @@ def guardar_aprovado(t: dict) -> Path | None:
 def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "") -> str:
     """O CLAUDE.md que o agente lê ao começar: onde está o material, onde gravar,
     as ferramentas e o padrão de qualidade da HAIZEN."""
-    f = FERRAMENTAS.as_posix()
     linhas = [
         "# Trabalho da HAIZEN",
         "",
@@ -439,14 +457,18 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         linhas += [f"- {r['nome']}: {r['descricao']} → `{r['arquivo'].as_posix()}`" for r in rec]
     linhas += [
         "",
-        "## Ferramentas (rode no terminal)",
-        f'- Ver o material do cliente: `python "{f}" inventario "<pasta do cliente>"`',
-        f'- Cores de um logo ou peça: `python "{f}" cores "<imagem>"`',
-        f'- HTML para PNG/JPG no tamanho exato: `python "{f}" render peca.html "01 - Feed 1080x1440.png" --largura 1080 --altura 1440`',
-        f'- HTML para PDF (propostas, planos, apresentações): `python "{f}" render doc.html doc.pdf --largura 1240 --altura 1754`',
-        f'- HTML com animação CSS para vídeo MP4: `python "{f}" animar anima.html video.mp4 --largura 1080 --altura 1920 --segundos 10 [--musica m.mp3]`',
-        f'- Juntar imagens e clipes num vídeo: `python "{f}" video saida.mp4 --entradas a.png b.mp4 --largura 1080 --altura 1920 --zoom [--musica m.mp3]`',
-        f'- Se algo falhar: `python "{f}" verificar` mostra o que está faltando no PC.',
+        "## Ferramentas de produção (servidor `producao`, use estas: não dependem do terminal)",
+        "- `inventario(pasta)`: o material do cliente (logos, fotos, vídeos com duração, fontes, peças antigas).",
+        "- `cores(imagem)`: as cores de um logo ou peça.",
+        "- `render(html, saida, largura, altura)`: HTML → PNG/JPG no tamanho exato; saída .pdf para documentos "
+        "(ex.: largura 1240, altura 1754); `pagina_inteira=true` para sites.",
+        "- `animar(html, saida, largura, altura, segundos, musica)`: HTML com animações CSS/JS → MP4.",
+        "- `video(saida, entradas, largura, altura, zoom, musica, max_clipe)`: junta imagens e clipes num vídeo.",
+        "- `quadros(video, segundos)`: extrai quadros para você abrir e conferir.",
+        "- `ffmpeg(argumentos)`: o ffmpeg direto (último argumento = arquivo de saída nesta pasta).",
+        "- `python(script, argumentos)`: roda um script .py que você gravou em `fontes/` (planilhas, ler .docx/.pdf).",
+        "- Se algo falhar: `verificar()`. Caminhos relativos são desta pasta.",
+        f"- Receitas e a ferramenta original ficam em `{RECEITAS.as_posix()}` (só leitura).",
         "",
         "## Como produzir",
         "- Peças gráficas (criativos, banners, posts, carrosséis, capas): monte em HTML/CSS com o logo, as cores, as fontes e as fotos "
