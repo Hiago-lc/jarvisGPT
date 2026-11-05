@@ -446,7 +446,7 @@ def _quadros(video: Path, destino: Path) -> list[str]:
     for i, s in enumerate((0.3, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 18.0)):
         alvo = destino / f"quadro-{i:02d}-{s:.0f}s.jpg"
         subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-ss", str(s), "-i", str(video), "-frames:v", "1",
-                        "-vf", "scale=540:-2", str(alvo)], capture_output=True, timeout=60)
+                        "-vf", "scale=540:-2", str(alvo)], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
         if alvo.is_file():
             saidas.append(str(alvo))
     return saidas
@@ -457,7 +457,7 @@ def _transcrever(video: Path) -> str:
         from haizen.producao.ferramentas import ffmpeg
         wav = video.with_suffix(".wav")
         subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", str(video), "-t", "45", "-ac", "1", "-ar", "16000",
-                        str(wav)], capture_output=True, timeout=120)
+                        str(wav)], capture_output=True, timeout=120, stdin=subprocess.DEVNULL)
         from core import transcrever
         return transcrever.transcrever(wav.read_bytes())[:3000]
     except Exception:  # noqa: BLE001 - sem áudio ou sem Whisper: segue só com as imagens

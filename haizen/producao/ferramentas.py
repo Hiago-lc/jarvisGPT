@@ -35,8 +35,7 @@ IGNORAR = {"desktop.ini", "thumbs.db", ".ds_store"}
 
 
 # ── utilidades ───────────────────────────────────────────────────────────────
-def ffmpeg() -> str:
-    """O ffmpeg do PATH ou o do pacote imageio-ffmpeg."""
+def _ffmpeg_achado() -> str:
     achado = shutil.which("ffmpeg")
     if achado:
         return achado
@@ -44,14 +43,32 @@ def ffmpeg() -> str:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:  # noqa: BLE001
+        return ""
+
+
+def ffmpeg() -> str:
+    """O ffmpeg do PATH ou o do pacote imageio-ffmpeg. Se faltar, instala o pacote
+    (está no requirements do Jarvis) uma vez e tenta de novo."""
+    achado = _ffmpeg_achado()
+    if achado:
+        return achado
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "imageio-ffmpeg"], stdin=subprocess.DEVNULL,
+                       capture_output=True, timeout=600)
+        import importlib
+        importlib.invalidate_caches()
+    except Exception:  # noqa: BLE001
         pass
+    achado = _ffmpeg_achado()
+    if achado:
+        return achado
     sys.exit("ERRO: o ffmpeg não está instalado. Rode instalar-producao.bat (na pasta do Jarvis) "
              "ou: python -m pip install imageio-ffmpeg")
 
 
 def _duracao(caminho: Path) -> float | None:
     try:
-        r = subprocess.run([ffmpeg(), "-i", str(caminho)], capture_output=True, text=True,
+        r = subprocess.run([ffmpeg(), "-i", str(caminho)], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                            encoding="utf-8", errors="replace", timeout=30)
     except Exception:  # noqa: BLE001
         return None
@@ -233,7 +250,7 @@ def animar(a) -> None:
             cmd += ["-i", a.musica, "-af", f"afade=t=out:st={max(0, a.segundos - 1.5)}:d=1.5", "-shortest"]
         cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "20",
                 "-movflags", "+faststart", str(saida)]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
     print(f"OK {saida} ({a.largura}x{a.altura}, {a.segundos}s)")
 
 
@@ -258,7 +275,8 @@ def video(a) -> None:
                         f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={a.largura}x{a.altura}:fps=30,setsar=1,format=yuv420p")
                 cmd = [ff, "-y", "-loglevel", "error", "-loop", "1", "-i", str(f), "-t", str(a.dur_imagem),
                        "-vf", zoom if a.zoom else escala]
-            subprocess.run(cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(parte)], check=True)
+            subprocess.run(cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(parte)], check=True,
+                           stdin=subprocess.DEVNULL)
             partes.append(parte)
         lista = Path(tmp) / "lista.txt"
         lista.write_text("".join(f"file '{p.as_posix()}'\n" for p in partes), encoding="utf-8")
@@ -270,7 +288,7 @@ def video(a) -> None:
         cmd += ["-c:v", "copy" if not a.musica else "libx264", "-movflags", "+faststart", str(saida)]
         if a.musica:
             cmd[cmd.index("libx264") + 1:cmd.index("libx264") + 1] = ["-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
     print(f"OK {saida} ({a.largura}x{a.altura}, {len(partes)} partes)")
 
 

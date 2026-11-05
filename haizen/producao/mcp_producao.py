@@ -49,12 +49,24 @@ def _dentro(caminho: str, gravar: bool = True) -> Path:
 
 def _rodar(args: list[str], timeout: int = 1800) -> str:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # stdin fechado: o ffmpeg lê o teclado e, num servidor MCP, o "teclado" é o canal
+    # de conversa com o Claude — ele travava e derrubava a conexão.
     r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_pasta()),
+                       stdin=subprocess.DEVNULL,
                        env=env, timeout=timeout)
     saida = ((r.stdout or "") + ("\n" + r.stderr if r.stderr else "")).strip()
     if r.returncode != 0:
         raise RuntimeError(f"falhou (código {r.returncode}): {saida[-3000:]}")
     return saida[-6000:] or "ok"
+
+
+def _exe_ffmpeg() -> str:
+    """O ffmpeg sem derrubar o servidor (a ferramenta original encerra o processo se faltar)."""
+    from haizen.producao.ferramentas import ffmpeg as achar
+    try:
+        return achar()
+    except SystemExit as e:
+        raise RuntimeError(str(e) or "ffmpeg não encontrado: rode instalar-producao.bat") from None
 
 
 def _ferr(*args: str, timeout: int = 1800) -> str:
@@ -116,14 +128,13 @@ def video(saida: str, entradas: list[str], largura: int = 1080, altura: int = 19
 @mcp.tool()
 def quadros(video: str, segundos: list[float], pasta_saida: str = "fontes/quadros") -> list[str]:
     """Extrai quadros de um vídeo (JPG) nos segundos pedidos, para você abrir e conferir."""
-    from haizen.producao.ferramentas import ffmpeg
     origem = _dentro(video, gravar=False)
     destino = _dentro(pasta_saida)
     destino.mkdir(parents=True, exist_ok=True)
     feitos = []
     for s in segundos[:20]:
         alvo = destino / f"{origem.stem}-{float(s):05.1f}s.jpg"
-        _rodar([ffmpeg(), "-y", "-loglevel", "error", "-ss", str(s), "-i", str(origem), "-frames:v", "1", "-q:v", "3",
+        _rodar([_exe_ffmpeg(), "-nostdin", "-y", "-loglevel", "error", "-ss", str(s), "-i", str(origem), "-frames:v", "1", "-q:v", "3",
                 str(alvo)], timeout=120)
         feitos.append(str(alvo))
     return feitos
@@ -133,12 +144,11 @@ def quadros(video: str, segundos: list[float], pasta_saida: str = "fontes/quadro
 def ffmpeg(argumentos: list[str]) -> str:
     """Roda o ffmpeg com estes argumentos (sem o "ffmpeg" no começo). O ÚLTIMO argumento é o
     arquivo de saída e precisa ficar na pasta do trabalho."""
-    from haizen.producao.ferramentas import ffmpeg as exe
     if not argumentos:
         raise ValueError("faltam os argumentos")
     args = list(argumentos)
     args[-1] = str(_dentro(args[-1]))
-    return _rodar([exe(), "-hide_banner", *args], timeout=1800)
+    return _rodar([_exe_ffmpeg(), "-hide_banner", "-nostdin", *args], timeout=1800)
 
 
 @mcp.tool()
