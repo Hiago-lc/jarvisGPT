@@ -553,7 +553,11 @@ def instrucao_aplicar(a: dict) -> str:
         raise ValueError(f"o tipo {a['tipo']} não é aplicado pelo Jarvis")
     if a["tipo"] in CRIAM:
         o_que += ("\nDepois de criar, ATIVE o que criou com ads_activate_entity (o dono escolheu publicar já ativo)."
-                  if a.get("ativar") else "\nNÃO ative nada: deixe pausado para o dono revisar no Gerenciador.")
+                  if a.get("ativar") else
+                  "\nNÃO ative nada: deixe tudo pausado/rascunho para o dono revisar no Gerenciador. Neste modo NÃO pause "
+                  "nem altere o que já está rodando (isso depende da ativação). SUCESSO aqui = tudo criado e conferido "
+                  "como rascunho/pausado: responda ok=true e diga no detalhe o que fica para o dono (publicar, pausar os "
+                  "antigos depois).")
     if a.get("resultado") and a.get("status") in ("falhou", "aplicando"):
         o_que += ("\n\nTENTATIVA ANTERIOR (continue de onde parou; NÃO recrie o que já foi criado, use os ids abaixo):\n"
                   + a["resultado"][:2000])
