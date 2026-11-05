@@ -261,6 +261,7 @@ class TrafegoTests(unittest.TestCase):
         self.assertEqual(self.t.aprovar(a["id"], em_segundo_plano=False)["status"], "aplicada")
         self.assertIn("NÃO recrie", self.chamadas[-1][1])
         self.assertIn("campanha 900", self.chamadas[-1][1])
+        self.assertIn("LIBERADAS nesta aplicação: ads_create_campaign, ads_create_ad_set, ads_create_ad", self.chamadas[-1][1])
 
     def test_cerebro_le_o_meta_so_depois_de_conectar(self):
         from haizen.central import claude_cerebro

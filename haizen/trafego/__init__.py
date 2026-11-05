@@ -574,7 +574,10 @@ def aplicar(aid: int) -> dict:
             arquivos = [Path(x) for x in (_detalhes(a).get("arquivos") or [])]
             pastas = list(dict.fromkeys(f.parent for f in arquivos))
             extra = ["Read"]
-        r = _json(_claude(instrucao_aplicar(a), ferramentas_leitura() + [PREFIXO + n for n in escrita] + extra,
+        prompt = (instrucao_aplicar(a) + "\nFerramentas de alteração LIBERADAS nesta aplicação: " + ", ".join(escrita)
+                  + ". Se uma tentativa anterior parou por falta de permissão, isso já foi corrigido: prossiga com o "
+                    "que foi aprovado.")
+        r = _json(_claude(prompt, ferramentas_leitura() + [PREFIXO + n for n in escrita] + extra,
                           "Aplique só a mudança aprovada descrita na entrada. Responda só com o JSON.",
                           f"aplicar ação {aid}", pastas))
         ok, detalhe = bool(r.get("ok")), str(r.get("detalhe") or "")
