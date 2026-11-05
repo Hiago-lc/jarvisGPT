@@ -249,6 +249,19 @@ class TrafegoTests(unittest.TestCase):
         self.assertEqual(r["status"], "falhou")
         self.assertIn("Ads CLI", r["resultado"])
 
+    def test_estrutura_cria_anuncios_e_retoma_de_onde_parou(self):
+        self._conectar()
+        a = self.t.propor("act_1", "estrutura", "VENDAS | Advantage+", "consolidar", "campanha",
+                          detalhes={"anuncios": "criativos 111 e 222"})
+        self.respostas.append('{"ok": false, "detalhe": "Criei a campanha 900 e o conjunto 901; faltaram os anúncios."}')
+        r = self.t.aprovar(a["id"], em_segundo_plano=False)
+        self.assertIn("mcp__meta-ads__ads_create_ad", self._permitidas())
+        self.assertEqual(r["status"], "falhou")
+        self.respostas.append('{"ok": true, "detalhe": "anúncios criados no conjunto 901"}')
+        self.assertEqual(self.t.aprovar(a["id"], em_segundo_plano=False)["status"], "aplicada")
+        self.assertIn("NÃO recrie", self.chamadas[-1][1])
+        self.assertIn("campanha 900", self.chamadas[-1][1])
+
     def test_cerebro_le_o_meta_so_depois_de_conectar(self):
         from haizen.central import claude_cerebro
         self.assertFalse(any("meta-ads" in p for p in claude_cerebro.permitidas()))

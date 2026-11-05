@@ -38,7 +38,8 @@ ESCRITA_POR_TIPO = {
     "reativar": ("ads_activate_entity",),
     "orcamento": ("ads_update_entity",),
     "publico": ("ads_update_entity",),
-    "estrutura": ("ads_create_campaign", "ads_create_ad_set", "ads_update_entity"),
+    # Estrutura nova inclui os anúncios (com criativos que já existem na conta).
+    "estrutura": ("ads_create_campaign", "ads_create_ad_set", "ads_create_ad", "ads_update_entity"),
     "subir_criativo": ("ads_create_creative", "ads_create_ad"),
 }
 _ESCREVE = re.compile(r"create|update|delete|activate|boost|upload|publish|archive|remove|set_|edit|pause", re.I)
@@ -512,7 +513,8 @@ def aprovar(aid: int, em_segundo_plano: bool = True, ativar: bool = False) -> di
         raise ValueError("a ação não tem o id do Meta; peça uma nova análise")
     with store.conexao() as con:
         con.execute("UPDATE trafego_acoes SET ativar=? WHERE id=?", (1 if (ativar and a["tipo"] in CRIAM) else 0, aid))
-    _mudar(aid, "aplicando", "")
+    # Numa nova tentativa, o relato da anterior fica para o Claude continuar de onde parou.
+    _mudar(aid, "aplicando", a["resultado"] if a["status"] == "falhou" else "")
     if em_segundo_plano:
         threading.Thread(target=aplicar, args=(aid,), daemon=True, name=f"trafego-acao-{aid}").start()
         return acao(aid)
@@ -552,6 +554,9 @@ def instrucao_aplicar(a: dict) -> str:
     if a["tipo"] in CRIAM:
         o_que += ("\nDepois de criar, ATIVE o que criou com ads_activate_entity (o dono escolheu publicar já ativo)."
                   if a.get("ativar") else "\nNÃO ative nada: deixe pausado para o dono revisar no Gerenciador.")
+    if a.get("resultado") and a.get("status") in ("falhou", "aplicando"):
+        o_que += ("\n\nTENTATIVA ANTERIOR (continue de onde parou; NÃO recrie o que já foi criado, use os ids abaixo):\n"
+                  + a["resultado"][:2000])
     return (f"O dono da HAIZEN APROVOU exatamente esta mudança na conta {a['conta_id']}:\n{o_que}\n"
             "Antes, leia o item com ads_get_ad_entities para confirmar que é ele. Faça só esta mudança, nada mais. "
             "Depois leia de novo e confira que mudou.\n"
