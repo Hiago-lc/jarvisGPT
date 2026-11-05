@@ -306,6 +306,8 @@ class _Handler(BaseHTTPRequestHandler):
             if partes[1:] == ["teste"] and metodo == "POST":
                 return notificar.avisar("Teste de aviso", "Se você ouviu o som e viu este aviso, está funcionando.",
                                         "info", "#/uso")
+        if partes and partes[0] == "social":
+            return self._social(metodo, partes[1:], q)
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
@@ -538,6 +540,52 @@ class _Handler(BaseHTTPRequestHandler):
                 motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
                 raise ValueError((motivo.group(1).strip('"') if motivo else r)[:300])
             return {"ok": True}
+        return _NAO_ACHOU
+
+    def _social(self, metodo, partes, q=None):
+        """O Instagram da HAIZEN: análise, raio-x, calendário, produção e publicação."""
+        from haizen import social
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return social.painel()
+        if rota == "conectar" and metodo == "POST":
+            c = self._corpo()
+            return social.conectar(str(c.get("token") or ""))
+        if rota == "config" and metodo == "POST":
+            return social.salvar_config(self._corpo())
+        if rota == "analisar" and metodo == "POST":
+            social.em_segundo_plano(social.analisar, "analisando o perfil")
+            return {"ok": True}
+        if rota == "raiox" and metodo == "POST":
+            alvo = str(self._corpo().get("alvo") or "")
+            if not alvo.strip():
+                raise ValueError("cole o @ do perfil e, se quiser, o link do post")
+            social.em_segundo_plano(lambda: social.raio_x(alvo), "fazendo o raio-x")
+            return {"ok": True}
+        if rota == "raiox" and len(partes) == 4 and partes[2] == "adaptar" and metodo == "POST":
+            return social.adaptar(int(partes[1]), int(partes[3]))
+        if rota == "analises" and len(partes) == 2 and metodo == "GET":
+            return social.analise(int(partes[1]))
+        if rota == "itens" and len(partes) == 1 and metodo == "POST":
+            return social.criar_item(self._corpo(), "manual")
+        if rota == "itens" and len(partes) >= 2:
+            iid = int(partes[1])
+            acao = partes[2] if len(partes) > 2 else ""
+            if not acao and metodo == "PATCH":
+                return social.editar_item(iid, self._corpo())
+            if acao == "aprovar" and metodo == "POST":
+                return social.aprovar_item(iid)
+            if acao == "descartar" and metodo == "POST":
+                return social.descartar(iid)
+            if acao == "publicar" and metodo == "POST":
+                return social.publicar_item(iid, str(self._corpo().get("quando") or ""))
+            if acao == "arquivo" and metodo == "GET":
+                from haizen.central import anexos
+                arqs = social.item_(iid)["arquivos"]
+                i = int((q or {}).get("i") or 0)
+                if not 0 <= i < len(arqs) or not Path(arqs[i]).is_file():
+                    raise KeyError("arquivo não encontrado")
+                return _Arquivo(Path(arqs[i]).read_bytes(), anexos.tipo(Path(arqs[i])))
         return _NAO_ACHOU
 
     def _trafego(self, metodo, partes, q=None):
@@ -791,6 +839,8 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                 try:
                     from haizen import trafego
                     trafego.iniciar_agenda()          # análise diária do Meta Ads
+                    from haizen import social
+                    social.iniciar_agenda()           # Instagram: análise semanal, publicações agendadas
                 except Exception as e:  # noqa: BLE001
                     print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:

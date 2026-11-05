@@ -124,3 +124,14 @@ Exemplos de pedidos ao Claude:
 | Agentes | `C:\JARVIS\haizen\agentes\*.md` |
 
 Variáveis opcionais: `HAIZEN_CLAUDE_PATH` (caminho do `claude.exe`, se ele não for achado sozinho), `HAIZEN_DB`, `HAIZEN_ENTREGAS_DIR`, `HAIZEN_AGENTES_DIR`, `HAIZEN_CLAUDE_TIMEOUT` (segundos, padrão 900), `HAIZEN_LOCAL_TIMEOUT_MS` (padrão 300000).
+
+## Social (Instagram da HAIZEN)
+
+A aba **Social** cuida do Instagram da própria agência pela API oficial da Meta:
+
+- **Análise** (toda segunda às 08:00, ou em "Analisar agora"): perfil, posts e números (alcance, salvamentos, compartilhamentos, retenção dos reels), a grade vista em imagens, nota de 0 a 100 em 10 critérios, o que melhorar e bio sugerida.
+- **Calendário da semana**: cada post vem com formato, gancho, roteiro (ou texto das lâminas) e legenda. Você aprova e ele vira trabalho da equipe (criativos para carrossel e estático, vídeo para reels).
+- **Publicar**: quando você aprova a peça no Escritório, o post fica "pronto"; você revisa a legenda e publica agora ou agenda. Nada vai ao ar sem o seu clique.
+- **Raio-x de referências**: cole "@perfil" e o link de um post/reels de uma conta profissional; o Jarvis explica gancho, ritmo, legenda e CTA e sugere 3 adaptações para a HAIZEN.
+
+Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a passo aparece na aba). O token fica só no PC (`%LOCALAPPDATA%\JarvisGPT\instagram_token.json`) e vence a cada ~60 dias.

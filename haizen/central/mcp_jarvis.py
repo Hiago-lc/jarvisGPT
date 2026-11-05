@@ -362,6 +362,55 @@ def trafego_conta(conta_id: str, campos: dict) -> dict:
     return _api("PATCH", f"trafego/contas/{urllib.parse.quote(conta_id, safe='')}", dict(campos or {}))
 
 
+# ── social (Instagram da HAIZEN) ───────────────────────────────────────────
+@mcp.tool()
+def social_painel() -> dict:
+    """O Instagram da HAIZEN: última análise (nota 0-100, critérios, melhorias, bio sugerida), o
+    calendário com os itens e o status de cada um (ideia, produzindo, pronto, agendado, publicado)
+    e os raio-x recentes."""
+    p = _api("GET", "social")
+    if p.get("analise"):
+        p["analise"].pop("relatorio", None)
+    return p
+
+
+@mcp.tool()
+def social_analisar() -> dict:
+    """Coleta o perfil e os números do Instagram e refaz a análise e o calendário da semana
+    (leva alguns minutos; o resultado aparece na aba Social)."""
+    return _api("POST", "social/analisar", {})
+
+
+@mcp.tool()
+def social_raio_x(alvo: str) -> dict:
+    """Raio-x de uma referência: "@perfil" e, se quiser, o link do post/reels. Explica gancho,
+    ritmo, legenda, CTA e como adaptar para a HAIZEN. Só contas profissionais."""
+    return _api("POST", "social/raiox", {"alvo": alvo})
+
+
+@mcp.tool()
+def social_novo_post(tema: str, formato: str = "carrossel", data: str = "", gancho: str = "",
+                     roteiro: str = "", legenda: str = "", cta: str = "") -> dict:
+    """Coloca um post no calendário (fica como ideia para o usuário aprovar).
+    formato: reels | carrossel | estatico | stories. data: AAAA-MM-DD."""
+    return _api("POST", "social/itens", {"tema": tema, "formato": formato, "data": data, "gancho": gancho,
+                                         "roteiro": roteiro, "legenda": legenda, "cta": cta})
+
+
+@mcp.tool()
+def social_aprovar_post(item_id: int) -> dict:
+    """Aprova um item do calendário: vira trabalho da equipe (criativos ou vídeo). Só quando o
+    usuário pedir."""
+    return _api("POST", f"social/itens/{int(item_id)}/aprovar", {})
+
+
+@mcp.tool()
+def social_publicar(item_id: int, quando: str = "") -> dict:
+    """Publica no Instagram um item pronto (peça já aprovada), agora ou em quando
+    ("AAAA-MM-DDTHH:MM", horário de Brasília). SÓ quando o usuário pedir explicitamente."""
+    return _api("POST", f"social/itens/{int(item_id)}/publicar", {"quando": quando})
+
+
 # ── computador ──────────────────────────────────────────────────────────────
 @mcp.tool()
 def computador_acoes() -> list[dict]:

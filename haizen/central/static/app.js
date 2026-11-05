@@ -189,6 +189,14 @@ async function atualizarSelo() {
     s.textContent = n;
     s.title = `${n} otimização(ões) do Meta Ads esperando sua aprovação`;
   } catch (_) { /* silencioso */ }
+  try {
+    const so = await api("GET", "social");
+    const n = so.itens.filter((i) => ["ideia", "pronto"].includes(i.status)).length;
+    const s = $("#selo-social");
+    s.hidden = !n;
+    s.textContent = n;
+    s.title = `${n} post(s) esperando você (aprovar ou publicar)`;
+  } catch (_) { /* silencioso */ }
 }
 
 // ── período ───────────────────────────────────────────────────────────────
@@ -1554,6 +1562,164 @@ ROTAS.trafego = async () => {
   }, 8000);
 };
 
+// ── Social: o Instagram da HAIZEN ───────────────────────────────────────────
+const SOC_FORMATO = { reels: "Reels", carrossel: "Carrossel", estatico: "Estático", stories: "Stories" };
+const SOC_STATUS = { ideia: "Ideia", aprovado: "Aprovado", produzindo: "Equipe produzindo", pronto: "Pronto para publicar", agendado: "Agendado", publicando: "Publicando…", publicado: "Publicado", erro: "Falhou" };
+const SOC_DIAS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"];
+
+function cartaoPost(it) {
+  const data = it.data ? new Date(`${it.data}T12:00`).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }) : "sem data";
+  const acoes = {
+    ideia: `<button class="botao" data-soc-descartar="${it.id}">Descartar</button><button class="botao" data-soc-editar="${it.id}">Editar</button><button class="botao primario" data-soc-aprovar="${it.id}">Aprovar e produzir</button>`,
+    produzindo: it.trabalho_id ? `<a class="botao" href="#/agentes/${it.trabalho_id}">Ver na equipe</a>` : "",
+    pronto: `<button class="botao" data-soc-editar="${it.id}">Editar legenda</button><button class="botao" data-soc-agendar="${it.id}">Agendar</button><button class="botao primario" data-soc-publicar="${it.id}">Publicar agora</button>`,
+    agendado: `<span class="sub">Vai ao ar em ${it.publicar_em ? new Date(it.publicar_em * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span><button class="botao" data-soc-publicar="${it.id}">Publicar agora</button>`,
+    publicado: it.permalink ? `<a class="botao" href="${esc(it.permalink)}" target="_blank" rel="noopener">Ver no Instagram</a>` : "",
+    erro: `<button class="botao" data-soc-editar="${it.id}">Editar</button><button class="botao primario" data-soc-${it.arquivos.length ? "publicar" : "aprovar"}="${it.id}">Tentar de novo</button>`,
+  }[it.status] || "";
+  return `<article class="soc-post st-${esc(it.status)}">
+    <div class="soc-post-topo"><span class="traf-tipo">${esc(SOC_FORMATO[it.formato] || it.formato)}</span><span class="sub">${esc(data)}${it.pilar ? ` · ${esc(it.pilar)}` : ""}</span><span class="soc-status">${esc(SOC_STATUS[it.status] || it.status)}</span></div>
+    <h3>${esc(it.tema)}</h3>
+    ${it.gancho ? `<p class="soc-gancho">“${esc(it.gancho)}”</p>` : ""}
+    ${it.arquivos.length ? `<div class="soc-pecas">${it.arquivos.map((_, i) => `<span class="traf-peca-img" data-soc-peca="${it.id}:${i}"></span>`).join("")}</div>` : ""}
+    <details class="traf-detalhes"><summary>Roteiro e legenda</summary><div class="md">${mdSimples(it.roteiro)}</div><p class="soc-legenda">${esc(it.legenda)}</p></details>
+    ${it.status === "erro" && it.resultado ? `<p class="traf-estado erro">${esc(it.resultado)}</p>` : ""}
+    <div class="traf-botoes">${acoes}</div></article>`;
+}
+
+async function hidratarSocial(caixa) {
+  for (const el of $$("[data-soc-peca]:not([data-pronto])", caixa)) {
+    el.dataset.pronto = "1";
+    const [id, i] = el.dataset.socPeca.split(":");
+    try {
+      const r = await fetch(`/api/social/itens/${id}/arquivo?i=${i}`, { headers: { "X-Central": "1" } });
+      if (!r.ok) throw new Error();
+      const b = await r.blob(); const url = URL.createObjectURL(b);
+      el.innerHTML = b.type.startsWith("video/") ? `<video src="${url}" muted playsinline controls></video>` : `<img src="${url}" alt="">`;
+    } catch (_) { el.textContent = "sem prévia"; }
+  }
+}
+
+function editarPost(it, recarregar) {
+  dialogo({
+    titulo: it.id ? "Editar post" : "Novo post",
+    corpo: `<div class="campos">
+      ${campo({ nome: "tema", rotulo: "Tema", valor: it.tema || "", largo: true, obrig: true })}
+      ${campo({ nome: "formato", rotulo: "Formato", tipo: "select", opcoes: Object.entries(SOC_FORMATO), valor: it.formato || "carrossel" })}
+      ${campo({ nome: "data", rotulo: "Data", tipo: "date", valor: it.data || "" })}
+      ${campo({ nome: "gancho", rotulo: "Gancho (primeira frase/tela)", valor: it.gancho || "", largo: true })}
+      ${campo({ nome: "roteiro", rotulo: "Roteiro (reels) ou texto das lâminas (carrossel)", tipo: "textarea", valor: it.roteiro || "", largo: true })}
+      ${campo({ nome: "legenda", rotulo: "Legenda", tipo: "textarea", valor: it.legenda || "", largo: true })}
+    </div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+      if (it.id) await api("PATCH", `social/itens/${it.id}`, v); else await api("POST", "social/itens", v);
+      avisar("Salvo"); recarregar();
+    } }],
+  });
+}
+
+function configSocial(dados, recarregar) {
+  const c = dados.config;
+  dialogo({
+    titulo: "Social: configurações",
+    corpo: `<div class="campos">
+      ${campo({ nome: "dia", rotulo: "Dia da análise semanal", tipo: "select", opcoes: SOC_DIAS.map((d, i) => [i, d]), valor: c.dia })}
+      ${campo({ nome: "horario", rotulo: "Horário", tipo: "time", valor: c.horario })}
+      ${campo({ nome: "posts_semana", rotulo: "Posts por semana no calendário", tipo: "number", valor: c.posts_semana })}
+      <div></div>
+      ${campo({ nome: "whatsapp_ativo", rotulo: "Mandar o resumo semanal no meu WhatsApp (mesma conversa do Tráfego)", tipo: "checkbox", valor: c.whatsapp_ativo, largo: true })}
+      ${campo({ nome: "token", rotulo: "Trocar o token do Instagram (deixe vazio para manter)", tipo: "password", largo: true })}
+    </div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+      if (v.token.trim()) await api("POST", "social/conectar", { token: v.token.trim() });
+      await api("POST", "social/config", { dia: +v.dia, horario: v.horario, posts_semana: +v.posts_semana, whatsapp_ativo: v.whatsapp_ativo });
+      avisar("Configurações salvas"); recarregar();
+    } }],
+  });
+}
+
+ROTAS.social = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>Social</h1><p class="sub" id="soc-sub">O Instagram da HAIZEN: análise, ideias, produção e publicação.</p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="soc-config">Configurar</button><button class="botao" id="soc-novo">Novo post</button><button class="botao primario" id="soc-analisar">Analisar agora</button></div></div>
+    <div id="soc-corpo"><p class="vazio">Carregando…</p></div>`;
+  const corpo = $("#soc-corpo");
+  let dados = null; let timer = null;
+  const desenhar = async () => {
+    if (!document.body.contains(corpo)) { clearInterval(timer); return; }
+    dados = await api("GET", "social");
+    const { config: c, estado, analise: an, itens, raiox } = dados;
+    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc(estado.fazendo[0].toUpperCase() + estado.fazendo.slice(1))}… leva alguns minutos.</div>` : "";
+    const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    if (!dados.conectado) {
+      corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar o Instagram da HAIZEN</h2>
+        <p>Pela API oficial da Meta, com o mesmo app que você criou para o Meta Ads. Uma vez só:</p>
+        <ol><li>O Instagram da HAIZEN precisa ser <strong>conta profissional</strong> ligada à <strong>Página do Facebook</strong> da HAIZEN.</li>
+          <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
+          <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
+          <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo.</li>
+          <li>Cole abaixo. Ele fica só neste PC.</li></ol>
+        <div class="campos"><label class="largo">Token de acesso<input type="password" id="soc-token" autocomplete="off"></label></div>
+        <div class="traf-botoes"><button class="botao primario" id="soc-conectar">Conectar</button></div></section>`;
+      $("#soc-conectar").addEventListener("click", async () => {
+        try { const r = await api("POST", "social/conectar", { token: $("#soc-token").value }); avisar(`Conectado: @${r.escolhida.username}`); desenhar(); } catch (e) { avisar(e.message); }
+      });
+      return;
+    }
+    const kpi = (rot, val) => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong></div>`;
+    const k = an?.kpis || {};
+    const perfilHtml = an ? `<section class="bloco soc-perfil">
+        <div class="soc-nota" style="--nota:${Math.max(0, Math.min(100, an.nota || 0))}"><strong>${an.nota ?? "—"}</strong><span>/100</span></div>
+        <div class="soc-perfil-texto"><p class="sub">Análise de ${new Date(an.criado_em * 1000).toLocaleDateString("pt-BR")}</p><p>${esc(an.resumo)}</p>
+          <div class="traf-kpis">${kpi("Seguidores", numBR(k.seguidores))}${kpi("Alcance médio/post", numBR(k.alcance_medio_post))}${kpi("Engajamento", k.taxa_engajamento_pct ? `${numBR(k.taxa_engajamento_pct, 1)}%` : "—")}${kpi("Salvamentos/post", numBR(k.salvamentos_medios, 1))}${kpi("Compartilh./post", numBR(k.compartilhamentos_medios, 1))}${kpi("Posts/semana", numBR(k.posts_por_semana, 1))}</div>
+        </div>
+        <div class="soc-criterios">${(an.criterios || []).map((x) => `<div class="uso-barra" title="${esc(x.comentario || "")}"><span>${esc(x.nome)}</span><div class="uso-trilho"><i style="width:${(x.nota || 0) * 10}%"></i></div><small>${x.nota}/10</small></div>`).join("")}</div>
+        <div class="soc-melhorias"><h3>O que melhorar</h3><ul>${(an.melhorias || []).map((m) => `<li class="pri-${esc(m.prioridade)}"><strong>${esc(m.o_que)}</strong><span class="sub">${esc(m.como || "")}</span></li>`).join("")}</ul>
+          ${an.bio_sugerida ? `<h3>Bio sugerida</h3><p class="soc-bio">${esc(an.bio_sugerida)}</p><button class="botao" id="soc-copiar-bio">Copiar bio</button>` : ""}
+          <button class="botao" id="soc-relatorio">Relatório completo</button></div>
+      </section>` : `<section class="bloco"><p class="vazio">Ainda sem análise. Clique em "Analisar agora".</p></section>`;
+    const ativos = itens.filter((i) => i.status !== "publicado");
+    const publicados = itens.filter((i) => i.status === "publicado").slice(-6);
+    corpo.innerHTML = `${fazendo}${erro}${perfilHtml}
+      <section class="traf-secao" style="margin-top:22px"><h2>Calendário</h2>
+        ${ativos.length ? `<div class="soc-posts">${ativos.map(cartaoPost).join("")}</div>` : '<p class="vazio">Nenhum post planejado.</p>'}</section>
+      ${publicados.length ? `<section class="traf-secao"><h2>Publicados</h2><div class="soc-posts">${publicados.map(cartaoPost).join("")}</div></section>` : ""}
+      <section class="traf-secao"><h2>Raio-x de referências</h2>
+        <div class="bloco soc-raiox-form"><label>Perfil e, se quiser, o link do post ou reels<input id="soc-alvo" placeholder="@perfil https://www.instagram.com/reel/..."></label><button class="botao primario" id="soc-raiox">Fazer raio-x</button></div>
+        <div class="soc-raiox">${raiox.map((r) => { const d = r.dados || {}; return `<article class="bloco"><h3>${esc(d.titulo || r.alvo)} ${d.nota ? `<span class="selo">${d.nota}/10</span>` : ""}</h3>
+          <p class="sub">@${esc(d.usuario || "")}${d.seguidores ? ` · ${numBR(d.seguidores)} seguidores` : ""}${d.link ? ` · <a href="${esc(d.link)}" target="_blank" rel="noopener">ver post</a>` : ""}</p>
+          <dl class="soc-dl">${[["Gancho", d.gancho], ["Ritmo", d.ritmo], ["Estrutura", d.estrutura], ["Legenda", d.legenda], ["CTA", d.cta], ["Por que funcionou", d.por_que_funcionou]].filter(([, v]) => v).map(([t, v]) => `<dt>${t}</dt><dd>${esc(typeof v === "string" ? v : JSON.stringify(v))}</dd>`).join("")}</dl>
+          ${(d.adaptacoes || []).length ? `<h4>Como adaptar para a HAIZEN</h4><ul class="soc-adapt">${d.adaptacoes.map((a, i) => `<li><span><strong>${esc(SOC_FORMATO[a.formato] || a.formato || "")}</strong> ${esc(a.tema || "")}</span><button class="botao" data-soc-adaptar="${r.id}:${i}">Pôr no calendário</button></li>`).join("")}</ul>` : ""}</article>`; }).join("")}</div>
+      </section>`;
+    const on = (sel, fn) => $$(sel, corpo).forEach((b) => b.addEventListener("click", () => fn(b)));
+    const chamar = async (fn, msg) => { try { await fn(); if (msg) avisar(msg); desenhar(); } catch (e) { avisar(e.message); } };
+    on("[data-soc-aprovar]", (b) => chamar(() => api("POST", `social/itens/${b.dataset.socAprovar}/aprovar`, {}), "Aprovado: a equipe vai produzir"));
+    on("[data-soc-descartar]", (b) => chamar(() => api("POST", `social/itens/${b.dataset.socDescartar}/descartar`, {}), "Descartado"));
+    on("[data-soc-editar]", (b) => editarPost(dados.itens.find((i) => i.id === +b.dataset.socEditar), desenhar));
+    on("[data-soc-publicar]", async (b) => {
+      if (!(await confirmarAcao("Publicar agora no Instagram da HAIZEN?", "Publicar"))) return;
+      chamar(() => api("POST", `social/itens/${b.dataset.socPublicar}/publicar`, {}), "Publicando…");
+    });
+    on("[data-soc-agendar]", (b) => dialogo({ titulo: "Agendar publicação", corpo: `<div class="campos">${campo({ nome: "quando", rotulo: "Dia e hora", tipo: "datetime-local", largo: true, obrig: true })}</div>`,
+      acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Agendar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `social/itens/${b.dataset.socAgendar}/publicar`, { quando: v.quando }); avisar("Agendado"); desenhar(); } }] }));
+    on("[data-soc-adaptar]", (b) => { const [r, i] = b.dataset.socAdaptar.split(":"); chamar(() => api("POST", `social/raiox/${r}/adaptar/${i}`, {}), "No calendário como ideia"); });
+    $("#soc-raiox", corpo)?.addEventListener("click", () => chamar(() => api("POST", "social/raiox", { alvo: $("#soc-alvo").value }), "Raio-x começou"));
+    $("#soc-copiar-bio", corpo)?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(an.bio_sugerida); avisar("Bio copiada"); } catch (_) { avisar("Não consegui copiar"); } });
+    $("#soc-relatorio", corpo)?.addEventListener("click", () => dialogo({ titulo: "Relatório do Instagram", corpo: `<div class="md traf-relatorio">${mdSimples(an.relatorio || an.resumo)}</div>`, acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] }));
+    hidratarSocial(corpo);
+    $("#soc-analisar").disabled = !!estado.fazendo;
+  };
+  $("#soc-analisar").addEventListener("click", async () => { try { await api("POST", "social/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); } });
+  $("#soc-novo").addEventListener("click", () => editarPost({}, desenhar));
+  $("#soc-config").addEventListener("click", () => dados && configSocial(dados, desenhar));
+  await desenhar();
+  timer = setInterval(() => {
+    if (document.hidden || $("#dialogo").open || document.activeElement?.id === "soc-alvo") return;
+    if (dados?.estado?.fazendo || dados?.itens?.some((i) => ["produzindo", "publicando", "agendado"].includes(i.status))) desenhar().catch(() => {});
+  }, 10000);
+};
+
 ROTAS.escritorio = async () => {
   main.innerHTML = `
     <div class="topo"><div><h1>Escritório</h1><p class="sub" id="esc-resumo">Sua equipe da HAIZEN trabalhando agora.</p></div>
@@ -2442,7 +2608,7 @@ document.addEventListener("click", () => {
 }, { once: false });
 
 // ── Uso do Claude ───────────────────────────────────────────────────────────
-const ORIGEM_USO = { jarvis: "Jarvis (conversa)", agente: "Agentes", trafego: "Gestor de tráfego" };
+const ORIGEM_USO = { jarvis: "Jarvis (conversa)", agente: "Agentes", trafego: "Gestor de tráfego", social: "Social (Instagram)" };
 const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi` : n >= 1e3 ? `${Math.round(n / 1e3).toLocaleString("pt-BR")} mil` : String(n));
 const fmtUsd = (v) => `US$ ${(+v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
