@@ -674,3 +674,8 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .traf-veredito.v-escalar { background: #EEF5DF; color: var(--limao-escuro); }
 .traf-veredito.v-cansado { background: #FFF4E0; color: #6B4512; }
 .traf-veredito.v-pausar { background: #FBEDEB; color: #7A2A21; }
+.traf-falha { font-size: 13px; color: #7A2A21; background: #FBEDEB; border-radius: 8px; padding: 8px 10px; }
+.traf-falha summary { cursor: pointer; font-weight: 600; }
+.traf-falha p { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+.traf-nota { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--cinza); }
+.traf-nota textarea { border: 1px solid var(--linha); border-radius: var(--raio); padding: 8px 10px; font: inherit; color: var(--tinta); resize: vertical; }

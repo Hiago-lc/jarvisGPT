@@ -33,11 +33,13 @@ LEITURA = ("ads_get_ad_accounts", "ads_get_field_context", "ads_get_ad_entities"
            "ads_insights_performance_trend", "ads_library_search")
 ESCRITA = ("ads_update_entity", "ads_activate_entity")       # o que uma ação aprovada pode usar
 # Ferramentas de alteração por tipo de ação aprovada (nada além disso).
+# Com o "modo rascunho" da Meta ligado, a alteração fica como rascunho e só vale
+# depois de publicada com ads_activate_entity no próprio item: por isso ele vai junto.
 ESCRITA_POR_TIPO = {
-    "pausar": ("ads_update_entity",),
+    "pausar": ("ads_update_entity", "ads_activate_entity"),
     "reativar": ("ads_activate_entity",),
-    "orcamento": ("ads_update_entity",),
-    "publico": ("ads_update_entity",),
+    "orcamento": ("ads_update_entity", "ads_activate_entity"),
+    "publico": ("ads_update_entity", "ads_activate_entity"),
     # Estrutura nova inclui os anúncios (com criativos que já existem na conta).
     "estrutura": ("ads_create_campaign", "ads_create_ad_set", "ads_create_ad", "ads_update_entity"),
     "subir_criativo": ("ads_create_creative", "ads_create_ad"),
@@ -498,7 +500,7 @@ def rejeitar(aid: int, motivo: str = "") -> dict:
     return _mudar(aid, "rejeitada", motivo or "rejeitada por você")
 
 
-def aprovar(aid: int, em_segundo_plano: bool = True, ativar: bool = False) -> dict:
+def aprovar(aid: int, em_segundo_plano: bool = True, ativar: bool = False, nota: str = "") -> dict:
     """Sua aprovação. Pausar/reativar/orçamento/público/estrutura/subir criativo:
     o Claude aplica no Meta. O que é criado nasce pausado, a não ser que você
     aprove com "ativar". Criativo: abre um projeto para a equipe. Manual: anotada."""
@@ -514,7 +516,10 @@ def aprovar(aid: int, em_segundo_plano: bool = True, ativar: bool = False) -> di
     with store.conexao() as con:
         con.execute("UPDATE trafego_acoes SET ativar=? WHERE id=?", (1 if (ativar and a["tipo"] in CRIAM) else 0, aid))
     # Numa nova tentativa, o relato da anterior fica para o Claude continuar de onde parou.
-    _mudar(aid, "aplicando", a["resultado"] if a["status"] == "falhou" else "")
+    anterior = a["resultado"] if a["status"] == "falhou" else ""
+    if (nota or "").strip():
+        anterior += f"\n\nRESPOSTA DO DONO PARA ESTA TENTATIVA (vale como autorização dentro da mudança aprovada): {nota.strip()}"
+    _mudar(aid, "aplicando", anterior.strip())
     if em_segundo_plano:
         threading.Thread(target=aplicar, args=(aid,), daemon=True, name=f"trafego-acao-{aid}").start()
         return acao(aid)
@@ -551,6 +556,10 @@ def instrucao_aplicar(a: dict) -> str:
         o_que = _instrucao_subir(a)
     else:
         raise ValueError(f"o tipo {a['tipo']} não é aplicado pelo Jarvis")
+    if a["tipo"] in ("pausar", "orcamento", "publico"):
+        o_que += ("\nSe a conta estiver no modo rascunho (a alteração fica is_draft e o valor ao vivo não muda), publique "
+                  "a alteração com ads_activate_entity NESTE MESMO item e confira o valor ao vivo. Não use "
+                  "ads_activate_entity em nenhum outro item.")
     if a["tipo"] in CRIAM:
         o_que += ("\nDepois de criar, ATIVE o que criou com ads_activate_entity (o dono escolheu publicar já ativo)."
                   if a.get("ativar") else

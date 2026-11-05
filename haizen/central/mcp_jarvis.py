@@ -338,11 +338,12 @@ def trafego_subir_criativos(conta_id: str, pedido: str = "", trabalho_id: int = 
 
 
 @mcp.tool()
-def trafego_aprovar(acao_id: int, ativar: bool = False) -> dict:
+def trafego_aprovar(acao_id: int, ativar: bool = False, nota: str = "") -> dict:
     """Aprova uma otimização: SÓ quando o usuário pediu explicitamente para aprovar aquela ação.
     É aplicada no Meta em seguida; criativo abre um projeto. O que é criado (estrutura, anúncios
-    novos) nasce pausado; ativar=True só se o usuário disse para já publicar ativo."""
-    return _api("POST", f"trafego/acoes/{int(acao_id)}/aprovar", {"ativar": ativar})
+    novos) nasce pausado; ativar=True só se o usuário disse para já publicar ativo. nota: a resposta
+    do usuário ao que o gestor perguntou numa tentativa que não terminou."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/aprovar", {"ativar": ativar, "nota": nota})
 
 
 @mcp.tool()

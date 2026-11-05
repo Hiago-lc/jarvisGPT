@@ -580,7 +580,8 @@ class _Handler(BaseHTTPRequestHandler):
         if rota == "acoes" and len(partes) == 3 and metodo == "POST":
             aid = int(partes[1])
             if partes[2] == "aprovar":
-                return trafego.aprovar(aid, ativar=bool(self._corpo().get("ativar")))
+                c = self._corpo()
+                return trafego.aprovar(aid, ativar=bool(c.get("ativar")), nota=str(c.get("nota") or "")[:1500])
             if partes[2] == "rejeitar":
                 return trafego.rejeitar(aid, str(self._corpo().get("motivo") or ""))
         if rota == "acoes" and len(partes) == 1 and metodo == "POST":

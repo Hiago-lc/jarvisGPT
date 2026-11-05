@@ -263,6 +263,18 @@ class TrafegoTests(unittest.TestCase):
         self.assertIn("campanha 900", self.chamadas[-1][1])
         self.assertIn("LIBERADAS nesta aplicação: ads_create_campaign, ads_create_ad_set, ads_create_ad", self.chamadas[-1][1])
 
+    def test_rascunho_publica_no_proprio_item_e_nota_do_dono(self):
+        self._conectar()
+        a = self.t.propor("act_1", "orcamento", "Topo", "folga", "conjunto", "555", de="30", para="22")
+        self.respostas.append('{"ok": false, "detalhe": "ficou como rascunho"}')
+        self.t.aprovar(a["id"], em_segundo_plano=False)
+        self.assertIn("mcp__meta-ads__ads_activate_entity", self._permitidas())
+        self.assertIn("NESTE MESMO item", self.chamadas[-1][1])
+        self.respostas.append('{"ok": true, "detalhe": "publicado"}')
+        self.t.aprovar(a["id"], em_segundo_plano=False, nota="pode publicar o rascunho")
+        self.assertIn("RESPOSTA DO DONO PARA ESTA TENTATIVA", self.chamadas[-1][1])
+        self.assertIn("pode publicar o rascunho", self.chamadas[-1][1])
+
     def test_cerebro_le_o_meta_so_depois_de_conectar(self):
         from haizen.central import claude_cerebro
         self.assertFalse(any("meta-ads" in p for p in claude_cerebro.permitidas()))

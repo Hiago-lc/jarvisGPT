@@ -1360,7 +1360,8 @@ const numBR = (v, casas = 0) => (v === null || v === undefined || v === "" || Nu
 function cartaoAcao(a) {
   const mud = a.de || a.para ? `<span class="traf-mudanca">${esc(a.tipo === "orcamento" ? `R$ ${a.de}` : a.de)} → <strong>${esc(a.tipo === "orcamento" ? `R$ ${a.para}` : a.para)}</strong></span>` : "";
   const estado = a.status === "aplicando" ? '<span class="traf-estado">Aplicando no Meta…</span>'
-    : a.status === "falhou" ? `<span class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</span>` : "";
+    : a.status === "falhou" ? `<details class="traf-falha" open><summary>Não terminou: o gestor explica e pergunta</summary><p>${esc(a.resultado)}</p></details>
+      <label class="traf-nota">Responda ao gestor antes de tentar de novo (opcional)<textarea data-nota="${a.id}" rows="2" placeholder="Ex.: pode trocar os criativos inválidos pelos de melhor CTR; mexi no Gerenciador, confira o estado atual"></textarea></label>` : "";
   const botoes = a.status === "aplicando" ? "" : `<div class="traf-botoes">
       <button class="botao" data-rejeitar="${a.id}">Rejeitar</button>
       ${TRAF_CRIAM.includes(a.tipo) ? `<button class="botao" data-aprovar="${a.id}">Criar pausado</button><button class="botao primario" data-aprovar="${a.id}" data-ativar="1">Criar e ativar</button>`
@@ -1515,7 +1516,8 @@ ROTAS.trafego = async () => {
       const ativar = !!b.dataset.ativar;
       if (ativar && !(await confirmarAcao("Criar e já ativar? Os anúncios começam a gastar verba assim que a Meta aprovar.", "Criar e ativar"))) return;
       b.disabled = true;
-      try { const r = await api("POST", `trafego/acoes/${b.dataset.aprovar}/aprovar`, { ativar }); avisar(r.status === "aplicando" ? "Aprovada: aplicando no Meta" : r.resultado || "Feito"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+      const nota = $(`[data-nota="${b.dataset.aprovar}"]`, corpo)?.value || "";
+      try { const r = await api("POST", `trafego/acoes/${b.dataset.aprovar}/aprovar`, { ativar, nota }); avisar(r.status === "aplicando" ? "Aprovada: aplicando no Meta" : r.resultado || "Feito"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
     }));
     $$("[data-diagnostico]", corpo).forEach((b) => b.addEventListener("click", async () => diagnosticoConta(await api("GET", `trafego/analises/${b.dataset.diagnostico}`))));
     $$("[data-subir]", corpo).forEach((b) => b.addEventListener("click", () => subirCriativos(dados.contas.find((c) => c.id === b.dataset.subir), desenhar)));
@@ -1543,6 +1545,7 @@ ROTAS.trafego = async () => {
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open) return;
+    if ($$("[data-nota]").some((t) => t.value.trim() || t === document.activeElement)) return;   // não apaga o que você digita
     if (dados?.estado?.fazendo || dados?.acoes?.some((a) => a.status === "aplicando")) desenhar().catch(() => {});
   }, 8000);
 };
