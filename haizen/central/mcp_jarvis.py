@@ -314,21 +314,35 @@ def trafego_analisar(contas: list[str] | None = None) -> dict:
 
 @mcp.tool()
 def trafego_propor(conta_id: str, tipo: str, alvo_nome: str, motivo: str, nivel: str = "",
-                   alvo_id: str = "", de: str = "", para: str = "", impacto: str = "") -> dict:
+                   alvo_id: str = "", de: str = "", para: str = "", impacto: str = "",
+                   detalhes: dict | None = None) -> dict:
     """Cria uma otimização para o usuário aprovar (nada muda no Meta antes disso).
-    tipo: pausar | reativar | orcamento | criativo | manual. nivel: campanha | conjunto | anuncio.
-    alvo_id: o id do Meta (obrigatório para pausar/reativar/orcamento). de/para: valores em reais
-    (orçamento) ou status."""
+    tipo: pausar | reativar | orcamento | publico | estrutura | criativo | manual.
+    nivel: campanha | conjunto | anuncio. alvo_id: o id do Meta (obrigatório para pausar/reativar/
+    orcamento/publico). de/para: valores em reais (orçamento) ou status. detalhes: a especificação
+    completa para publico (o que muda na segmentação) e estrutura (o que criar; nasce pausado)."""
     return _api("POST", "trafego/acoes", {"conta_id": conta_id, "tipo": tipo, "alvo_nome": alvo_nome,
                                           "motivo": motivo, "nivel": nivel, "alvo_id": alvo_id, "de": de,
-                                          "para": para, "impacto": impacto})
+                                          "para": para, "impacto": impacto, "detalhes": detalhes or {}})
 
 
 @mcp.tool()
-def trafego_aprovar(acao_id: int) -> dict:
+def trafego_subir_criativos(conta_id: str, pedido: str = "", trabalho_id: int = 0,
+                            anexos: list[str] | None = None) -> dict:
+    """Prepara a subida de criativos no Meta Ads: as peças de um trabalho da HAIZEN (trabalho_id) ou
+    arquivos que o usuário enviou (anexos, caminhos). O gestor escolhe o conjunto (ou o do pedido, ex.:
+    "no conjunto Remarketing da campanha Black Friday") e escreve texto principal, título e CTA. Vira
+    uma proposta na tela Tráfego: nada sobe antes da aprovação. Leva alguns minutos."""
+    return _api("POST", "trafego/criativos", {"conta_id": conta_id, "pedido": pedido,
+                                              "trabalho_id": trabalho_id, "anexos": anexos or []})
+
+
+@mcp.tool()
+def trafego_aprovar(acao_id: int, ativar: bool = False) -> dict:
     """Aprova uma otimização: SÓ quando o usuário pediu explicitamente para aprovar aquela ação.
-    Pausar/reativar/orçamento são aplicados no Meta em seguida; criativo abre um projeto."""
-    return _api("POST", f"trafego/acoes/{int(acao_id)}/aprovar", {})
+    É aplicada no Meta em seguida; criativo abre um projeto. O que é criado (estrutura, anúncios
+    novos) nasce pausado; ativar=True só se o usuário disse para já publicar ativo."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/aprovar", {"ativar": ativar})
 
 
 @mcp.tool()

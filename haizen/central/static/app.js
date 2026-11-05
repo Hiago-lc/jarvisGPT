@@ -126,6 +126,17 @@ const confirmar = (texto) => new Promise((ok) => {
   });
 });
 
+// Pergunta de sim/não com o texto do botão certo, sem fechar o diálogo de quem pediu.
+const confirmarAcao = (texto, botao = "Confirmar") => new Promise((ok) => {
+  const d = document.createElement("dialog");
+  d.className = "confirmar";
+  d.innerHTML = `<p>${esc(texto)}</p><div class="dialogo-acoes"><button class="botao" value="nao">Cancelar</button><button class="botao primario" value="sim">${esc(botao)}</button></div>`;
+  document.body.appendChild(d);
+  d.addEventListener("click", (e) => { const v = e.target.closest("button")?.value; if (v) { d.close(); ok(v === "sim"); } });
+  d.addEventListener("close", () => { d.remove(); ok(false); });
+  d.showModal();
+});
+
 // ── roteamento ────────────────────────────────────────────────────────────
 const ROTAS = {};
 const main = $("#conteudo");
@@ -1310,7 +1321,38 @@ function fichaAgente(a, recarregar) {
 }
 
 // ── Tráfego: análise diária do Meta Ads, otimizações com a sua aprovação ────
-const TRAF_TIPOS = { pausar: "Pausar", reativar: "Reativar", orcamento: "Orçamento", criativo: "Criativo novo", manual: "Recomendação" };
+const TRAF_TIPOS = { pausar: "Pausar", reativar: "Reativar", orcamento: "Orçamento", publico: "Público", estrutura: "Estrutura", subir_criativo: "Subir criativos", criativo: "Criativo novo", manual: "Recomendação" };
+const TRAF_CRIAM = ["estrutura", "subir_criativo"];
+const TRAF_VEREDITO = { escalar: "Escalar", manter: "Manter", cansado: "Cansado", pausar: "Pausar" };
+
+function detalhesAcao(a) {
+  const d = a.detalhes || {};
+  if (a.tipo === "subir_criativo") {
+    return `<div class="traf-pecas">${(d.pecas || []).map((p, i) => `<div class="traf-peca">
+      <span class="traf-peca-img" data-peca="${a.id}:${i}"></span>
+      <div><p class="traf-peca-texto">${esc(p.texto_principal || "")}</p>
+        <p class="sub"><strong>${esc(p.titulo || "")}</strong>${p.descricao ? ` · ${esc(p.descricao)}` : ""} · CTA ${esc(p.cta || d.cta || "")}</p></div></div>`).join("")}</div>
+      <p class="sub">Campanha: ${esc(d.campanha || "—")} · destino: ${esc(d.destino || "o mesmo dos outros anúncios")}</p>`;
+  }
+  const chaves = Object.keys(d);
+  if (!chaves.length) return "";
+  const valor = (v) => (typeof v === "object" ? JSON.stringify(v, null, 1) : String(v));
+  return `<details class="traf-detalhes"><summary>O que muda exatamente</summary><ul>${chaves.map((k) => `<li><strong>${esc(k.replace(/_/g, " "))}:</strong> ${esc(valor(d[k]))}</li>`).join("")}</ul></details>`;
+}
+
+async function hidratarPecas(caixa) {
+  for (const el of $$("[data-peca]:not([data-pronto])", caixa)) {
+    el.dataset.pronto = "1";
+    const [id, i] = el.dataset.peca.split(":");
+    try {
+      const r = await fetch(`/api/trafego/acoes/${id}/arquivo?i=${i}`, { headers: { "X-Central": "1" } });
+      if (!r.ok) throw new Error();
+      const b = await r.blob();
+      const url = URL.createObjectURL(b);
+      el.innerHTML = b.type.startsWith("video/") ? `<video src="${url}" muted playsinline controls></video>` : `<img src="${url}" alt="">`;
+    } catch (_) { el.textContent = "sem prévia"; }
+  }
+}
 const TRAF_SIT = { bem: "Bem", atencao: "Atenção", critico: "Crítico", erro: "Erro" };
 const TRAF_NIVEL = { campanha: "campanha", conjunto: "conjunto", anuncio: "anúncio", conta: "conta" };
 const numBR = (v, casas = 0) => (v === null || v === undefined || v === "" || Number.isNaN(+v) ? "—" : (+v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas }));
@@ -1321,13 +1363,15 @@ function cartaoAcao(a) {
     : a.status === "falhou" ? `<span class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</span>` : "";
   const botoes = a.status === "aplicando" ? "" : `<div class="traf-botoes">
       <button class="botao" data-rejeitar="${a.id}">Rejeitar</button>
-      <button class="botao primario" data-aprovar="${a.id}">${a.tipo === "criativo" ? "Pedir à equipe" : a.tipo === "manual" ? "Anotar" : a.status === "falhou" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div>`;
+      ${TRAF_CRIAM.includes(a.tipo) ? `<button class="botao" data-aprovar="${a.id}">Criar pausado</button><button class="botao primario" data-aprovar="${a.id}" data-ativar="1">Criar e ativar</button>`
+        : `<button class="botao primario" data-aprovar="${a.id}">${a.tipo === "criativo" ? "Pedir à equipe" : a.tipo === "manual" ? "Anotar" : a.status === "falhou" ? "Tentar de novo" : "Aprovar e aplicar"}</button>`}</div>`;
   return `<article class="traf-acao prioridade-${esc(a.prioridade)}">
     <div class="traf-acao-topo"><span class="traf-tipo tipo-${esc(a.tipo)}">${esc(TRAF_TIPOS[a.tipo] || a.tipo)}</span>
       <span class="sub">${esc(a.conta_nome || a.conta_id)}${a.nivel ? ` · ${esc(TRAF_NIVEL[a.nivel] || a.nivel)}` : ""}</span></div>
     <p class="traf-alvo">${esc(a.alvo_nome || "—")} ${mud}</p>
     <p class="traf-motivo">${esc(a.motivo)}</p>
     ${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
+    ${detalhesAcao(a)}
     ${estado}${botoes}</article>`;
 }
 
@@ -1353,9 +1397,47 @@ function cartaoConta(c, an) {
     ${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}` : an?.erro ? `<p class="erro">${esc(an.erro)}</p>` : `<p class="sub">${c.ativo ? "Ainda sem análise." : "Fora da análise diária."}</p>`}
     <div class="traf-botoes">
       <button class="botao" data-metas="${esc(c.id)}">Metas e cliente</button>
+      ${an && !an.erro && an.tem_diagnostico ? `<button class="botao" data-diagnostico="${an.id}">Diagnóstico</button>` : ""}
       ${an && !an.erro ? `<button class="botao" data-relatorio="${an.id}">Relatório</button>` : ""}
+      <button class="botao" data-subir="${esc(c.id)}">Subir criativos</button>
       <button class="botao" data-analisar="${esc(c.id)}">Analisar agora</button>
     </div></article>`;
+}
+
+function diagnosticoConta(an) {
+  const d = an.diagnostico || {};
+  const secoes = [["criativos", "Criativos"], ["publicos", "Públicos"], ["estrutura", "Estrutura"], ["funil", "Funil"]]
+    .filter(([k]) => d[k]).map(([k, t]) => `<section class="traf-diag"><h3>${t}</h3><div class="md">${mdSimples(d[k])}</div></section>`).join("");
+  const rk = d.ranking || [];
+  const tabela = rk.length ? `<section class="traf-diag"><h3>Ranking dos anúncios (7 dias)</h3><div class="uso-tabela"><table class="tabela"><thead><tr><th>Anúncio</th><th>Formato</th><th>Gasto</th><th>Result.</th><th>Custo</th><th>CTR</th><th>Freq.</th><th>Gancho</th><th>Veredito</th></tr></thead><tbody>
+    ${rk.map((x) => `<tr title="${esc(x.porque || "")}"><td>${esc(x.nome || x.alvo_id)}</td><td>${esc(x.formato || "")}</td><td>R$ ${numBR(x.gasto_7d)}</td><td>${numBR(x.resultados_7d)}</td><td>${x.custo_resultado_7d ? `R$ ${numBR(x.custo_resultado_7d, 2)}` : "—"}</td><td>${x.ctr_7d ? `${numBR(x.ctr_7d, 2)}%` : "—"}</td><td>${numBR(x.frequencia_7d, 1)}</td><td>${x.taxa_gancho ? `${numBR(x.taxa_gancho, 0)}%` : "—"}</td><td><span class="traf-veredito v-${esc(x.veredito || "")}">${esc(TRAF_VEREDITO[x.veredito] || x.veredito || "")}</span></td></tr>`).join("")}</tbody></table></div></section>` : "";
+  dialogo({ titulo: `Diagnóstico de ${an.dia.split("-").reverse().join("/")}`, corpo: `<div class="traf-relatorio">${tabela}${secoes || '<p class="vazio">Sem diagnóstico nesta análise.</p>'}</div>`,
+    acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] });
+}
+
+async function subirCriativos(c, recarregar) {
+  let sel = null;
+  const trabalhos = await api("GET", "trafego/trabalhos").catch(() => []);
+  const doCliente = trabalhos.filter((t) => !c.cliente_id || t.cliente_id === c.cliente_id);
+  const lista = doCliente.length ? doCliente : trabalhos;
+  dialogo({
+    titulo: `Subir criativos: ${c.cliente_nome || c.nome}`,
+    corpo: `<p class="sub" style="margin-top:0">O gestor escolhe o conjunto (ou o que você indicar), escreve o texto principal, o título e o CTA de cada peça e monta a proposta. Nada sobe antes de você aprovar.</p>
+      <div class="campos">
+        ${campo({ nome: "trabalho_id", rotulo: "Peças de um trabalho da HAIZEN", tipo: "select", largo: true,
+          opcoes: [["", lista.length ? "Escolha um trabalho…" : "Nenhum trabalho com peças prontas"], ...lista.map((t) => [t.id, `${t.titulo} · ${t.cliente || "sem cliente"} (${t.status === "aprovado" ? "aprovado" : "para aprovar"})`])] })}
+        <div class="largo"><span class="rotulo-anexos">Ou envie as peças (PNG, JPG, MP4)</span><div id="sc-anexos" class="anexos-caixa"></div></div>
+        ${campo({ nome: "pedido", rotulo: "Onde e como subir (opcional)", tipo: "textarea", largo: true, ajuda: "Ex.: no conjunto Remarketing da campanha Black Friday, levando para o WhatsApp" })}
+      </div>`,
+    aoAbrir: (corpo) => { sel = seletorAnexos($("#sc-anexos", corpo), corpo); },
+    acoes: [{ texto: "Cancelar", acao: () => {} },
+      { texto: "Preparar proposta", classe: "primario", acao: async (v) => {
+        const anexos = exigirAnexosProntos(sel);
+        if (!v.trabalho_id && !anexos.length) throw new Error("Escolha um trabalho ou envie as peças.");
+        await api("POST", "trafego/criativos", { conta_id: c.id, pedido: v.pedido, trabalho_id: +v.trabalho_id || 0, anexos });
+        avisar("O gestor está preparando as legendas e o conjunto"); recarregar();
+      } }],
+  });
 }
 
 function metasConta(c, recarregar) {
@@ -1406,7 +1488,7 @@ ROTAS.trafego = async () => {
     dados = await api("GET", "trafego");
     const { config: cfg, estado, contas, analises, acoes, historico } = dados;
     $("#traf-sub").textContent = `Meta Ads: análise todo dia às ${cfg.horario}${cfg.whatsapp_ativo ? ", resumo no seu WhatsApp" : ""}. Nada muda nas campanhas sem a sua aprovação.`;
-    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc({ analisando: "Analisando as contas", conectando: "Conectando ao Meta Ads" }[estado.fazendo] || estado.fazendo)}${estado.progresso ? ` (${esc(estado.progresso)})` : ""}… pode levar alguns minutos por conta.</div>` : "";
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc({ analisando: "Analisando as contas", conectando: "Conectando ao Meta Ads", "preparando os criativos": "Preparando os criativos (conjunto e legendas)" }[estado.fazendo] || estado.fazendo)}${estado.progresso ? ` (${esc(estado.progresso)})` : ""}… pode levar alguns minutos por conta.</div>` : "";
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
     const aviso = cfg.aviso_conexao ? `<div class="traf-faixa erro">${esc(cfg.aviso_conexao)} <button class="botao" data-conectar>Já entrei, conferir</button></div>` : "";
     if (!dados.conectado) {
@@ -1430,9 +1512,14 @@ ROTAS.trafego = async () => {
       try { await api("POST", "trafego/conectar", {}); avisar("Conferindo a conexão com o Meta…"); desenhar(); } catch (e) { avisar(e.message); }
     }));
     $$("[data-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const ativar = !!b.dataset.ativar;
+      if (ativar && !(await confirmarAcao("Criar e já ativar? Os anúncios começam a gastar verba assim que a Meta aprovar.", "Criar e ativar"))) return;
       b.disabled = true;
-      try { const r = await api("POST", `trafego/acoes/${b.dataset.aprovar}/aprovar`, {}); avisar(r.status === "aplicando" ? "Aprovada: aplicando no Meta" : r.resultado || "Feito"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+      try { const r = await api("POST", `trafego/acoes/${b.dataset.aprovar}/aprovar`, { ativar }); avisar(r.status === "aplicando" ? "Aprovada: aplicando no Meta" : r.resultado || "Feito"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
     }));
+    $$("[data-diagnostico]", corpo).forEach((b) => b.addEventListener("click", async () => diagnosticoConta(await api("GET", `trafego/analises/${b.dataset.diagnostico}`))));
+    $$("[data-subir]", corpo).forEach((b) => b.addEventListener("click", () => subirCriativos(dados.contas.find((c) => c.id === b.dataset.subir), desenhar)));
+    hidratarPecas(corpo);
     $$("[data-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => {
       try { await api("POST", `trafego/acoes/${b.dataset.rejeitar}/rejeitar`, {}); avisar("Rejeitada"); desenhar(); } catch (e) { avisar(e.message); }
     }));

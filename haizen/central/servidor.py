@@ -307,7 +307,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return notificar.avisar("Teste de aviso", "Se você ouviu o som e viu este aviso, está funcionando.",
                                         "info", "#/uso")
         if partes and partes[0] == "trafego":
-            return self._trafego(metodo, partes[1:])
+            return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
             return self._pc(metodo, partes[1:])
 
@@ -540,7 +540,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         return _NAO_ACHOU
 
-    def _trafego(self, metodo, partes):
+    def _trafego(self, metodo, partes, q=None):
         """O gestor de tráfego: análise diária do Meta Ads e otimizações com aprovação."""
         from haizen import trafego
         rota = partes[0] if partes else ""
@@ -561,10 +561,26 @@ class _Handler(BaseHTTPRequestHandler):
             return trafego.atualizar_conta(unquote(partes[1]), self._corpo())
         if rota == "analises" and len(partes) == 2 and metodo == "GET":
             return trafego.analise(int(partes[1]))
+        if rota == "trabalhos" and metodo == "GET":
+            return trafego.trabalhos_com_pecas()
+        if rota == "criativos" and metodo == "POST":
+            c = self._corpo()
+            conta_id = str(c.get("conta_id") or "")
+            trafego.conta(conta_id)
+            trafego.em_segundo_plano(lambda: trafego.preparar_criativos(
+                conta_id, str(c.get("pedido") or ""), int(c.get("trabalho_id") or 0) or None, c.get("anexos") or []),
+                "preparando os criativos")
+            return {"ok": True}
+        if rota == "acoes" and len(partes) == 3 and partes[2] == "arquivo" and metodo == "GET":
+            from haizen.central import anexos
+            arq = trafego.arquivo_da_acao(int(partes[1]), int(q.get("i") or 0))
+            if arq.stat().st_size > 200_000_000:
+                raise ValueError("arquivo grande demais para mostrar aqui")
+            return _Arquivo(arq.read_bytes(), anexos.tipo(arq))
         if rota == "acoes" and len(partes) == 3 and metodo == "POST":
             aid = int(partes[1])
             if partes[2] == "aprovar":
-                return trafego.aprovar(aid)
+                return trafego.aprovar(aid, ativar=bool(self._corpo().get("ativar")))
             if partes[2] == "rejeitar":
                 return trafego.rejeitar(aid, str(self._corpo().get("motivo") or ""))
         if rota == "acoes" and len(partes) == 1 and metodo == "POST":
@@ -573,7 +589,7 @@ class _Handler(BaseHTTPRequestHandler):
                                   str(c.get("alvo_nome") or ""), str(c.get("motivo") or ""),
                                   str(c.get("nivel") or ""), str(c.get("alvo_id") or ""), str(c.get("de") or ""),
                                   str(c.get("para") or ""), str(c.get("impacto") or ""),
-                                  str(c.get("prioridade") or "media"))
+                                  str(c.get("prioridade") or "media"), c.get("detalhes") or {})
         return _NAO_ACHOU
 
     def _pc(self, metodo, partes):

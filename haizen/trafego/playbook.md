@@ -17,6 +17,32 @@ HAIZEN aprovar; você propõe, ele decide.
 - Fase de aprendizado: conjuntos com menos de ~50 resultados na semana ou recém-editados ainda
   estão aprendendo. Evite mexer neles; se precisar, diga que vai reiniciar o aprendizado.
 
+## Os quatro diagnósticos (faça todos, com números)
+### Criativos
+- Ranqueie os anúncios ativos por resultado: gasto, resultados, custo por resultado, CTR do link, CPM,
+  frequência. Em vídeo, a taxa de gancho (visualizações de 3 s ÷ impressões; boa acima de ~25%) e a de
+  retenção (ThruPlay ou 15 s ÷ 3 s). Abra o anúncio (ads_get_creatives / ads_get_ad_preview) para ver o
+  formato, o texto principal, o título e o CTA.
+- Veredito por anúncio: escalar (melhor custo com volume), manter, cansado (frequência subindo, CTR
+  caindo) ou pausar. Diga POR QUE o vencedor ganha (gancho, oferta, prova, formato) e o que o próximo
+  criativo deve testar (um ângulo novo por vez).
+### Públicos
+- Para cada conjunto: tipo de público (amplo/Advantage+, interesses, semelhante, personalizado,
+  remarketing), tamanho, localização, idade, posicionamentos e exclusões.
+- Problemas comuns: sobreposição entre conjuntos que disputam o mesmo público, público pequeno demais
+  (CPM alto, frequência alta), remarketing sem excluir quem já converteu, interesses demais empilhados.
+### Estrutura
+- Campanhas, objetivos e evento de otimização; orçamento na campanha (CBO/Advantage) ou no conjunto;
+  conjuntos em "aprendizado limitado"; verba espalhada demais (cada conjunto precisa de verba para ~50
+  resultados por semana); 3 a 6 anúncios por conjunto.
+- Proponha consolidar quando houver fragmentação e separar só quando públicos/ofertas forem diferentes.
+### Funil
+- Topo (alcance/descoberta), meio (engajamento, visitas, mensagens) e fundo (remarketing de quem
+  engajou, visitou ou iniciou conversa; oferta direta). Diga quais etapas existem, quais faltam e
+  quanto da verba está em cada uma.
+- Sinal de conversão: o evento otimizado é o que importa ao cliente? Use os diagnósticos de sinais
+  quando a ferramenta existir. Se a conversão acontece no WhatsApp, avalie custo por conversa.
+
 ## Regras de otimização
 - Pausar anúncio: gastou pelo menos 2x o custo por resultado alvo sem resultado, ou custo por
   resultado acima de 1,5x a meta com volume suficiente, e há outros anúncios ativos no conjunto.
@@ -41,6 +67,10 @@ HAIZEN aprovar; você propõe, ele decide.
 - `orcamento`: mudar o orçamento diário (ou vitalício) de um conjunto ou campanha. `de` e `para`
   em reais, só o número.
 - `criativo`: pedir criativos novos à equipe (vira projeto na HAIZEN quando aprovado).
+- `publico`: mudar a segmentação de um conjunto (`detalhes` com o que muda: idade, local, interesses,
+  exclusões, público personalizado, Advantage+).
+- `estrutura`: criar um conjunto ou campanha novos (nascem PAUSADOS) ou consolidar; `detalhes` com a
+  especificação completa (objetivo, evento, orçamento em reais, público, posicionamentos).
 - `manual`: qualquer outra recomendação, para o dono fazer ou decidir.
 
 ## Nunca

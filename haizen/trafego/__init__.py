@@ -32,10 +32,20 @@ LEITURA = ("ads_get_ad_accounts", "ads_get_field_context", "ads_get_ad_entities"
            "ads_insights_auction_ranking_benchmarks", "ads_insights_industry_benchmark",
            "ads_insights_performance_trend", "ads_library_search")
 ESCRITA = ("ads_update_entity", "ads_activate_entity")       # o que uma ação aprovada pode usar
+# Ferramentas de alteração por tipo de ação aprovada (nada além disso).
+ESCRITA_POR_TIPO = {
+    "pausar": ("ads_update_entity",),
+    "reativar": ("ads_activate_entity",),
+    "orcamento": ("ads_update_entity",),
+    "publico": ("ads_update_entity",),
+    "estrutura": ("ads_create_campaign", "ads_create_ad_set", "ads_update_entity"),
+    "subir_criativo": ("ads_create_creative", "ads_create_ad"),
+}
 _ESCREVE = re.compile(r"create|update|delete|activate|boost|upload|publish|archive|remove|set_|edit|pause", re.I)
 _LE = re.compile(r"^ads_(get|insights|library|search|list|read|help)", re.I)
 
-TIPOS = ("pausar", "reativar", "orcamento", "criativo", "manual")
+TIPOS = ("pausar", "reativar", "orcamento", "publico", "estrutura", "subir_criativo", "criativo", "manual")
+CRIAM = ("estrutura", "subir_criativo")     # criam coisas novas: você escolhe pausado ou já ativo
 ESTADO = {"fazendo": "", "desde": 0.0, "erro": "", "progresso": ""}
 _TRAVA = threading.Lock()
 
@@ -92,11 +102,14 @@ def _pasta() -> Path:
     return p
 
 
-def _claude(prompt: str, ferramentas: list[str], instrucao: str, referencia: str = "") -> str:
+def _claude(prompt: str, ferramentas: list[str], instrucao: str, referencia: str = "",
+            pastas: list[Path] | None = None) -> str:
     from haizen import uso
     modelo = uso.modelo("trafego")
     args = ["-p", instrucao, "--output-format", "json", "--permission-mode", "dontAsk",
             "--allowedTools", ",".join(ferramentas), *(["--model", modelo] if modelo else [])]
+    for d in pastas or []:
+        args += ["--add-dir", str(d)]
     try:
         return executor._rodar_claude(args, prompt, _pasta(), TIMEOUT, origem="trafego", referencia=referencia)
     except RuntimeError as e:
@@ -282,10 +295,12 @@ def prompt_analise(c: dict, hoje: dt.date | None = None) -> str:
         _historico(c["id"]),
         "",
         "## O que fazer",
-        "Use ads_get_field_context antes de ads_get_ad_entities. Puxe campanhas, conjuntos e anúncios ativos "
-        "(e os pausados nos últimos 7 dias) com gasto, impressões, alcance, frequência, cliques, CTR, CPC, CPM, "
-        "resultados, custo por resultado e ROAS, para ontem, últimos 7 dias e os 7 anteriores. Use também os "
-        "sinais de anomalia e tendência quando ajudarem. Depois analise com o playbook.",
+        "Use ads_get_field_context antes de ads_get_ad_entities. Puxe campanhas (objetivo, orçamento), conjuntos "
+        "(segmentação, evento de otimização, status de aprendizado) e anúncios ativos (e os pausados nos últimos "
+        "7 dias) com gasto, impressões, alcance, frequência, cliques, CTR, CPC, CPM, resultados, custo por "
+        "resultado, ROAS e, em vídeo, visualizações de 3 s e ThruPlay, para ontem, últimos 7 dias e os 7 "
+        "anteriores. Veja os criativos dos anúncios que mais gastam (texto, título, CTA, formato). Use os sinais "
+        "de anomalia, tendência e oportunidade quando ajudarem. Depois faça os QUATRO diagnósticos do playbook.",
         "",
         "Responda SÓ com um JSON neste formato:",
         "```json",
@@ -297,11 +312,18 @@ def prompt_analise(c: dict, hoje: dt.date | None = None) -> str:
                          "variacao_custo_resultado_pct": 0, "nome_resultado": "compras | leads | conversas | ...",
                          "projecao_gasto_mes": 0},
             "alertas": ["frases curtas"],
-            "acoes": [{"tipo": "pausar | reativar | orcamento | criativo | manual",
+            "diagnostico": {"criativos": "Markdown curto: o que funciona, o que cansou, o que testar",
+                            "publicos": "Markdown curto", "estrutura": "Markdown curto", "funil": "Markdown curto"},
+            "ranking_criativos": [{"alvo_id": "id do anúncio", "nome": "nome", "formato": "imagem | video | carrossel",
+                                   "gasto_7d": 0, "resultados_7d": 0, "custo_resultado_7d": 0, "ctr_7d": 0,
+                                   "frequencia_7d": 0, "taxa_gancho": None,
+                                   "veredito": "escalar | manter | cansado | pausar", "porque": "uma frase"}],
+            "acoes": [{"tipo": "pausar | reativar | orcamento | publico | estrutura | criativo | manual",
                        "nivel": "campanha | conjunto | anuncio | conta", "alvo_id": "id no Meta",
                        "alvo_nome": "nome", "de": "valor atual (orçamento em reais) ou status", "para": "novo valor",
+                       "detalhes": {"o_que_muda": "para publico/estrutura: a especificação completa"},
                        "motivo": "números que justificam", "impacto": "o que se espera", "prioridade": "alta | media | baixa"}],
-            "relatorio": "relatório em Markdown para o dono: números por campanha, diagnóstico do funil, o que testar",
+            "relatorio": "relatório em Markdown para o dono: números por campanha e conjunto, o que testar na semana",
         }, ensure_ascii=False, indent=1),
         "```",
     ])
@@ -328,11 +350,13 @@ def _guardar_analise(cid: str, hoje: dt.date, r: dict, erro: str = "") -> dict:
     situacao = situacao if situacao in ("bem", "atencao", "critico", "erro") else "atencao"
     with store.conexao() as con:
         cur = con.execute(
-            "INSERT INTO trafego_analises(conta_id, dia, criado_em, situacao, resumo, metricas, alertas, relatorio, erro)"
-            " VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO trafego_analises(conta_id, dia, criado_em, situacao, resumo, metricas, alertas, relatorio, erro,"
+            " diagnostico) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (cid, hoje.isoformat(), agora, situacao, str(r.get("resumo") or "")[:3000],
              json.dumps(r.get("metricas") or {}, ensure_ascii=False), json.dumps(r.get("alertas") or [], ensure_ascii=False),
-             str(r.get("relatorio") or "")[:40000], erro))
+             str(r.get("relatorio") or "")[:40000], erro,
+             json.dumps({**(r.get("diagnostico") or {}), "ranking": (r.get("ranking_criativos") or [])[:30]},
+                        ensure_ascii=False)[:60000]))
         aid = cur.lastrowid
         if not erro:
             # Propostas antigas que você não decidiu: a análise nova substitui.
@@ -341,14 +365,17 @@ def _guardar_analise(cid: str, hoje: dt.date, r: dict, erro: str = "") -> dict:
             for a in (r.get("acoes") or [])[:5]:
                 tipo = str(a.get("tipo") or "manual").strip().lower()
                 tipo = tipo if tipo in TIPOS else "manual"
+                if tipo == "subir_criativo":
+                    tipo = "criativo"           # subir arquivos é só pelo fluxo "Subir criativos"
                 con.execute(
                     "INSERT INTO trafego_acoes(conta_id, analise_id, criado_em, atualizado_em, tipo, nivel, alvo_id,"
-                    " alvo_nome, de, para, motivo, impacto, prioridade) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " alvo_nome, de, para, motivo, impacto, prioridade, detalhes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (cid, aid, agora, agora, tipo, str(a.get("nivel") or "")[:20], str(a.get("alvo_id") or "")[:60],
                      str(a.get("alvo_nome") or "")[:200], str(a.get("de") if a.get("de") is not None else "")[:60],
                      str(a.get("para") if a.get("para") is not None else "")[:60], str(a.get("motivo") or "")[:1500],
                      str(a.get("impacto") or "")[:600],
-                     str(a.get("prioridade") or "media").lower()[:10]))
+                     str(a.get("prioridade") or "media").lower()[:10],
+                     json.dumps(a.get("detalhes") or {}, ensure_ascii=False)[:8000]))
     return analise(aid)
 
 
@@ -359,6 +386,7 @@ def analise(aid: int) -> dict:
         raise KeyError("análise não encontrada")
     d = dict(r)
     d["metricas"], d["alertas"] = json.loads(d["metricas"] or "{}"), json.loads(d["alertas"] or "[]")
+    d["diagnostico"] = json.loads(d.get("diagnostico") or "{}")
     return d
 
 
@@ -371,6 +399,7 @@ def ultimas_analises() -> dict[str, dict]:
         d = dict(r)
         d["metricas"], d["alertas"] = json.loads(d["metricas"] or "{}"), json.loads(d["alertas"] or "[]")
         d.pop("relatorio", None)
+        d["tem_diagnostico"] = len(d.pop("diagnostico", "") or "") > 4
         out[d["conta_id"]] = d
     return out
 
@@ -443,17 +472,21 @@ def _mudar(aid: int, status: str, resultado: str = "") -> dict:
 
 
 def propor(conta_id: str, tipo: str, alvo_nome: str, motivo: str, nivel: str = "", alvo_id: str = "",
-           de: str = "", para: str = "", impacto: str = "", prioridade: str = "media") -> dict:
+           de: str = "", para: str = "", impacto: str = "", prioridade: str = "media",
+           detalhes: dict | None = None) -> dict:
     """Uma proposta feita na conversa ("pausa o anúncio X"): espera a sua aprovação."""
     conta(conta_id)
     tipo = tipo if tipo in TIPOS else "manual"
+    if tipo == "subir_criativo":
+        raise ValueError("para subir criativos use o fluxo 'Subir criativos' (trafego_subir_criativos)")
     agora = time.time()
     with store.conexao() as con:
         cur = con.execute(
             "INSERT INTO trafego_acoes(conta_id, criado_em, atualizado_em, tipo, nivel, alvo_id, alvo_nome, de, para,"
-            " motivo, impacto, prioridade) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            " motivo, impacto, prioridade, detalhes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (conta_id, agora, agora, tipo, nivel[:20], str(alvo_id)[:60], alvo_nome[:200], str(de)[:60],
-             str(para)[:60], motivo[:1500], impacto[:600], prioridade[:10]))
+             str(para)[:60], motivo[:1500], impacto[:600], prioridade[:10],
+             json.dumps(detalhes or {}, ensure_ascii=False)[:8000]))
     return acao(cur.lastrowid)
 
 
@@ -464,9 +497,10 @@ def rejeitar(aid: int, motivo: str = "") -> dict:
     return _mudar(aid, "rejeitada", motivo or "rejeitada por você")
 
 
-def aprovar(aid: int, em_segundo_plano: bool = True) -> dict:
-    """Sua aprovação. Pausar/reativar/orçamento: o Claude aplica no Meta.
-    Criativo: abre um projeto para a equipe. Manual: fica anotada para você."""
+def aprovar(aid: int, em_segundo_plano: bool = True, ativar: bool = False) -> dict:
+    """Sua aprovação. Pausar/reativar/orçamento/público/estrutura/subir criativo:
+    o Claude aplica no Meta. O que é criado nasce pausado, a não ser que você
+    aprove com "ativar". Criativo: abre um projeto para a equipe. Manual: anotada."""
     a = acao(aid)
     if a["status"] not in ("proposta", "falhou"):
         raise ValueError(f"a ação {aid} está {a['status']}, não esperando aprovação")
@@ -474,8 +508,10 @@ def aprovar(aid: int, em_segundo_plano: bool = True) -> dict:
         return _mudar(aid, "anotada", "aprovada: é para fazer à mão (o Jarvis não altera isso sozinho)")
     if a["tipo"] == "criativo":
         return _criativo(a)
-    if not a["alvo_id"]:
+    if not a["alvo_id"] and a["tipo"] not in CRIAM:
         raise ValueError("a ação não tem o id do Meta; peça uma nova análise")
+    with store.conexao() as con:
+        con.execute("UPDATE trafego_acoes SET ativar=? WHERE id=?", (1 if (ativar and a["tipo"] in CRIAM) else 0, aid))
     _mudar(aid, "aplicando", "")
     if em_segundo_plano:
         threading.Thread(target=aplicar, args=(aid,), daemon=True, name=f"trafego-acao-{aid}").start()
@@ -503,8 +539,19 @@ def instrucao_aplicar(a: dict) -> str:
                  f"R$ {a['para']} com ads_update_entity (no mesmo tipo de orçamento que já existe, diário ou "
                  f"vitalício; a API do Meta usa centavos). Se o orçamento atual não for R$ {a['de']}, NÃO altere e "
                  f"responda ok=false explicando.")
+    elif a["tipo"] == "publico":
+        o_que = (f"Mude a segmentação do conjunto {a['alvo_id']} (\"{a['alvo_nome']}\") com ads_update_entity, "
+                 f"exatamente assim (mantenha o resto da segmentação como está):\n{_detalhes_texto(a)}")
+    elif a["tipo"] == "estrutura":
+        o_que = (f"Crie/ajuste a estrutura abaixo com ads_create_campaign / ads_create_ad_set / ads_update_entity. "
+                 f"Tudo o que for criado nasce PAUSADO.\n{_detalhes_texto(a)}")
+    elif a["tipo"] == "subir_criativo":
+        o_que = _instrucao_subir(a)
     else:
         raise ValueError(f"o tipo {a['tipo']} não é aplicado pelo Jarvis")
+    if a["tipo"] in CRIAM:
+        o_que += ("\nDepois de criar, ATIVE o que criou com ads_activate_entity (o dono escolheu publicar já ativo)."
+                  if a.get("ativar") else "\nNÃO ative nada: deixe pausado para o dono revisar no Gerenciador.")
     return (f"O dono da HAIZEN APROVOU exatamente esta mudança na conta {a['conta_id']}:\n{o_que}\n"
             "Antes, leia o item com ads_get_ad_entities para confirmar que é ele. Faça só esta mudança, nada mais. "
             "Depois leia de novo e confira que mudou.\n"
@@ -514,12 +561,24 @@ def instrucao_aplicar(a: dict) -> str:
 def aplicar(aid: int) -> dict:
     a = acao(aid)
     try:
-        r = _json(_claude(instrucao_aplicar(a), ferramentas_leitura() + ferramentas_escrita(),
+        escrita = list(ESCRITA_POR_TIPO.get(a["tipo"], ()))
+        if a["tipo"] in CRIAM and a.get("ativar"):
+            escrita.append("ads_activate_entity")
+        extra, pastas = [], []
+        if a["tipo"] == "subir_criativo":
+            arquivos = [Path(x) for x in (_detalhes(a).get("arquivos") or [])]
+            pastas = list(dict.fromkeys(f.parent for f in arquivos))
+            extra = ["Read"]
+        r = _json(_claude(instrucao_aplicar(a), ferramentas_leitura() + [PREFIXO + n for n in escrita] + extra,
                           "Aplique só a mudança aprovada descrita na entrada. Responda só com o JSON.",
-                          f"aplicar ação {aid}"))
+                          f"aplicar ação {aid}", pastas))
         ok, detalhe = bool(r.get("ok")), str(r.get("detalhe") or "")
     except Exception as e:  # noqa: BLE001
         ok, detalhe = False, str(e)
+    if not ok and detalhe.upper().startswith("SEM_UPLOAD"):
+        detalhe = ("O conector da Meta não deixou enviar o arquivo daqui (" + detalhe.split(":", 1)[-1].strip()[:300] +
+                   "). Peça ao Claude para ligar o envio pela Ads CLI da Meta; enquanto isso, suba a peça no "
+                   "Gerenciador e use os textos aprovados.")
     feito = _mudar(aid, "aplicada" if ok else "falhou", detalhe or ("feito" if ok else "não aplicada"))
     try:
         from haizen import notificar
@@ -528,6 +587,144 @@ def aplicar(aid: int) -> dict:
     except Exception:  # noqa: BLE001
         pass
     return feito
+
+
+def _detalhes(a: dict) -> dict:
+    try:
+        return json.loads(a.get("detalhes") or "{}")
+    except ValueError:
+        return {}
+
+
+def _detalhes_texto(a: dict) -> str:
+    d = _detalhes(a)
+    return json.dumps(d, ensure_ascii=False, indent=1) if d else (a.get("para") or a.get("motivo") or "")
+
+
+def _instrucao_subir(a: dict) -> str:
+    d = _detalhes(a)
+    pecas = "\n".join(
+        f"- Arquivo `{p.get('arquivo')}`: texto principal: {p.get('texto_principal')!r}; título: {p.get('titulo')!r}; "
+        f"descrição: {p.get('descricao') or ''!r}; CTA: {p.get('cta') or d.get('cta')!r}"
+        for p in d.get("pecas") or [])
+    return (f"Suba estes criativos como anúncios NOVOS no conjunto {a['alvo_id']} (\"{a['alvo_nome']}\"), "
+            f"página {d.get('page_id') or '(a do conjunto)'}, destino {d.get('destino') or '(o dos outros anúncios do conjunto)'}"
+            f"{', Instagram ' + str(d.get('instagram_id')) if d.get('instagram_id') else ''}:\n{pecas}\n"
+            "Para cada peça: crie o criativo com ads_create_creative (use o arquivo local; se a ferramenta só aceitar "
+            "URL/hash de imagem já enviada à conta e não houver como enviar o arquivo, NÃO invente: responda ok=false "
+            "com detalhe começando por 'SEM_UPLOAD:' e o que a ferramenta pede) e depois o anúncio com ads_create_ad "
+            "no conjunto, com o nome do arquivo como nome do anúncio. Use exatamente os textos aprovados.")
+
+
+# ── subir criativos da HAIZEN com legendas prontas ─────────────────────────
+_IMAGENS = (".png", ".jpg", ".jpeg")
+_VIDEOS = (".mp4", ".mov")
+
+
+def arquivos_do_trabalho(tid: int) -> tuple[list[Path], str]:
+    """As peças finais de um trabalho da HAIZEN e os textos que o agente escreveu."""
+    t = store.trabalho(int(tid))
+    if t is None or not t.get("pasta") or not Path(t["pasta"]).is_dir():
+        raise ValueError(f"o trabalho {tid} não tem pasta de arquivos")
+    pasta = Path(t["pasta"])
+    finais = sorted(f for f in pasta.iterdir() if f.is_file() and f.suffix.lower() in _IMAGENS + _VIDEOS)
+    textos = ""
+    for nome in ("Textos.txt", "Legendas.txt", "Roteiro.txt"):
+        if (pasta / nome).is_file():
+            textos = (pasta / nome).read_text(encoding="utf-8", errors="replace")[:6000]
+            break
+    return finais, textos
+
+
+def preparar_criativos(conta_id: str, pedido: str, trabalho_id: int | None = None,
+                       anexos: list | None = None) -> dict:
+    """O gestor monta a proposta 'subir criativo': escolhe o conjunto, escreve o texto
+    principal, o título e o CTA de cada peça. Nada sobe antes da sua aprovação."""
+    c = conta(conta_id)
+    arquivos, textos = ([], "")
+    if trabalho_id:
+        arquivos, textos = arquivos_do_trabalho(trabalho_id)
+    if anexos:
+        from haizen.central import anexos as _anexos
+        arquivos += [Path(d["caminho"]) for d in _anexos.varios(anexos)]
+    arquivos = [f for f in arquivos if f.suffix.lower() in _IMAGENS + _VIDEOS][:10]
+    if not arquivos:
+        raise ValueError("escolha as peças (um trabalho da HAIZEN com PNG/JPG/MP4 ou arquivos enviados)")
+    lista = "\n".join(f"- {f.as_posix()}" for f in arquivos)
+    prompt = "\n".join([
+        PLAYBOOK.read_text(encoding="utf-8"), "",
+        f"## Tarefa: preparar a subida de criativos na conta {c['id']} ({c['nome']})"
+        f"{' — cliente ' + c['cliente_nome'] if c.get('cliente_nome') else ''}",
+        f"Pedido do dono: {pedido or '(sem instruções extras: escolha o melhor conjunto ativo para estas peças)'}",
+        "", "Peças (abra cada uma com Read para ver):", lista, "",
+        "Textos que a equipe já escreveu para estas peças (use como base):", textos or "(nenhum)", "",
+        "1. Leia a conta (ads_get_ad_entities): ache a campanha e o conjunto certos pelo pedido; sem indicação, o "
+        "conjunto ativo de melhor resultado com objetivo compatível. Veja os anúncios que já rodam ali (página, "
+        "Instagram, destino/link ou WhatsApp, CTA) para repetir a configuração.",
+        "2. Para cada peça escreva: texto principal (gancho na 1ª linha, benefício concreto, prova ou oferta, CTA; "
+        "até ~125 caracteres antes do 'ver mais'), título (até 40 caracteres), descrição curta e o CTA do Meta "
+        "(LEARN_MORE, SHOP_NOW, SEND_MESSAGE, WHATSAPP_MESSAGE, BOOK_TRAVEL, SIGN_UP, CONTACT_US...). "
+        "Nunca invente preço, prazo ou número que não esteja nos textos ou no pedido.",
+        "3. NÃO crie nada no Meta agora: só a proposta.",
+        "Responda SÓ com JSON: " + json.dumps({
+            "alvo_id": "id do conjunto", "alvo_nome": "nome do conjunto", "campanha": "nome da campanha",
+            "page_id": "id da página", "instagram_id": "id do Instagram ou vazio", "destino": "link ou WhatsApp",
+            "cta": "CTA padrão",
+            "pecas": [{"arquivo": "caminho exato da lista", "texto_principal": "...", "titulo": "...",
+                       "descricao": "...", "cta": "..."}],
+            "motivo": "por que este conjunto e estes textos"}, ensure_ascii=False)])
+    r = _json(_claude(prompt, ferramentas_leitura() + ["Read"],
+                      "Prepare a proposta descrita na entrada só com leitura. Responda só com o JSON.",
+                      f"preparar criativos {c['nome']}", list(dict.fromkeys(f.parent for f in arquivos))))
+    validos = {f.as_posix() for f in arquivos}
+    pecas = [p for p in r.get("pecas") or [] if Path(str(p.get("arquivo") or "")).as_posix() in validos]
+    if not pecas or not r.get("alvo_id"):
+        raise ValueError("o gestor não conseguiu montar a proposta (conjunto ou peças não encontrados)")
+    detalhes = {k: r.get(k) for k in ("campanha", "page_id", "instagram_id", "destino", "cta")}
+    detalhes.update(pecas=pecas, arquivos=[str(Path(p["arquivo"])) for p in pecas])
+    agora = time.time()
+    with store.conexao() as con:
+        cur = con.execute(
+            "INSERT INTO trafego_acoes(conta_id, criado_em, atualizado_em, tipo, nivel, alvo_id, alvo_nome, para,"
+            " motivo, impacto, prioridade, detalhes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (conta_id, agora, agora, "subir_criativo", "conjunto", str(r["alvo_id"])[:60],
+             str(r.get("alvo_nome") or "")[:200], f"{len(pecas)} anúncio(s) novo(s)", str(r.get("motivo") or "")[:1500],
+             "", "alta", json.dumps(detalhes, ensure_ascii=False)[:8000]))
+    proposta = acao(cur.lastrowid)
+    try:
+        from haizen import notificar
+        notificar.avisar("Tráfego: criativos prontos para subir", f"{len(pecas)} peça(s) com legenda para {c['nome']}",
+                         "trafego", "#/trafego")
+    except Exception:  # noqa: BLE001
+        pass
+    return proposta
+
+
+def arquivo_da_acao(aid: int, i: int) -> Path:
+    """Uma peça de uma proposta 'subir criativo' (só as listadas nela)."""
+    arquivos = _detalhes(acao(aid)).get("arquivos") or []
+    if not 0 <= int(i) < len(arquivos):
+        raise KeyError("arquivo não encontrado")
+    p = Path(arquivos[int(i)])
+    if not p.is_file():
+        raise KeyError("arquivo não encontrado")
+    return p
+
+
+def trabalhos_com_pecas(limite: int = 30) -> list[dict]:
+    """Trabalhos da HAIZEN com peças prontas, para escolher no 'Subir criativos'."""
+    out = []
+    for t in store.listar_trabalhos(None, 200):
+        if t["status"] not in ("aguardando_aprovacao", "aprovado") or not t.get("pasta"):
+            continue
+        p = Path(t["pasta"])
+        if p.is_dir() and any(f.suffix.lower() in _IMAGENS + _VIDEOS for f in p.iterdir() if f.is_file()):
+            cli = store.cliente_por_id(t["cliente_id"])
+            out.append({"id": t["id"], "titulo": t.get("titulo") or t["agente"], "agente": t["agente"],
+                        "cliente": cli["nome"] if cli else "", "status": t["status"], "cliente_id": t["cliente_id"]})
+        if len(out) >= limite:
+            break
+    return out
 
 
 # ── resumo e agenda diária ──────────────────────────────────────────────────
@@ -635,5 +832,5 @@ def painel() -> dict:
                                            "aviso_conexao")},
             "conectado": bool(c["conectado_em"]), "conectado_em": c["conectado_em"],
             "estado": dict(ESTADO), "contas": contas_lista(), "analises": ultimas_analises(),
-            "acoes": acoes(("proposta", "aplicando", "falhou")),
+            "acoes": [{**a, "detalhes": _detalhes(a)} for a in acoes(("proposta", "aplicando", "falhou"))],
             "historico": acoes(("aplicada", "rejeitada", "anotada"), 20)}

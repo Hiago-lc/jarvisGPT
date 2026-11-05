@@ -235,6 +235,9 @@ _COLUNAS_NOVAS = {
         "resposta": "TEXT NOT NULL DEFAULT ''",       # a sua resposta
         "sessao": "TEXT NOT NULL DEFAULT ''",         # conversa do Claude Code para continuar
     },
+    "trafego_analises": {"diagnostico": "TEXT NOT NULL DEFAULT '{}'"},   # criativos, públicos, estrutura, funil
+    "trafego_acoes": {"detalhes": "TEXT NOT NULL DEFAULT '{}'",           # especificação da mudança
+                      "ativar": "INTEGER NOT NULL DEFAULT 0"},            # criar já ativo (você escolhe)
     "projetos": {"marca_pasta": "TEXT NOT NULL DEFAULT ''",
                  "anexos": "TEXT NOT NULL DEFAULT '[]'"},       # arquivos que você enviou
 }

@@ -25,6 +25,17 @@ ANALISE = {
 }
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def store_patch_anexo(arquivo):
+    """Um anexo falso apontando para `arquivo`."""
+    with patch("haizen.central.anexos.varios", return_value=[{"id": "x", "nome": arquivo.name,
+                                                               "caminho": str(arquivo)}]):
+        yield ["x"]
+
+
 class TrafegoTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -165,6 +176,78 @@ class TrafegoTests(unittest.TestCase):
             self.t.salvar_config({"whatsapp_ativo": True, "whatsapp_contato": "Eu mesmo"})
             self.assertTrue(self.t.enviar_whatsapp_resumo())
         self.assertEqual(op.call_args[0][0]["recipient"], "Eu mesmo")
+
+    def test_diagnostico_e_publico_com_detalhes(self):
+        self._conectar()
+        self.respostas.append(json.dumps({**ANALISE,
+            "diagnostico": {"criativos": "O vídeo com depoimento ganha.", "funil": "Falta remarketing."},
+            "ranking_criativos": [{"alvo_id": "1", "nome": "Vídeo depoimento", "veredito": "escalar"}],
+            "acoes": [{"tipo": "publico", "nivel": "conjunto", "alvo_id": "555", "alvo_nome": "Interesses",
+                       "detalhes": {"idade": "25-45", "excluir": "compradores 30 dias"}, "motivo": "CPM alto"},
+                      {"tipo": "subir_criativo", "alvo_nome": "x", "motivo": "y"}]}))
+        an = self.t.analisar_conta("act_1")
+        self.assertEqual(self.t.analise(an["id"])["diagnostico"]["ranking"][0]["veredito"], "escalar")
+        self.assertTrue(self.t.ultimas_analises()["act_1"]["tem_diagnostico"])
+        tipos = {a["tipo"]: a for a in self.t.acoes("proposta")}
+        self.assertIn("criativo", tipos)                      # subir só pelo fluxo próprio
+        pub = tipos["publico"]
+        self.respostas.append('{"ok": true, "detalhe": "idade 25-45 e exclusão aplicadas"}')
+        self.assertEqual(self.t.aprovar(pub["id"], em_segundo_plano=False)["status"], "aplicada")
+        self.assertIn("25-45", self.chamadas[-1][1])
+        self.assertIn("mcp__meta-ads__ads_update_entity", self._permitidas())
+        self.assertNotIn("mcp__meta-ads__ads_create_ad", self._permitidas())
+
+    def test_subir_criativos_com_legendas_e_aprovacao(self):
+        from haizen import store
+        self._conectar()
+        pasta = Path(self.dir.name) / "CLIENTES" / "Viagens Sol" / "JARVIS - para revisar" / "01 - criativos"
+        pasta.mkdir(parents=True)
+        (pasta / "01 - Feed.png").write_bytes(b"png")
+        (pasta / "02 - Stories.png").write_bytes(b"png")
+        (pasta / "Textos.txt").write_text("Feed: Porto Seguro, últimas vagas", encoding="utf-8")
+        t = store.criar_trabalho("criativos", "posts", "claude", 1)
+        store.atualizar(t["id"], status="aguardando_aprovacao", pasta=str(pasta))
+        self.assertEqual([x["id"] for x in self.t.trabalhos_com_pecas()], [t["id"]])
+        feed = (pasta / "01 - Feed.png").as_posix()
+        self.respostas.append(json.dumps({"alvo_id": "777", "alvo_nome": "Remarketing", "campanha": "Black Friday",
+            "page_id": "9", "destino": "WhatsApp", "cta": "WHATSAPP_MESSAGE", "motivo": "melhor conjunto",
+            "pecas": [{"arquivo": feed, "texto_principal": "Últimas vagas para Porto Seguro!", "titulo": "Porto Seguro"},
+                      {"arquivo": "/outro/lugar.png", "texto_principal": "x"}]}))
+        a = self.t.preparar_criativos("act_1", "no Remarketing", t["id"])
+        args, prompt = self.chamadas[-1]
+        self.assertIn("Read", self._permitidas())
+        self.assertFalse(any("create" in p for p in self._permitidas()))       # preparar não cria nada
+        self.assertIn(str(pasta), args)                                        # pode abrir as peças
+        self.assertIn("Porto Seguro, últimas vagas", prompt)                    # usa os textos da equipe
+        d = json.loads(a["detalhes"])
+        self.assertEqual(len(d["pecas"]), 1)                                   # só arquivos da lista
+        self.assertEqual(self.t.arquivo_da_acao(a["id"], 0), pasta / "01 - Feed.png")
+        with self.assertRaises(KeyError):
+            self.t.arquivo_da_acao(a["id"], 5)
+        # Aprovar sem ativar: cria pausado, sem permissão de ativar.
+        self.respostas.append('{"ok": true, "detalhe": "1 anúncio criado pausado"}')
+        r = self.t.aprovar(a["id"], em_segundo_plano=False)
+        self.assertEqual(r["status"], "aplicada")
+        p = self._permitidas()
+        self.assertIn("mcp__meta-ads__ads_create_ad", p)
+        self.assertNotIn("mcp__meta-ads__ads_activate_entity", p)
+        self.assertIn("NÃO ative nada", self.chamadas[-1][1])
+        self.assertIn("Últimas vagas para Porto Seguro!", self.chamadas[-1][1])
+
+    def test_subir_e_ativar_e_falta_de_upload(self):
+        self._conectar()
+        img = Path(self.dir.name) / "peca.jpg"
+        img.write_bytes(b"jpg")
+        with store_patch_anexo(img) as ids:
+            self.respostas.append(json.dumps({"alvo_id": "1", "alvo_nome": "C", "pecas": [
+                {"arquivo": img.as_posix(), "texto_principal": "t", "titulo": "t"}]}))
+            a = self.t.preparar_criativos("act_1", "", None, ids)
+        self.respostas.append('{"ok": false, "detalhe": "SEM_UPLOAD: pede image_hash"}')
+        r = self.t.aprovar(a["id"], em_segundo_plano=False, ativar=True)
+        self.assertIn("mcp__meta-ads__ads_activate_entity", self._permitidas())
+        self.assertIn("ATIVE o que criou", self.chamadas[-1][1])
+        self.assertEqual(r["status"], "falhou")
+        self.assertIn("Ads CLI", r["resultado"])
 
     def test_cerebro_le_o_meta_so_depois_de_conectar(self):
         from haizen.central import claude_cerebro

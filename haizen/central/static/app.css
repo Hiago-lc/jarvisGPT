@@ -659,3 +659,18 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .pergunta-agente { background: #FFF7E8; border: 1px solid #F0DDB5; border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
 .pergunta-agente p { margin: 0 0 6px; }
 .pergunta-agente .campos { margin-top: 10px; }
+.traf-pecas { display: flex; flex-direction: column; gap: 10px; margin: 6px 0; }
+.traf-peca { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: start; }
+.traf-peca-img { width: 92px; height: 115px; border-radius: 8px; background: var(--papel); overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--cinza); }
+.traf-peca-img img, .traf-peca-img video { width: 100%; height: 100%; object-fit: cover; }
+.traf-peca p { margin: 0 0 4px; }
+.traf-peca-texto { font-size: 13.5px; line-height: 1.4; white-space: pre-wrap; }
+.traf-detalhes { font-size: 13px; }
+.traf-detalhes summary { cursor: pointer; color: var(--foco); }
+.traf-detalhes ul { margin: 6px 0 0; padding-left: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.traf-diag { margin-bottom: 16px; }
+.traf-diag h3 { margin: 0 0 6px; font-size: 15px; }
+.traf-veredito { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #EAF1EF; white-space: nowrap; }
+.traf-veredito.v-escalar { background: #EEF5DF; color: var(--limao-escuro); }
+.traf-veredito.v-cansado { background: #FFF4E0; color: #6B4512; }
+.traf-veredito.v-pausar { background: #FBEDEB; color: #7A2A21; }
