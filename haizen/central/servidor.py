@@ -310,6 +310,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._social(metodo, partes[1:], q)
         if partes and partes[0] == "rotina":
             return self._rotina(metodo, partes[1:], q)
+        if partes and partes[0] == "ecommerce":
+            return self._ecommerce(metodo, partes[1:], q)
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
@@ -542,6 +544,46 @@ class _Handler(BaseHTTPRequestHandler):
                 motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
                 raise ValueError((motivo.group(1).strip('"') if motivo else r)[:300])
             return {"ok": True}
+        return _NAO_ACHOU
+
+    def _ecommerce(self, metodo, partes, q=None):
+        """Lojas Shopify/Tray dos clientes: análise, propostas e aplicação com o seu OK."""
+        from haizen import ecommerce as ec
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return ec.painel()
+        if rota == "config" and metodo == "POST":
+            ec.salvar_config(self._corpo())
+            return ec.painel()
+        if rota == "lojas" and len(partes) == 1 and metodo == "POST":
+            return ec.conectar_loja(self._corpo())
+        if rota == "lojas" and len(partes) >= 2:
+            lid = partes[1]
+            acao = partes[2] if len(partes) > 2 else ""
+            if acao == "" and metodo == "DELETE":
+                ec.remover_loja(lid)
+                return {"ok": True}
+            if acao == "" and metodo == "POST":
+                return ec.editar_loja(lid, self._corpo())
+            if acao == "analisar" and metodo == "POST":
+                ec.analisar_em_segundo_plano(lid)
+                return {"ok": True}
+            if acao == "produtos" and metodo == "GET":
+                return ec.buscar_produtos(lid, str((q or {}).get("busca") or ""))
+            if acao == "propor" and metodo == "POST":
+                c = self._corpo()
+                return ec.propor(lid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
+                                 c.get("detalhes") or {}, "manual")
+        if rota == "analisar" and metodo == "POST":
+            ec.analisar_em_segundo_plano(None)
+            return {"ok": True}
+        if rota == "acoes" and len(partes) == 3 and metodo == "POST":
+            aid, acao = int(partes[1]), partes[2]
+            if acao == "aprovar":
+                c = self._corpo()
+                return ec.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None)
+            if acao == "rejeitar":
+                return ec.rejeitar(aid, str(self._corpo().get("nota") or ""))
         return _NAO_ACHOU
 
     def _rotina(self, metodo, partes, q=None):
@@ -892,6 +934,8 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                     social.iniciar_agenda()           # Instagram: análise semanal, publicações agendadas
                     from haizen import rotina
                     rotina.iniciar_agenda()           # resumo da manhã, backup, cobranças, relatório mensal
+                    from haizen import ecommerce
+                    ecommerce.iniciar_agenda()        # lojas Shopify/Tray: análise diária, fim das promoções
                 except Exception as e:  # noqa: BLE001
                     print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:

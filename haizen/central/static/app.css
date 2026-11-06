@@ -741,3 +741,16 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .botao.pequeno { padding: 4px 10px; font-size: 13px; min-height: 0; }
 .hoje-lista .meta { white-space: normal; margin-left: 6px; }
 .dialogo-acoes { flex-wrap: wrap; row-gap: 8px; }
+
+/* ── E-commerce ── */
+.ec-mudanca { margin: 4px 0; overflow-wrap: anywhere; }
+.ec-var { font-style: normal; font-size: 12px; font-weight: 600; margin-left: 4px; }
+.ec-var.sobe { color: var(--limao-escuro); } .ec-var.desce { color: var(--tijolo); }
+.traf-kpi small { display: block; font-size: 12px; color: var(--cinza); }
+.ec-barras { display: flex; align-items: flex-end; gap: 2px; height: 44px; margin: 10px 0 4px; }
+.ec-barras span { flex: 1; background: var(--limao-escuro); opacity: .75; border-radius: 2px 2px 0 0; min-width: 2px; }
+.ec-tabela { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.ec-tabela th, .ec-tabela td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--linha, #e6e6e6); }
+.ec-tabela th { color: var(--cinza); font-weight: 600; }
+.ec-hist { margin: 6px 0; padding-left: 16px; font-size: 13px; line-height: 1.6; }
+.ec-html { font-size: 13px; color: var(--cinza); max-height: 180px; overflow: auto; }

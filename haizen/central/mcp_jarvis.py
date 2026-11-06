@@ -362,6 +362,62 @@ def trafego_conta(conta_id: str, campos: dict) -> dict:
     return _api("PATCH", f"trafego/contas/{urllib.parse.quote(conta_id, safe='')}", dict(campos or {}))
 
 
+# ── e-commerce (lojas Shopify/Tray dos clientes) ──────────────────────────
+@mcp.tool()
+def ecommerce_painel() -> list:
+    """As lojas dos clientes: vendas de ontem, 7 e 30 dias (com variação), campeões, estoque baixo,
+    resumo da última análise e as propostas esperando aprovação (com id)."""
+    out = []
+    for lj in _api("GET", "ecommerce").get("lojas", []):
+        m = lj.get("metricas") or {}
+        out.append({"id": lj["id"], "nome": lj["nome"], "plataforma": lj["plataforma"], "cliente": lj.get("cliente_nome"),
+                    "conectada": bool(lj.get("conectado_em")), "erro": lj.get("erro"),
+                    "ontem": m.get("ontem"), "ult7": m.get("ult7"), "var7": m.get("var7"), "ult30": m.get("ult30"),
+                    "var30": m.get("var30"), "visitas": m.get("visitas"), "top": (m.get("top") or [])[:5],
+                    "estoque_baixo": m.get("estoque_baixo"), "analise": lj.get("analise"),
+                    "propostas": [{k: a.get(k) for k in ("id", "tipo", "titulo", "motivo", "detalhes")}
+                                  for a in lj.get("propostas") or []]})
+    return out
+
+
+@mcp.tool()
+def ecommerce_analisar(loja_id: str = "") -> dict:
+    """Roda a análise de uma loja (ou de todas, sem id) em segundo plano. As propostas aparecem na
+    tela E-commerce em alguns minutos."""
+    return _api("POST", f"ecommerce/lojas/{loja_id}/analisar" if loja_id else "ecommerce/analisar")
+
+
+@mcp.tool()
+def ecommerce_produtos(loja_id: str, busca: str = "") -> list:
+    """Procura produtos da loja pelo nome: devolve id, preço, preço "de", estoque e se está ativo."""
+    return _api("GET", f"ecommerce/lojas/{loja_id}/produtos", busca=busca)
+
+
+@mcp.tool()
+def ecommerce_propor(loja_id: str, tipo: str, titulo: str, detalhes: dict, motivo: str = "") -> dict:
+    """Cria uma PROPOSTA de mudança na loja (não aplica). Tipos e detalhes:
+    cupom {codigo, tipo: percentual|valor, valor, inicio, fim (AAAA-MM-DD), produtos: [ids] ou [], minimo,
+    limite_usos, uma_vez_por_cliente, frete_gratis}; desconto_automatico (só Shopify) {titulo, tipo, valor, inicio,
+    fim, produtos, minimo}; preco_promocional {produto_id, preco_promocional, inicio, fim}; preco {produto_id,
+    preco_novo}; descricao_seo {produto_id, seo_titulo, seo_descricao, descricao_html}; pausar_produto/ativar_produto
+    {produto_id}; desativar_cupom {cupom_id}. Use ecommerce_produtos para achar o id do produto."""
+    return _api("POST", f"ecommerce/lojas/{loja_id}/propor", {"tipo": tipo, "titulo": titulo, "motivo": motivo,
+                                                              "detalhes": detalhes})
+
+
+@mcp.tool()
+def ecommerce_aprovar(acao_id: int) -> dict:
+    """APLICA na loja uma proposta. SÓ chame depois de mostrar ao usuário o que vai mudar (loja, tipo,
+    valores, datas) e ele confirmar explicitamente nesta conversa."""
+    return _api("POST", f"ecommerce/acoes/{int(acao_id)}/aprovar", {})
+
+
+@mcp.tool()
+def ecommerce_rejeitar(acao_id: int, nota: str = "") -> dict:
+    """Descarta uma proposta da loja."""
+    return _api("POST", f"ecommerce/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
+
+
 # ── rotina (resumo do dia, cobranças, relatórios mensais) ─────────────────
 @mcp.tool()
 def resumo_do_dia() -> dict:

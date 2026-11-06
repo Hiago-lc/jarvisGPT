@@ -217,6 +217,13 @@ def resumo(hoje: dt.date | None = None) -> dict:
         traf.append(f"{rel} relatório(s) mensal(is) prontos para aprovar")
     if traf:
         blocos["Tráfego"] = traf
+    try:
+        from haizen import ecommerce
+        lojas_txt = ecommerce.resumo_linhas()
+        if lojas_txt:
+            blocos["Lojas"] = lojas_txt
+    except Exception:  # noqa: BLE001
+        pass
     soc = []
     try:
         from haizen import social
@@ -590,8 +597,8 @@ def tarefas_devidas(agora: dt.datetime | None = None) -> list[str]:
 
 def _trafego_ocupado() -> bool:
     try:
-        from haizen import trafego
-        return bool(trafego.ESTADO.get("fazendo"))
+        from haizen import ecommerce, trafego
+        return bool(trafego.ESTADO.get("fazendo") or ecommerce.ESTADO.get("fazendo"))
     except Exception:  # noqa: BLE001
         return False
 

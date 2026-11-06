@@ -190,6 +190,14 @@ async function atualizarSelo() {
     s.title = `${n} otimização(ões) do Meta Ads esperando sua aprovação`;
   } catch (_) { /* silencioso */ }
   try {
+    const ec = await api("GET", "ecommerce");
+    const n = ec.lojas.reduce((t, l) => t + l.propostas.length, 0);
+    const s = $("#selo-ecommerce");
+    s.hidden = !n;
+    s.textContent = n;
+    s.title = `${n} mudança(s) nas lojas esperando sua aprovação`;
+  } catch (_) { /* silencioso */ }
+  try {
     const so = await api("GET", "social");
     const n = so.itens.filter((i) => ["ideia", "pronto"].includes(i.status)).length;
     const s = $("#selo-social");
@@ -1655,6 +1663,230 @@ ROTAS.trafego = async () => {
     if (document.hidden || $("#dialogo").open) return;
     if ($$("[data-nota]").some((t) => t.value.trim() || t === document.activeElement)) return;   // não apaga o que você digita
     if (dados?.estado?.fazendo || dados?.acoes?.some((a) => a.status === "aplicando")) desenhar().catch(() => {});
+  }, 8000);
+};
+
+// ── E-commerce: lojas Shopify/Tray dos clientes ────────────────────────────
+const EC_PLAT = { shopify: "Shopify", tray: "Tray" };
+
+function ecDetalhes(a) {
+  const d = a.detalhes || {};
+  const prod = d.produto_id ? `<span class="sub">${d.produto_nome ? esc(d.produto_nome) : `produto ${esc(String(d.produto_id).split("/").pop())}`}</span>` : "";
+  const val = d.tipo === "valor" ? moeda(d.valor) : d.valor ? `${numBR(d.valor, 1).replace(",0", "")}%` : "";
+  const periodo = d.inicio || d.fim ? ` · ${d.inicio ? dataBr(d.inicio) : "hoje"} até ${d.fim ? dataBr(d.fim) : "sem fim"}` : "";
+  switch (a.tipo) {
+    case "cupom": return `<p class="ec-mudanca"><strong>${esc(d.codigo)}</strong> · ${val} de desconto${periodo}${d.minimo ? ` · mínimo ${moeda(d.minimo)}` : ""}${d.produtos?.length ? ` · ${d.produtos.length} produto(s)` : " · loja toda"}${d.frete_gratis ? " · frete grátis" : ""}${d.uma_vez_por_cliente ? " · 1 uso por cliente" : ""}</p>`;
+    case "desconto_automatico": return `<p class="ec-mudanca">${val} automático${periodo}${d.minimo ? ` · acima de ${moeda(d.minimo)}` : ""}</p>`;
+    case "preco_promocional": return `<p class="ec-mudanca">Por <strong>${moeda(d.preco_promocional)}</strong>${periodo} ${prod}</p>`;
+    case "preco": return `<p class="ec-mudanca">Novo preço <strong>${moeda(d.preco_novo)}</strong> ${prod}</p>`;
+    case "descricao_seo": return `<details class="traf-detalhes"><summary>Ver o texto novo</summary>${d.seo_titulo ? `<p><strong>Título SEO:</strong> ${esc(d.seo_titulo)}</p>` : ""}${d.seo_descricao ? `<p><strong>Meta descrição:</strong> ${esc(d.seo_descricao)}</p>` : ""}${d.descricao_html ? `<div class="ec-html">${esc(d.descricao_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())}</div>` : ""}</details>`;
+    case "pausar_produto": case "ativar_produto": return `<p class="ec-mudanca">${prod}</p>`;
+    case "desativar_cupom": return `<p class="ec-mudanca">Cupom ${esc(String(d.cupom_id).split("/").pop())}</p>`;
+    default: return "";
+  }
+}
+
+function ecCartaoAcao(a) {
+  const st = { proposta: "", erro: `<p class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</p>` }[a.status] ?? "";
+  const editavel = ["cupom", "desconto_automatico", "preco_promocional", "preco", "descricao_seo"].includes(a.tipo);
+  return `<article class="traf-acao">
+    <div class="traf-acao-topo"><span class="traf-tipo">${esc(a.tipo_nome)}</span><span class="sub">${esc(a.loja_nome)} · ${esc(EC_PLAT[a.plataforma] || "")}${a.origem !== "analise" ? " · pedido seu" : ""}</span></div>
+    <p class="traf-alvo">${esc(a.titulo)}</p>
+    ${ecDetalhes(a)}
+    ${a.motivo ? `<p class="traf-motivo">${esc(a.motivo)}</p>` : ""}
+    ${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
+    ${st}
+    <div class="traf-botoes"><button class="botao" data-ec-rejeitar="${a.id}">${a.tipo === "alerta" ? "Dispensar" : "Rejeitar"}</button>
+      ${editavel ? `<button class="botao" data-ec-ajustar="${a.id}">Ajustar</button>` : ""}
+      <button class="botao primario" data-ec-aprovar="${a.id}">${a.tipo === "alerta" ? "Ciente" : a.status === "erro" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div></article>`;
+}
+
+function ecVar(v) {
+  if (v === null || v === undefined) return "";
+  return `<em class="ec-var ${v >= 0 ? "sobe" : "desce"}">${v > 0 ? "+" : ""}${numBR(v)}%</em>`;
+}
+
+function ecCartaoLoja(l) {
+  const m = l.metricas;
+  const kpi = (rot, val, extra = "") => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong>${extra}</div>`;
+  const maxDia = m ? Math.max(1, ...m.por_dia.map((d) => d.faturamento)) : 1;
+  const barras = m ? `<div class="ec-barras" title="Faturamento por dia, últimos 30 dias">${m.por_dia.map((d) => `<span style="height:${Math.max(2, Math.round(d.faturamento / maxDia * 100))}%" title="${dataBr(d.dia)}: ${moeda(d.faturamento)} (${d.pedidos} pedidos)"></span>`).join("")}</div>` : "";
+  const an = l.analise;
+  return `<article class="traf-conta${l.ativo ? "" : " inativa"}">
+    <div class="traf-conta-topo"><div><h3>${esc(l.nome)}</h3>
+      <p class="sub">${esc(EC_PLAT[l.plataforma])} · ${esc(l.cliente_nome || "sem cliente")}${an ? ` · análise de ${new Date(an.criado_em * 1000).toLocaleDateString("pt-BR")}` : ""}${an && an.saude != null ? ` · saúde ${an.saude}/100` : ""}</p></div>
+      <label class="caixa traf-ativo"><input type="checkbox" data-ec-ativo="${esc(l.id)}"${l.ativo ? " checked" : ""}> Análise diária</label></div>
+    ${l.erro ? `<p class="traf-estado erro">${esc(l.erro)}</p>` : ""}
+    ${!l.conectado_em ? '<p class="sub">Não conectada: clique em Reconectar.</p>' : ""}
+    ${m ? `<div class="traf-kpis">
+      ${kpi("Ontem", moeda(m.ontem.faturamento), `<small>${m.ontem.pedidos} pedido(s)</small>`)}
+      ${kpi("7 dias", moeda(m.ult7.faturamento), ecVar(m.var7.faturamento))}
+      ${kpi("30 dias", moeda(m.ult30.faturamento), ecVar(m.var30.faturamento))}
+      ${kpi("Pedidos 30d", numBR(m.ult30.pedidos), ecVar(m.var30.pedidos))}
+      ${kpi("Ticket médio", moeda(m.ult30.ticket), ecVar(m.var30.ticket))}
+      ${m.visitas?.conversao != null ? kpi("Conversão", `${numBR(m.visitas.conversao, 2)}%`, `<small>${numBR(m.visitas.sessoes)} sessões</small>`) : kpi("Parados", numBR(m.parados_total), "<small>sem venda 30d</small>")}
+    </div>${barras}` : ""}
+    ${an?.resumo ? `<p class="traf-resumo">${esc(an.resumo)}</p>` : ""}
+    ${an?.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    ${m?.top?.length ? `<details class="traf-detalhes"><summary>Mais vendidos e estoque</summary>
+      <table class="ec-tabela"><tr><th>Produto</th><th>Vendidos 30d</th><th>Receita</th><th>Estoque</th></tr>
+      ${m.top.slice(0, 8).map((p) => `<tr><td>${esc(p.nome)}</td><td>${numBR(p.qtd30)}</td><td>${moeda(p.receita30)}</td><td>${p.estoque ?? "—"}</td></tr>`).join("")}</table>
+      ${m.estoque_baixo?.length ? `<p class="sub">Acabando: ${m.estoque_baixo.map((e) => `${esc(e.nome)} (~${numBR(e.dias_de_estoque)} dias)`).join(", ")}</p>` : ""}</details>` : ""}
+    ${l.historico?.length ? `<details class="traf-detalhes"><summary>Aplicado recentemente</summary><ul class="ec-hist">${l.historico.map((a) => `<li><span class="traf-tipo">${esc(a.tipo_nome)}</span> ${esc(a.titulo)} <span class="sub">${esc(a.resultado)}</span></li>`).join("")}</ul></details>` : ""}
+    <div class="traf-botoes"><button class="botao" data-ec-remover="${esc(l.id)}">Remover</button><button class="botao" data-ec-editar="${esc(l.id)}">Cliente e objetivo</button>
+      <button class="botao" data-ec-reconectar="${esc(l.id)}">Reconectar</button><button class="botao" data-ec-pedir="${esc(l.id)}">Pedir mudança</button>
+      <button class="botao primario" data-ec-analisar="${esc(l.id)}">Analisar agora</button></div></article>`;
+}
+
+async function ecConectar(dados, recarregar, existente) {
+  const clientes = await api("GET", "clientes").catch(() => []);
+  const opcoesCli = [["", "—"], ...clientes.map((c) => [c.id, c.nome])];
+  const plat = existente?.plataforma || "shopify";
+  dialogo({
+    titulo: existente ? `Reconectar ${existente.nome}` : "Conectar loja",
+    corpo: `<div class="campos">
+      ${campo({ nome: "plataforma", rotulo: "Plataforma", tipo: "select", valor: plat, opcoes: [["shopify", "Shopify"], ["tray", "Tray"]] })}
+      ${campo({ nome: "nome", rotulo: "Nome da loja", valor: existente?.nome || "" })}
+      ${campo({ nome: "cliente_id", rotulo: "Cliente", tipo: "select", valor: existente?.cliente_id || "", opcoes: opcoesCli })}
+      <div class="largo ec-so shopify">
+        ${campo({ nome: "dominio_shopify", rotulo: "Endereço .myshopify.com", valor: existente?.plataforma === "shopify" ? existente.dominio : "", largo: true, ajuda: "Ex.: minhaloja.myshopify.com (em Configurações → Domínios)" })}
+        ${campo({ nome: "token", rotulo: "Token do app (shpat_…)", largo: true, ajuda: "Ou preencha Client ID e Client secret abaixo (app do Dev Dashboard)" })}
+        ${campo({ nome: "client_id", rotulo: "Client ID" })}${campo({ nome: "client_secret", rotulo: "Client secret" })}
+        <p class="sub">Na Shopify do cliente: Configurações → Apps → Desenvolver apps (ou Dev Dashboard) → criar app com as permissões
+          read/write_products, read_orders, read/write_discounts, read_reports e read_inventory → instalar e copiar o token.</p></div>
+      <div class="largo ec-so tray">
+        ${campo({ nome: "dominio_tray", rotulo: "Endereço da API da loja", valor: existente?.plataforma === "tray" ? existente.dominio : "", largo: true, ajuda: "Aparece em Meus aplicativos junto do code (ex.: https://www.loja.com.br/web_api)" })}
+        ${campo({ nome: "code", rotulo: "Code (Meus aplicativos → app HAIZEN)", largo: true })}
+        ${dados.tray_app ? "" : '<p class="traf-estado erro">Antes, cadastre as chaves do app da HAIZEN na Tray em Configurar.</p>'}</div>
+      ${campo({ nome: "objetivo", rotulo: "Objetivo e observações (vai para a análise)", tipo: "textarea", valor: existente?.objetivo || "", largo: true })}
+    </div><p class="sub">Os acessos ficam criptografados só neste computador.</p>`,
+    aoAbrir: () => {
+      const sel = $("#dialogo [name=plataforma]");
+      const trocar = () => $$("#dialogo .ec-so").forEach((el) => { el.hidden = !el.classList.contains(sel.value); });
+      sel.addEventListener("change", trocar); trocar();
+      if (existente) sel.disabled = true;
+    },
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Conectar e testar", classe: "primario", enviar: true, acao: async (v) => {
+      v.plataforma = existente?.plataforma || v.plataforma;
+      v.dominio = v.plataforma === "shopify" ? v.dominio_shopify : v.dominio_tray;
+      if (existente) v.id = existente.id;
+      const l = await api("POST", "ecommerce/lojas", v);
+      avisar(`${l.nome} conectada`); recarregar();
+    } }],
+  });
+}
+
+function ecAjustar(a, recarregar) {
+  const d = a.detalhes || {};
+  const camposPor = {
+    cupom: [["codigo", "Código", "text"], ["valor", "Valor", "number"], ["tipo", "Tipo", "select", [["percentual", "%"], ["valor", "R$"]]], ["inicio", "Início", "date"], ["fim", "Fim", "date"], ["minimo", "Pedido mínimo (R$)", "number"], ["limite_usos", "Limite de usos (0 = sem)", "number"]],
+    desconto_automatico: [["titulo", "Título", "text"], ["valor", "Valor", "number"], ["tipo", "Tipo", "select", [["percentual", "%"], ["valor", "R$"]]], ["inicio", "Início", "date"], ["fim", "Fim", "date"], ["minimo", "Pedido mínimo (R$)", "number"]],
+    preco_promocional: [["preco_promocional", "Preço promocional (R$)", "number"], ["inicio", "Início", "date"], ["fim", "Fim", "date"]],
+    preco: [["preco_novo", "Preço novo (R$)", "number"]],
+    descricao_seo: [["seo_titulo", "Título SEO", "text"], ["seo_descricao", "Meta descrição", "textarea"], ["descricao_html", "Descrição (HTML)", "textarea"]],
+  }[a.tipo] || [];
+  dialogo({
+    titulo: `Ajustar · ${a.titulo}`,
+    corpo: `<div class="campos">${camposPor.map(([n, r, t, ops]) => campo({ nome: n, rotulo: r, tipo: t, valor: d[n] ?? "", opcoes: ops, largo: t === "textarea" || a.tipo === "descricao_seo" })).join("")}</div>
+      <p class="sub">Salvar e aplicar já muda a loja.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar e aplicar", classe: "primario", enviar: true, acao: async (v) => {
+      const novo = { ...d };
+      for (const [n, , t] of camposPor) novo[n] = t === "number" ? (v[n] === "" ? 0 : +v[n]) : v[n];
+      delete novo._aplicado;
+      const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, { detalhes: novo });
+      if (r.status === "erro") throw new Error(`Não aplicou: ${r.resultado}`);
+      avisar(r.resultado || "Aplicado"); recarregar();
+    } }],
+  });
+}
+
+function ecPedir(l, recarregar) {
+  dialogo({
+    titulo: `Pedir mudança · ${l.nome}`,
+    corpo: `<p>Escreva o que quer (ex.: "cupom BLACK15 de 15% na loja toda de 20 a 30/11", "promoção do Tênis X por R$ 199 até domingo").
+      O Jarvis monta a proposta e ela aparece aqui para você aprovar.</p>
+      <div class="campos">${campo({ nome: "pedido", rotulo: "Pedido", tipo: "textarea", largo: true, obrig: true })}</div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Mandar para o Jarvis", classe: "primario", enviar: true, acao: async (v) => {
+      avisar("O Jarvis está montando a proposta…");
+      await api("POST", "jarvis/mensagem", { texto: `Na loja "${l.nome}" (id ${l.id}): ${v.pedido}. Monte a proposta com ecommerce_propor e NÃO aplique: ela fica na tela E-commerce para eu aprovar.` });
+      avisar("Proposta pronta: confira em Esperando sua aprovação"); recarregar();
+    } }],
+  });
+}
+
+ROTAS.ecommerce = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>E-commerce</h1><p class="sub" id="ec-sub">Lojas dos clientes: análise diária e mudanças com a sua aprovação.</p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ec-config">Configurar</button><button class="botao" id="ec-conectar">Conectar loja</button><button class="botao primario" id="ec-analisar">Analisar todas</button></div></div>
+    <div id="ec-corpo"><p class="vazio">Carregando…</p></div>`;
+  let dados = null;
+  let timer = null;
+  const corpo = $("#ec-corpo");
+  const desenhar = async () => {
+    if (!document.body.contains(corpo)) { clearInterval(timer); return; }
+    dados = await api("GET", "ecommerce");
+    const { lojas, estado, config: cfg } = dados;
+    $("#ec-sub").textContent = `Shopify e Tray: análise todo dia às ${cfg.horario}. Nada muda nas lojas sem a sua aprovação.`;
+    const propostas = lojas.flatMap((l) => l.propostas);
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>Analisando ${esc(estado.fazendo)}… leva 1 a 3 minutos por loja.</div>` : "";
+    const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    corpo.innerHTML = lojas.length ? `${fazendo}${erro}
+      <section class="traf-secao"><h2>Esperando sua aprovação ${propostas.length ? `<span class="selo">${propostas.length}</span>` : ""}</h2>
+        ${propostas.length ? `<div class="traf-acoes">${propostas.map(ecCartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma mudança pendente.</p>'}</section>
+      <section class="traf-secao"><h2>Lojas</h2><div class="traf-contas">${lojas.map(ecCartaoLoja).join("")}</div></section>`
+      : `${erro}<section class="bloco traf-conectar"><h2>Conectar a primeira loja</h2>
+        <p><strong>Shopify:</strong> na loja do cliente, crie um app próprio com as permissões de produtos, pedidos, descontos e relatórios, instale e copie o token. Funciona na hora.</p>
+        <p><strong>Tray:</strong> a HAIZEN precisa ser parceira Tray (cadastro gratuito em partners.tray.com.br) para ter as chaves do app. Depois, cada cliente instala o app da HAIZEN em Meus aplicativos e você cola o code aqui.</p>
+        <button class="botao primario" id="ec-primeira">Conectar loja</button></section>`;
+    $("#ec-primeira")?.addEventListener("click", () => ecConectar(dados, desenhar));
+    $$("[data-ec-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const a = propostas.find((x) => String(x.id) === b.dataset.ecAprovar);
+      if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar na loja ${a.loja_nome}: ${a.titulo}?`, "Aplicar"))) return;
+      b.disabled = true;
+      try { const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+    }));
+    $$("[data-ec-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try { await api("POST", `ecommerce/acoes/${b.dataset.ecRejeitar}/rejeitar`, {}); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-ec-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => ecAjustar(propostas.find((x) => String(x.id) === b.dataset.ecAjustar), desenhar)));
+    $$("[data-ec-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      try { await api("POST", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecAnalisar)}/analisar`, {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-ec-reconectar]", corpo).forEach((b) => b.addEventListener("click", () => ecConectar(dados, desenhar, lojas.find((l) => l.id === b.dataset.ecReconectar))));
+    $$("[data-ec-pedir]", corpo).forEach((b) => b.addEventListener("click", () => ecPedir(lojas.find((l) => l.id === b.dataset.ecPedir), desenhar)));
+    $$("[data-ec-ativo]", corpo).forEach((cx) => cx.addEventListener("change", async () => {
+      try { await api("POST", `ecommerce/lojas/${encodeURIComponent(cx.dataset.ecAtivo)}`, { ativo: cx.checked }); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-ec-remover]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      if (!(await confirmarAcao("Remover esta loja do Jarvis? O acesso guardado é apagado (a loja em si não muda).", "Remover"))) return;
+      try { await api("DELETE", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecRemover)}`); desenhar(); } catch (e) { avisar(e.message); }
+    }));
+    $$("[data-ec-editar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const l = lojas.find((x) => x.id === b.dataset.ecEditar);
+      const clientes = await api("GET", "clientes").catch(() => []);
+      dialogo({ titulo: l.nome, corpo: `<div class="campos">${campo({ nome: "nome", rotulo: "Nome", valor: l.nome })}
+          ${campo({ nome: "cliente_id", rotulo: "Cliente", tipo: "select", valor: l.cliente_id || "", opcoes: [["", "—"], ...clientes.map((c) => [c.id, c.nome])] })}
+          ${campo({ nome: "objetivo", rotulo: "Objetivo e observações (margem mínima, produtos que não podem ter desconto, datas)", tipo: "textarea", valor: l.objetivo, largo: true })}</div>`,
+        acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `ecommerce/lojas/${encodeURIComponent(l.id)}`, v); desenhar(); } }] });
+    }));
+    $("#ec-analisar").disabled = !!estado.fazendo || !lojas.length;
+  };
+  $("#ec-analisar").addEventListener("click", async () => {
+    try { await api("POST", "ecommerce/analisar", {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+  });
+  $("#ec-conectar").addEventListener("click", () => dados && ecConectar(dados, desenhar));
+  $("#ec-config").addEventListener("click", () => dados && dialogo({
+    titulo: "E-commerce",
+    corpo: `<div class="campos">${campo({ nome: "agenda_ativa", rotulo: "Análise diária", tipo: "checkbox", valor: dados.config.agenda_ativa })}
+      ${campo({ nome: "horario", rotulo: "Horário", tipo: "time", valor: dados.config.horario })}
+      <p class="largo sub">App da HAIZEN na Tray (Tray Partners → seu aplicativo). ${dados.tray_app ? "Já cadastrado: preencha só para trocar." : "Ainda não cadastrado."}</p>
+      ${campo({ nome: "tray_consumer_key", rotulo: "Consumer key" })}${campo({ nome: "tray_consumer_secret", rotulo: "Consumer secret" })}</div>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", "ecommerce/config", v); avisar("Salvo"); desenhar(); } }],
+  }));
+  await desenhar();
+  timer = setInterval(() => {
+    if (document.hidden || $("#dialogo").open) return;
+    if (dados?.estado?.fazendo) desenhar().catch(() => {});
   }, 8000);
 };
 

@@ -149,3 +149,12 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - Peças visuais passam por um diretor de arte (outra chamada do Claude) antes de chegarem até você; se ele reprovar, o agente corrige uma vez. O modelo dela se escolhe em Uso do Claude ("Checagem de qualidade"); para desligar, `HAIZEN_QA=0`.
 - Vídeo: animações com GSAP/Lottie quadro a quadro e legenda automática palavra a palavra (`legendar`, Whisper local).
 - O token do Instagram fica criptografado pela sua conta do Windows (DPAPI).
+
+## E-commerce (Shopify e Tray dos clientes)
+
+- Tela **E-commerce**: cada loja com vendas de ontem, 7 e 30 dias, ticket médio, conversão (Shopify), mais vendidos, estoque acabando e produtos parados. Análise todo dia às 07:40 (entra no resumo da manhã).
+- O Jarvis **propõe** (cupom, desconto automático, promoção de/por, preço, descrição/SEO, pausar/ativar produto, desativar cupom) e **você aprova** (ou ajusta e aprova). Quem aplica é o código, exatamente o que está na proposta. Na Shopify, a promoção de/por volta ao preço antigo sozinha no dia seguinte ao fim.
+- Pelo Jarvis: "cria um cupom BLACK15 de 15% na loja X até domingo" → ele monta a proposta, mostra e só aplica com o seu OK.
+- **Conectar Shopify**: na loja do cliente, criar um app próprio (Configurações → Apps → Desenvolver apps, ou Dev Dashboard) com read/write_products, read_orders, read/write_discounts, read_reports, read_inventory; colar o token (shpat_…) ou Client ID + secret.
+- **Conectar Tray**: a HAIZEN precisa ser parceira Tray (partners.tray.com.br) e ter um aplicativo; cadastre consumer key/secret em E-commerce → Configurar. Cada cliente instala o app em Meus aplicativos; cole o endereço da API e o code.
+- Os acessos ficam criptografados (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`, fora do banco e do backup.

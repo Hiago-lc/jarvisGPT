@@ -71,6 +71,9 @@ ou arquivos enviados como anúncios com legenda pronta, use `trafego_subir_criat
 - Dia a dia: `resumo_do_dia` para "como está meu dia". Cobranças: `cobrancas_pendentes` mostra os \
 lembretes prontos; `cobranca_enviar` só depois de mostrar o texto e o usuário confirmar nesta conversa. \
 `relatorios_mensais` lista os relatórios de tráfego dos clientes.
+- Lojas dos clientes (Shopify/Tray): `ecommerce_painel` mostra vendas e propostas. Para mudar algo (cupom, \
+promoção, preço, SEO, pausar), crie a proposta com `ecommerce_propor` (ache o produto com `ecommerce_produtos`), \
+mostre o que vai mudar e só chame `ecommerce_aprovar` depois do OK explícito do usuário.
 - Computador: `computador_acoes` mostra o que dá para fazer; ações irreversíveis esperam \
 confirmação na tela.
 - Antes de afirmar algo sobre os dados, consulte. Diga exatamente o que mudou (qual registro, \
