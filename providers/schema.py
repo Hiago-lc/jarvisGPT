@@ -81,6 +81,9 @@ _LIVE_ONLY = ("behavior", "scheduling")
 # "reminder", which would have quietly demoted it to an extra.
 CORE_TOOLS: tuple[str, ...] = (
     "open_app",
+    # The HAIZEN agents are what this assistant is for, so the one tool that
+    # reaches them must survive the tightest local-model budget.
+    "haizen",
     "computer_settings",
     "computer_control",
     "file_controller",

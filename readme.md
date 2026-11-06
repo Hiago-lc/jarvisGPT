@@ -1,3 +1,5 @@
+> **HAIZEN:** agentes da agência comandados por voz e criados com o Claude. Veja [o guia](LEIA-ME-HAIZEN.md).
+
 > **Sem API de créditos:** inicie com `python start_local.py` (tudo no seu PC) ou `python start_local.py --perfil hibrido` (Groq gratuito). Veja [o guia](LEIA-ME-LOCAL.md).
 
 > **Atualização: agilidade, Google Agenda e memória persistente:** leia [este guia](GOOGLE-AGENDA-E-MEMORIA.md).
