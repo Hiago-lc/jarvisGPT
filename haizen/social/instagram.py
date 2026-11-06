@@ -47,16 +47,28 @@ def token() -> str:
     if t:
         return t
     try:
-        return json.loads(_arq_token().read_text(encoding="utf-8")).get("token", "")
+        guardado = json.loads(_arq_token().read_text(encoding="utf-8")).get("token", "")
     except (OSError, ValueError):
         return ""
+    from haizen import segredo
+    try:
+        t = segredo.abrir(guardado)
+    except OSError:
+        return ""
+    if t and not segredo.fechado(guardado):
+        try:
+            salvar_token(t)              # token antigo em texto puro: passa a ficar criptografado
+        except (OSError, ValueError):
+            pass
+    return t
 
 
 def salvar_token(t: str) -> None:
     t = (t or "").strip()
     if len(t) < 30 or " " in t:
         raise ValueError("isso não parece um token de acesso da Meta")
-    _arq_token().write_text(json.dumps({"token": t, "em": time.time()}), encoding="utf-8")
+    from haizen import segredo
+    _arq_token().write_text(json.dumps({"token": segredo.fechar(t), "em": time.time()}), encoding="utf-8")
 
 
 def apagar_token() -> None:

@@ -230,6 +230,122 @@ def render(a) -> None:
     print(f"OK {saida} ({a.largura}x{a.altura}{' x' + str(a.escala) if a.escala != 1 else ''})")
 
 
+# Controla o relógio de tudo o que anima na página: CSS/Web Animations, GSAP
+# (window.timeline, ou a linha do tempo global), Lottie e uma função window.quadro(ms).
+_TEMPO_JS = """(t) => {
+  document.getAnimations().forEach(x => { try { x.pause(); x.currentTime = t; } catch (e) {} });
+  const s = t / 1000;
+  const tl = window.timeline || window.tl;
+  if (tl && tl.seek) { tl.pause(); tl.seek(s, false); }
+  else if (window.gsap && window.gsap.globalTimeline) {
+    const g = window.gsap.globalTimeline;
+    if (window.__inicioGsap === undefined) { window.__inicioGsap = g.time(); g.pause(); }
+    g.time(window.__inicioGsap + s, false);
+  }
+  if (window.lottie && window.lottie.goToAndStop) { try { window.lottie.goToAndStop(t, false); } catch (e) {} }
+  if (window.quadro) window.quadro(t);
+}"""
+
+
+def _ass_tempo(s: float) -> str:
+    h, r = divmod(max(0.0, s), 3600)
+    m, r = divmod(r, 60)
+    return f"{int(h)}:{int(m):02d}:{r:05.2f}"
+
+
+def _srt_tempo(s: float) -> str:
+    ms = int(round(max(0.0, s) * 1000))
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    seg, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{seg:02d},{ms:03d}"
+
+
+def _cor_ass(hexa: str) -> str:
+    h = (hexa or "#FFD400").lstrip("#")
+    if len(h) != 6:
+        h = "FFD400"
+    return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}&".upper()
+
+
+def palavras_do_audio(video: Path) -> list[dict]:
+    """[{texto, ini, fim}] de cada palavra falada (Whisper local)."""
+    from faster_whisper import WhisperModel
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "a.wav"
+        subprocess.run([ffmpeg(), "-nostdin", "-y", "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1",
+                        "-ar", "16000", str(wav)], check=True, stdin=subprocess.DEVNULL)
+        nome = os.environ.get("JARVIS_WHISPER_LEGENDAS", "small")
+        modelo = WhisperModel(nome, device="cpu", compute_type="int8")
+        segs, _ = modelo.transcribe(str(wav), language="pt", word_timestamps=True, vad_filter=True,
+                                    condition_on_previous_text=False)
+        return [{"texto": w.word.strip(), "ini": float(w.start), "fim": float(w.end)}
+                for sg in segs for w in (sg.words or []) if w.word.strip()]
+
+
+def montar_legendas(palavras: list[dict], por_linha: int, largura: int, altura: int, cor: str,
+                    fonte: str, margem_baixo: int) -> tuple[str, str]:
+    """(ASS com a palavra falada em destaque, SRT simples)."""
+    grupos = [palavras[i:i + por_linha] for i in range(0, len(palavras), por_linha)]
+    tamanho = max(36, int(largura * 0.068))
+    ass = [
+        "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {largura}", f"PlayResY: {altura}", "WrapStyle: 0", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding",
+        f"Style: Leg,{fonte},{tamanho},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,"
+        f"{max(3, tamanho // 12)},2,2,{int(largura * 0.08)},{int(largura * 0.08)},{margem_baixo},1",
+        "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    srt = []
+    destaque = _cor_ass(cor)
+    for n, g in enumerate(grupos, 1):
+        fim_grupo = g[-1]["fim"]
+        prox = grupos[n][0]["ini"] if n < len(grupos) else fim_grupo + 0.4
+        fim_grupo = min(max(fim_grupo, g[-1]["ini"] + 0.25), prox)
+        for i, w in enumerate(g):
+            ini = w["ini"]
+            fim = g[i + 1]["ini"] if i + 1 < len(g) else fim_grupo
+            if fim <= ini:
+                continue
+            texto = " ".join((f"{{\\c{destaque}}}{x['texto'].upper()}{{\\c&H00FFFFFF&}}" if j == i
+                              else x["texto"].upper()) for j, x in enumerate(g))
+            ass.append(f"Dialogue: 0,{_ass_tempo(ini)},{_ass_tempo(fim)},Leg,,0,0,0,,{texto}")
+        srt += [str(n), f"{_srt_tempo(g[0]['ini'])} --> {_srt_tempo(fim_grupo)}", " ".join(x["texto"] for x in g), ""]
+    return "\n".join(ass) + "\n", "\n".join(srt)
+
+
+def legendar(a) -> None:
+    """Legenda queimada no vídeo, palavra a palavra, a partir da fala (Whisper local).
+    Grava também o .srt ao lado da saída."""
+    video, saida = Path(a.video), Path(a.saida)
+    palavras = palavras_do_audio(video)
+    if not palavras:
+        sys.exit("ERRO: não encontrei fala no vídeo para legendar")
+    largura, altura = _dimensoes(video)
+    margem = a.margem if a.margem is not None else int(altura * 0.2)
+    ass, srt = montar_legendas(palavras, a.por_linha, largura, altura, a.cor, a.fonte, margem)
+    saida.with_suffix(".srt").write_text(srt, encoding="utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "leg.ass").write_text(ass, encoding="utf-8")
+        r = subprocess.run([ffmpeg(), "-nostdin", "-y", "-loglevel", "error", "-i", str(video.resolve()), "-vf",
+                            "ass=leg.ass", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                            "-c:a", "copy", "-movflags", "+faststart", str(saida.resolve())], cwd=tmp,
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace")
+        if r.returncode != 0:
+            sys.exit(f"ERRO: o ffmpeg não queimou a legenda ({(r.stderr or '')[-300:]}). O .srt ficou em "
+                     f"{saida.with_suffix('.srt')}; um ffmpeg completo (winget install Gyan.FFmpeg) resolve.")
+    print(f"OK {saida} ({len(palavras)} palavras legendadas; .srt ao lado)")
+
+
+def _dimensoes(video: Path) -> tuple[int, int]:
+    r = subprocess.run([ffmpeg(), "-nostdin", "-i", str(video)], capture_output=True, text=True, errors="replace",
+                       stdin=subprocess.DEVNULL)
+    import re as _re
+    m = _re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", r.stderr or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (1080, 1920)
+
+
 def animar(a) -> None:
     """HTML com animações CSS -> MP4, quadro a quadro (sem perder quadros)."""
     from playwright.sync_api import sync_playwright
@@ -241,8 +357,7 @@ def animar(a) -> None:
         _abrir(page, html, a.largura, a.altura)
         for i in range(total):
             t = i * 1000 / a.fps
-            page.evaluate("""(t) => { document.getAnimations().forEach(x => { x.pause(); x.currentTime = t; });
-                                      if (window.quadro) window.quadro(t); }""", t)
+            page.evaluate(_TEMPO_JS, t)
             page.screenshot(path=f"{tmp}/q{i:05d}.png", clip={"x": 0, "y": 0, "width": a.largura, "height": a.altura})
         b.close()
         cmd = [ffmpeg(), "-y", "-loglevel", "error", "-framerate", str(a.fps), "-i", f"{tmp}/q%05d.png"]
@@ -306,6 +421,10 @@ def main(argv=None) -> None:
     s.add_argument("--largura", type=int, required=True); s.add_argument("--altura", type=int, required=True)
     s.add_argument("--segundos", type=float, default=8); s.add_argument("--fps", type=int, default=30)
     s.add_argument("--musica", default=""); s.set_defaults(f=animar)
+    s = sub.add_parser("legendar"); s.add_argument("video"); s.add_argument("saida")
+    s.add_argument("--por-linha", type=int, default=3); s.add_argument("--cor", default="#FFD400")
+    s.add_argument("--fonte", default="Montserrat ExtraBold"); s.add_argument("--margem", type=int, default=None)
+    s.set_defaults(f=legendar)
     s = sub.add_parser("video"); s.add_argument("saida"); s.add_argument("--entradas", nargs="+", required=True)
     s.add_argument("--largura", type=int, default=1080); s.add_argument("--altura", type=int, default=1920)
     s.add_argument("--dur-imagem", type=float, default=3); s.add_argument("--max-clipe", type=float, default=5)

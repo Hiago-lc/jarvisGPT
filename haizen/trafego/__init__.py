@@ -785,6 +785,13 @@ def enviar_whatsapp_resumo() -> bool:
     c = config()
     if not (c["whatsapp_ativo"] and c["whatsapp_contato"]):
         return False
+    try:
+        from haizen import rotina
+        rc = rotina.config()
+        if rc["resumo_ativo"] and rc["resumo_whatsapp"]:
+            return False            # o tráfego vai junto no resumo da manhã: uma mensagem só
+    except Exception:  # noqa: BLE001
+        pass
     from core import whatsapp_web
     ok, _code, r = whatsapp_web.run_op({"op": "send", "recipient": c["whatsapp_contato"], "text": resumo_texto()},
                                        timeout=60)

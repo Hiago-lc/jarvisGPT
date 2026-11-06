@@ -174,6 +174,9 @@ class TrafegoTests(unittest.TestCase):
         with patch.object(whatsapp_web, "run_op", return_value=(True, 0, "ok")) as op:
             self.assertFalse(self.t.enviar_whatsapp_resumo())                     # desligado
             self.t.salvar_config({"whatsapp_ativo": True, "whatsapp_contato": "Eu mesmo"})
+            self.assertFalse(self.t.enviar_whatsapp_resumo())                     # vai no resumo da manhã
+            from haizen import rotina
+            rotina.salvar_config({"resumo_whatsapp": False})
             self.assertTrue(self.t.enviar_whatsapp_resumo())
         self.assertEqual(op.call_args[0][0]["recipient"], "Eu mesmo")
 

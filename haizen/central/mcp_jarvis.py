@@ -362,6 +362,37 @@ def trafego_conta(conta_id: str, campos: dict) -> dict:
     return _api("PATCH", f"trafego/contas/{urllib.parse.quote(conta_id, safe='')}", dict(campos or {}))
 
 
+# ── rotina (resumo do dia, cobranças, relatórios mensais) ─────────────────
+@mcp.tool()
+def resumo_do_dia() -> dict:
+    """O resumo de hoje: agenda, tarefas atrasadas e do dia, entregas esperando aprovação, o que
+    receber e pagar, tráfego e Instagram. Use quando perguntarem "como está o dia", "o que tenho hoje"."""
+    return _api("GET", "rotina/resumo")
+
+
+@mcp.tool()
+def cobrancas_pendentes() -> list:
+    """Lembretes de cobrança prontos (texto, cliente, valor, vencimento), esperando o OK do dono.
+    Para enviar um, use cobranca_enviar: só depois de o dono confirmar NESTA conversa."""
+    return _api("GET", "rotina").get("cobrancas", [])
+
+
+@mcp.tool()
+def cobranca_enviar(cobranca_id: int, texto: str = "") -> dict:
+    """Envia UM lembrete de cobrança ao cliente pelo WhatsApp. SÓ chame depois de mostrar o texto
+    ao dono e ele confirmar explicitamente nesta conversa. `texto` vazio = o texto preparado."""
+    corpo = {"texto": texto} if texto.strip() else {}
+    return _api("POST", f"rotina/cobrancas/{int(cobranca_id)}/enviar", corpo)
+
+
+@mcp.tool()
+def relatorios_mensais() -> list:
+    """Relatórios mensais de tráfego dos clientes (status gerando, pronto, aprovado, erro), com a
+    mensagem pronta para o cliente."""
+    return [{k: r.get(k) for k in ("id", "cliente", "conta", "mes", "status", "arquivo", "mensagem", "erro")}
+            for r in _api("GET", "rotina").get("relatorios", [])]
+
+
 # ── social (Instagram da HAIZEN) ───────────────────────────────────────────
 @mcp.tool()
 def social_painel() -> dict:

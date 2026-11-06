@@ -135,3 +135,17 @@ A aba **Social** cuida do Instagram da própria agência pela API oficial da Met
 - **Raio-x de referências**: cole "@perfil" e o link de um post/reels de uma conta profissional; o Jarvis explica gancho, ritmo, legenda e CTA e sugere 3 adaptações para a HAIZEN.
 
 Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a passo aparece na aba). O token fica só no PC (`%LOCALAPPDATA%\JarvisGPT\instagram_token.json`) e vence a cada ~60 dias.
+
+## Rotina diária (Painel → Rotina)
+
+- **Resumo da manhã** (08:00): agenda, tarefas atrasadas, entregas para aprovar, o que receber/pagar, tráfego e Instagram. Aparece no topo do Painel e vai só para o SEU WhatsApp (o contato da Rotina ou o da tela Tráfego). O resumo do tráfego vai junto, numa mensagem só.
+- **Backup diário** do banco e das configurações (sem tokens) em `Meu Drive\JARVIS - backups\AAAA-MM-DD`, guardando 14 dias. Para restaurar: feche o Jarvis e copie `haizen.db` de volta para `%LOCALAPPDATA%\JarvisGPT`.
+- **Cobranças**: 2 dias antes, no dia e 3 dias depois do vencimento o Jarvis prepara o lembrete. Nada sai sozinho: você revisa o texto e clica em Enviar. Em "Como pagar" ponha a chave PIX/link.
+- **Relatório mensal de tráfego** (dia 1): PDF com os números do mês de cada conta ativa. Você aprova (o PDF vai para a pasta do cliente, em "Relatórios de tráfego") e envia a mensagem pronta pelo WhatsApp.
+
+## Qualidade dos agentes
+
+- Cada função tem uma base de conhecimento sênior em `haizen/agentes/conhecimento/`. Para trocar por um texto seu, ponha `<nome>.md` em `%LOCALAPPDATA%\JarvisGPT\conhecimento\`.
+- Peças visuais passam por um diretor de arte (outra chamada do Claude) antes de chegarem até você; se ele reprovar, o agente corrige uma vez. Desligue em Uso do Claude (área "Checagem de qualidade") ou com `HAIZEN_QA=0`.
+- Vídeo: animações com GSAP/Lottie quadro a quadro e legenda automática palavra a palavra (`legendar`, Whisper local).
+- O token do Instagram fica criptografado pela sua conta do Windows (DPAPI).

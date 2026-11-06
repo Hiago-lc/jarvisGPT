@@ -36,8 +36,10 @@ CREATE INDEX IF NOT EXISTS claude_uso_data ON claude_uso(criado_em);
 
 # Modelos que a pessoa escolhe por área. "" = o padrão do Claude Code.
 AREAS = {"jarvis": "Jarvis (conversa)", "agentes": "Agentes (produção)", "gerente": "Gerente (planos)",
-         "trafego": "Gestor de tráfego", "social": "Social (Instagram)"}
-PADRAO_MODELOS = {"jarvis": "sonnet", "agentes": "", "gerente": "sonnet", "trafego": "sonnet", "social": "sonnet"}
+         "trafego": "Gestor de tráfego", "social": "Social (Instagram)",
+         "qualidade": "Checagem de qualidade"}
+PADRAO_MODELOS = {"jarvis": "sonnet", "agentes": "", "gerente": "sonnet", "trafego": "sonnet", "social": "sonnet",
+                  "qualidade": "sonnet"}
 MODELOS = ("", "sonnet", "opus", "haiku")
 _LIMITE = re.compile(r"usage limit|limit reached|rate limit|limite de uso|resets? (?:at|in)|5-hour limit|weekly limit",
                      re.I)
@@ -64,7 +66,7 @@ def config() -> dict:
         c = {}
     return {"modelos": {**PADRAO_MODELOS, **(c.get("modelos") or {})}, "limite": c.get("limite") or {},
             "notificacoes": {"som": True, "windows": True, **(c.get("notificacoes") or {})},
-            "sessoes": c.get("sessoes") or {}}
+            "sessoes": c.get("sessoes") or {}, "qualidade": c.get("qualidade", True)}
 
 
 def salvar_config(mud: dict) -> dict:
@@ -72,6 +74,8 @@ def salvar_config(mud: dict) -> dict:
     for area, m in (mud.get("modelos") or {}).items():
         if area in AREAS and m in MODELOS:
             c["modelos"][area] = m
+    if "qualidade" in mud:
+        c["qualidade"] = bool(mud["qualidade"])
     for k in ("som", "windows"):
         if k in (mud.get("notificacoes") or {}):
             c["notificacoes"][k] = bool(mud["notificacoes"][k])
@@ -205,4 +209,5 @@ def resumo(dias: int = 7) -> dict:
             "por_origem": {o: soma(rs) for o, rs in por_origem.items()},
             "por_dia": [{"dia": d, **soma(rs)} for d, rs in sorted(por_dia.items())],
             "maiores": maiores, "recentes": linhas[:25], "limite": limite,
-            "modelos": c["modelos"], "areas": AREAS, "notificacoes": c["notificacoes"]}
+            "modelos": c["modelos"], "areas": AREAS, "notificacoes": c["notificacoes"],
+            "qualidade": c["qualidade"]}

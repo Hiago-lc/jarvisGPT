@@ -462,7 +462,9 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "- `cores(imagem)`: as cores de um logo ou peça.",
         "- `render(html, saida, largura, altura)`: HTML → PNG/JPG no tamanho exato; saída .pdf para documentos "
         "(ex.: largura 1240, altura 1754); `pagina_inteira=true` para sites.",
-        "- `animar(html, saida, largura, altura, segundos, musica)`: HTML com animações CSS/JS → MP4.",
+        "- `animar(html, saida, largura, altura, segundos, musica)`: HTML com animações → MP4 (CSS, GSAP com "
+        "`window.timeline = gsap.timeline()`, Lottie).",
+        "- `legendar(video, saida, palavras_por_vez, cor_destaque)`: legenda queimada palavra a palavra a partir da fala.",
         "- `video(saida, entradas, largura, altura, zoom, musica, max_clipe)`: junta imagens e clipes num vídeo.",
         "- `quadros(video, segundos)`: extrai quadros para você abrir e conferir.",
         "- `ffmpeg(argumentos)`: o ffmpeg direto (último argumento = arquivo de saída nesta pasta).",
@@ -501,7 +503,119 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
     ]
     if agente in VISUAIS:
         linhas += ["", _DIRECAO_DE_ARTE.format(aprovados=(pasta_aprovados() or Path("—")).as_posix())]
+    saber = conhecimento(agente)
+    if saber:
+        linhas += ["", "## Conhecimento da sua função (padrão sênior: aplique, não cite)", saber]
     return "\n".join(linhas) + "\n"
+
+
+CONHECIMENTO = Path(__file__).resolve().parent / "agentes" / "conhecimento"
+
+
+def conhecimento(agente: str) -> str:
+    """A base de conhecimento sênior da função. O dono pode trocar o texto por um
+    arquivo seu em <dados>/conhecimento/<agente>.md."""
+    try:
+        from core.data_paths import data_dir
+        proprio = Path(data_dir()) / "conhecimento" / f"{agente}.md"
+        if proprio.is_file():
+            return proprio.read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        pass
+    arq = CONHECIMENTO / f"{agente}.md"
+    return arq.read_text(encoding="utf-8").strip() if arq.is_file() else ""
+
+
+# ── checagem de qualidade (um segundo olhar antes de chegar até você) ──────
+_QA_EXT_IMG = (".png", ".jpg", ".jpeg")
+
+
+def _quadros_para_qa(video: Path, destino: Path) -> list[Path]:
+    from haizen.producao.ferramentas import ffmpeg as achar_ffmpeg
+    try:
+        exe = achar_ffmpeg()
+    except SystemExit:
+        return []
+    destino.mkdir(parents=True, exist_ok=True)
+    feitos = []
+    for seg in (0.8, 4.0, 9.0):
+        alvo = destino / f"{video.stem}-{seg:04.1f}s.jpg"
+        r = subprocess.run([exe, "-nostdin", "-y", "-loglevel", "error", "-ss", str(seg), "-i", str(video),
+                            "-frames:v", "1", "-q:v", "4", str(alvo)], capture_output=True, stdin=subprocess.DEVNULL,
+                           timeout=120)
+        if r.returncode == 0 and alvo.is_file():
+            feitos.append(alvo)
+    return feitos
+
+
+def arquivos_para_qa(pasta: Path) -> list[Path]:
+    if not pasta.is_dir():
+        return []
+    imgs = sorted(f for f in pasta.iterdir() if f.is_file() and f.suffix.lower() in _QA_EXT_IMG)[:8]
+    for v in sorted(pasta.glob("*.mp4"))[:2]:
+        imgs += _quadros_para_qa(v, pasta / "fontes" / "quadros-qa")
+    return imgs
+
+
+def _json_do_texto(texto: str) -> dict:
+    m = re.search(r"\{.*\}", texto or "", re.S)
+    try:
+        return json.loads(m.group(0)) if m else {}
+    except ValueError:
+        return {}
+
+
+def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> dict:
+    """Um diretor de arte (outra chamada, que não fez a peça) olha as finais. Se
+    reprovar, o agente corrige uma vez na mesma conversa. Devolve o resultado
+    final do agente e anota a nota no relatório."""
+    from haizen import uso
+    if os.environ.get("HAIZEN_QA", "1") == "0" or not uso.config().get("qualidade", True):
+        return r
+    arquivos = arquivos_para_qa(pasta)
+    if not arquivos:
+        return r
+    checagem = conhecimento(t["agente"]).split("## Checagem final")[-1] if "## Checagem final" in \
+        conhecimento(t["agente"]) else ""
+    prompt = (
+        "Você é o diretor de arte sênior da agência HAIZEN revisando peças ANTES de irem ao dono. Abra cada arquivo "
+        "abaixo com Read e avalie com rigor de agência premiada: impacto em 1 segundo, legibilidade no celular, "
+        "hierarquia, acabamento (alinhamento, respiro, contraste, cortes), fidelidade à marca, erros de português, "
+        "texto cortado, zonas seguras, promessas inventadas.\n"
+        f"{checagem.strip()}\n\nPedido original:\n{t['pedido'][:2500]}\n\nArquivos:\n"
+        + "\n".join(f"- {a.as_posix()}" for a in arquivos)
+        + '\n\nResponda SÓ com JSON: {"nota": 1-10, "aprovado": true|false, "problemas": ["arquivo: problema → como '
+          'corrigir", ...]}. Aprove (nota ≥ 7) se estiver pronto para um cliente exigente; problemas só os que importam.')
+    try:
+        qa = rodar_claude(["-p", "Revise as peças descritas na entrada e responda só com o JSON pedido.",
+                           "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools", "Read",
+                           "--add-dir", str(pasta), *_modelo_args(uso.modelo("qualidade"))],
+                          prompt, pasta / "fontes", CLAUDE_TIMEOUT, origem="qualidade",
+                          referencia=f"{t['id']} {t.get('titulo') or t['agente']}")
+    except Exception as e:  # noqa: BLE001 - a checagem nunca derruba a entrega
+        print(f"[HAIZEN] checagem de qualidade não rodou: {e}")
+        return r
+    veredito = _json_do_texto(qa.get("result", ""))
+    nota = veredito.get("nota")
+    problemas = [str(p) for p in (veredito.get("problemas") or [])][:10]
+    aprovado = bool(veredito.get("aprovado")) or (isinstance(nota, (int, float)) and nota >= 7)
+    if not veredito or aprovado or not r.get("session_id"):
+        r["result"] = (r.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10._" if nota else "")
+        return r
+    try:
+        r2 = executar_producao(
+            "O diretor de arte da HAIZEN revisou suas peças e NÃO aprovou ainda (nota "
+            f"{nota}/10). Corrija tudo abaixo, exporte de novo por cima dos mesmos arquivos e responda só com o "
+            "relatório curto:\n" + "\n".join(f"- {p}" for p in problemas),
+            pasta, [], modelo=modelo_agente, sessao=r["session_id"], referencia=f"{t['id']} correção da checagem")
+        arrumar_entrega(pasta, t["agente"])
+        r2["result"] = (r2.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10 na primeira versão; "
+                                                   f"corrigido: {'; '.join(problemas)[:600]}_")
+        return r2
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] correção da checagem falhou: {e}")
+        r["result"] = (r.get("result") or "") + "\n\n_Checagem de qualidade apontou: " + "; ".join(problemas)[:800] + "_"
+        return r
 
 
 def executar_local(prompt: str) -> str:
@@ -557,9 +671,11 @@ def executar(t: dict) -> Path:
                 store.atualizar(t["id"], pasta=str(pasta))
                 leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados()) if p is not None]
                 leitura = list(dict.fromkeys(leitura))
-                r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref,
-                                      modelo=uso.modelo("agentes", agente.extras.get("modelo", "")))
+                modelo_ag = uso.modelo("agentes", agente.extras.get("modelo", ""))
+                r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo_ag)
                 arrumar_entrega(pasta, t["agente"])
+                if t["agente"] in VISUAIS and not pergunta_do_agente(r["result"]):
+                    r = checar_qualidade(t, pasta, r, modelo_ag)
             texto = r["result"]
             pergunta = pergunta_do_agente(texto)
             if pergunta:

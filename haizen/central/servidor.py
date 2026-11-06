@@ -308,6 +308,8 @@ class _Handler(BaseHTTPRequestHandler):
                                         "info", "#/uso")
         if partes and partes[0] == "social":
             return self._social(metodo, partes[1:], q)
+        if partes and partes[0] == "rotina":
+            return self._rotina(metodo, partes[1:], q)
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
@@ -540,6 +542,53 @@ class _Handler(BaseHTTPRequestHandler):
                 motivo = re.search(r"(?:reason|question)=(\"[^\"]*\"|\S+)", r)
                 raise ValueError((motivo.group(1).strip('"') if motivo else r)[:300])
             return {"ok": True}
+        return _NAO_ACHOU
+
+    def _rotina(self, metodo, partes, q=None):
+        """Resumo da manhã, backup, cobranças e relatórios mensais."""
+        from haizen import rotina
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return rotina.painel()
+        if rota == "config" and metodo == "POST":
+            return rotina.salvar_config(self._corpo())
+        if rota == "resumo" and metodo == "GET":
+            return rotina.resumo()
+        if rota == "resumo" and partes[1:] == ["enviar"] and metodo == "POST":
+            return rotina.enviar_resumo()
+        if rota == "backup" and metodo == "POST":
+            return {"arquivo": str(rotina.fazer_backup())}
+        if rota == "cobrancas" and len(partes) == 1 and metodo == "POST":
+            return {"novas": rotina.gerar_cobrancas()}
+        if rota == "cobrancas" and len(partes) == 3 and metodo == "POST":
+            bid, acao = int(partes[1]), partes[2]
+            if acao == "enviar":
+                c = self._corpo()
+                return rotina.enviar_cobranca(bid, c.get("texto"), c.get("contato"))
+            if acao == "descartar":
+                return rotina.descartar_cobranca(bid)
+        if rota == "relatorios" and len(partes) == 1 and metodo == "POST":
+            c = self._corpo()
+            conta, mes = str(c.get("conta_id") or ""), str(c.get("mes") or "")
+            import threading as _th
+            if conta and mes:
+                _th.Thread(target=rotina.gerar_relatorio, args=(conta, mes), daemon=True).start()
+            else:
+                _th.Thread(target=rotina.gerar_relatorios_do_mes, daemon=True).start()
+            return {"ok": True}
+        if rota == "relatorios" and len(partes) >= 2:
+            rid = int(partes[1])
+            acao = partes[2] if len(partes) > 2 else ""
+            if acao == "aprovar" and metodo == "POST":
+                return rotina.aprovar_relatorio(rid)
+            if acao == "enviar" and metodo == "POST":
+                c = self._corpo()
+                return rotina.enviar_relatorio(rid, str(c.get("texto") or ""), str(c.get("contato") or ""))
+            if acao == "pdf" and metodo == "GET":
+                r = rotina.relatorio(rid)
+                if not Path(r["arquivo"]).is_file():
+                    raise KeyError("PDF não encontrado")
+                return _Arquivo(Path(r["arquivo"]).read_bytes(), "application/pdf")
         return _NAO_ACHOU
 
     def _social(self, metodo, partes, q=None):
@@ -841,6 +890,8 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                     trafego.iniciar_agenda()          # análise diária do Meta Ads
                     from haizen import social
                     social.iniciar_agenda()           # Instagram: análise semanal, publicações agendadas
+                    from haizen import rotina
+                    rotina.iniciar_agenda()           # resumo da manhã, backup, cobranças, relatório mensal
                 except Exception as e:  # noqa: BLE001
                     print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:

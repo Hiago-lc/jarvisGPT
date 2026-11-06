@@ -215,7 +215,7 @@ class ProducaoTests(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         base = Path(self.dir.name)
         shutil.copytree(RAIZ / "haizen" / "agentes", base / "agentes")
-        self.env = patch.dict(os.environ, {"HAIZEN_DB": str(base / "haizen.db"),
+        self.env = patch.dict(os.environ, {"HAIZEN_QA": "0", "HAIZEN_DB": str(base / "haizen.db"),
                                            "HAIZEN_AGENTES_DIR": str(base / "agentes"),
                                            "HAIZEN_ENTREGAS_DIR": str(base / "entregas")})
         self.env.start()

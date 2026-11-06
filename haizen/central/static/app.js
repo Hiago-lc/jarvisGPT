@@ -269,7 +269,7 @@ function barras(itens, chave, max) {
 
 ROTAS.painel = async () => {
   const p = lembrar("central.periodo", periodoPadrao("mes"));
-  const d = await api("GET", `painel?de=${p.de}&ate=${p.ate}`);
+  const [d, rot] = await Promise.all([api("GET", `painel?de=${p.de}&ate=${p.ate}`), api("GET", "rotina").catch(() => null)]);
   const sel = seletorPeriodo(p, (novo) => { guardar("central.periodo", novo); ROTAS.painel(); });
   const hoje = hojeIso();
   const proximas = d.proximas_tarefas.map((t) => {
@@ -280,6 +280,7 @@ ROTAS.painel = async () => {
   const funil = d.pipeline.map((e) => `<div class="${e.etapa === "Ganho" ? "ganho" : ""}"><span>${esc(e.etapa)}</span><strong>${e.quantidade}</strong><span>${moedaCurta(e.valor)}</span></div>`).join("");
   main.innerHTML = `
     <div class="topo"><div><h1>Painel</h1><p class="sub">Como está a HAIZEN ${esc(descreverPeriodo(d.periodo))}</p></div>${sel.html}</div>
+    ${rot ? htmlRotina(rot) : ""}
     <section class="resultado" aria-label="Resultado do período">
       <div>
         <p class="resultado-legenda">Lucro ${esc(descreverPeriodo(d.periodo))}</p>
@@ -306,7 +307,102 @@ ROTAS.painel = async () => {
         <p class="sub" style="font-size:13px">${d.tarefas_concluidas} ${d.tarefas_concluidas === 1 ? "tarefa concluída" : "tarefas concluídas"} ${esc(descreverPeriodo(d.periodo))}.</p></section>
     </div>`;
   sel.ligar(main);
+  if (rot) ligarRotina(rot);
 };
+
+// ── rotina: resumo do dia, cobranças, relatórios mensais ──────────────────
+function htmlRotina(r) {
+  const blocos = Object.entries(r.resumo.blocos || {});
+  const resumo = blocos.length
+    ? blocos.map(([nome, itens]) => `<div class="hoje-bloco"><h3>${esc(nome)}</h3><ul>${itens.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")
+    : '<p class="vazio">Nada pendente hoje. Dia livre para produzir.</p>';
+  const cob = (r.cobrancas || []).map((c) => `<li><span>${esc(c.cliente || c.descricao || "Cliente")} · ${moeda(c.valor)} · vence ${dataBr(c.vencimento)}
+      <span class="meta">${{ antes: "lembrete antes", dia: "vence hoje", atraso: "em atraso" }[c.etapa] || ""}${c.status === "falhou" ? " · não enviou" : ""}</span></span>
+      <span class="hoje-botoes"><button class="botao pequeno" data-cob-ver="${c.id}">Revisar e enviar</button><button class="botao pequeno" data-cob-desc="${c.id}">Descartar</button></span></li>`).join("");
+  const rel = (r.relatorios || []).filter((x) => x.status !== "enviado").map((x) => `<li><span>${esc(x.cliente || x.conta)} · ${esc(x.mes)}
+      <span class="meta">${{ gerando: "gerando…", pronto: "pronto para aprovar", aprovado: "aprovado, falta enviar", erro: "erro: " + esc((x.erro || "").slice(0, 80)) }[x.status] || x.status}</span></span>
+      <span class="hoje-botoes">${["pronto", "aprovado"].includes(x.status) ? `<a class="botao pequeno" href="/api/rotina/relatorios/${x.id}/pdf" target="_blank" rel="noopener">Ver PDF</a>` : ""}
+      ${x.status === "pronto" ? `<button class="botao pequeno primario" data-rel-aprovar="${x.id}">Aprovar</button>` : ""}
+      ${x.status === "aprovado" ? `<button class="botao pequeno primario" data-rel-enviar="${x.id}">Enviar ao cliente</button>` : ""}</span></li>`).join("");
+  return `<section class="bloco hoje" aria-label="Hoje">
+    <div class="bloco-topo"><h2>${esc(r.resumo.titulo)}</h2><span class="hoje-botoes">
+      <button class="botao pequeno" id="rotina-enviar">Mandar no meu WhatsApp</button>
+      <button class="botao pequeno" id="rotina-ajustes">Rotina</button></span></div>
+    <div class="hoje-grade">${resumo}</div>
+    ${cob ? `<h3 class="hoje-sub">Cobranças para aprovar</h3><ul class="lista hoje-lista">${cob}</ul>` : ""}
+    ${rel ? `<h3 class="hoje-sub">Relatórios mensais de tráfego</h3><ul class="lista hoje-lista">${rel}</ul>` : ""}
+  </section>`;
+}
+
+function ligarRotina(r) {
+  const recarregar = () => ROTAS.painel();
+  $("#rotina-enviar")?.addEventListener("click", async () => {
+    try { const x = await api("POST", "rotina/resumo/enviar"); avisar(x.whatsapp ? "Resumo enviado no seu WhatsApp" : "Configure seu WhatsApp em Rotina"); } catch (e) { avisar(e.message); }
+  });
+  $("#rotina-ajustes")?.addEventListener("click", () => ajustesRotina(r));
+  $$("[data-cob-desc]").forEach((b) => b.addEventListener("click", async () => {
+    await api("POST", `rotina/cobrancas/${b.dataset.cobDesc}/descartar`); avisar("Lembrete descartado"); recarregar();
+  }));
+  $$("[data-cob-ver]").forEach((b) => b.addEventListener("click", () => {
+    const c = r.cobrancas.find((x) => String(x.id) === b.dataset.cobVer);
+    dialogo({
+      titulo: `Cobrança · ${c.cliente || "cliente"}`,
+      corpo: `<div class="campos">
+        ${campo({ nome: "contato", rotulo: "WhatsApp do cliente", valor: c.contato, largo: true, ajuda: "Nome do contato ou número com DDD" })}
+        ${campo({ nome: "texto", rotulo: "Mensagem", tipo: "textarea", valor: c.texto, largo: true })}</div>
+        <p class="sub">A mensagem só sai quando você clicar em Enviar.</p>`,
+      acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Enviar no WhatsApp", classe: "primario", enviar: true, acao: async (v) => {
+        const x = await api("POST", `rotina/cobrancas/${c.id}/enviar`, v);
+        if (x.status !== "enviada") throw new Error(`Não enviou: ${x.erro || "confira o WhatsApp"}`);
+        avisar("Cobrança enviada"); recarregar();
+      } }],
+    });
+  }));
+  $$("[data-rel-aprovar]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api("POST", `rotina/relatorios/${b.dataset.relAprovar}/aprovar`); avisar("Aprovado: o PDF foi para a pasta do cliente"); recarregar(); } catch (e) { avisar(e.message); }
+  }));
+  $$("[data-rel-enviar]").forEach((b) => b.addEventListener("click", () => {
+    const x = r.relatorios.find((y) => String(y.id) === b.dataset.relEnviar);
+    dialogo({
+      titulo: `Relatório · ${x.cliente || x.conta}`,
+      corpo: `<div class="campos">
+        ${campo({ nome: "contato", rotulo: "WhatsApp do cliente (vazio = o do cadastro)", valor: "", largo: true })}
+        ${campo({ nome: "texto", rotulo: "Mensagem", tipo: "textarea", valor: x.mensagem, largo: true })}</div>
+        <p class="sub">Depois de enviar, anexe o PDF na conversa (ele está na pasta do cliente, em "Relatórios de tráfego").</p>`,
+      acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Enviar no WhatsApp", classe: "primario", enviar: true, acao: async (v) => {
+        await api("POST", `rotina/relatorios/${x.id}/enviar`, v); avisar("Mensagem enviada"); recarregar();
+      } }],
+    });
+  }));
+}
+
+function ajustesRotina(r) {
+  const c = r.config;
+  dialogo({
+    titulo: "Rotina diária",
+    corpo: `<div class="campos">
+      ${campo({ nome: "resumo_ativo", rotulo: "Resumo da manhã", tipo: "checkbox", valor: c.resumo_ativo })}
+      ${campo({ nome: "resumo_horario", rotulo: "Horário", tipo: "time", valor: c.resumo_horario })}
+      ${campo({ nome: "resumo_whatsapp", rotulo: "Mandar no meu WhatsApp", tipo: "checkbox", valor: c.resumo_whatsapp })}
+      ${campo({ nome: "whatsapp_contato", rotulo: "Meu WhatsApp (o seu, não de cliente)", valor: c.whatsapp_contato, ajuda: r.contato && !c.whatsapp_contato ? `Usando o da tela Tráfego: ${r.contato}` : "" })}
+      ${campo({ nome: "backup_ativo", rotulo: "Backup diário do banco", tipo: "checkbox", valor: c.backup_ativo })}
+      ${campo({ nome: "backup_dias", rotulo: "Guardar quantos dias", tipo: "number", valor: c.backup_dias })}
+      ${campo({ nome: "backup_pasta", rotulo: "Pasta do backup", valor: c.backup_pasta, largo: true, ajuda: `Vazio = ${r.pasta_backup}${r.backups.length ? ` · último: ${r.backups[0].dia}` : ""}` })}
+      ${campo({ nome: "cobranca_ativa", rotulo: "Preparar lembretes de cobrança", tipo: "checkbox", valor: c.cobranca_ativa })}
+      ${campo({ nome: "cobranca_dias_antes", rotulo: "Dias antes do vencimento", tipo: "number", valor: c.cobranca_dias_antes })}
+      ${campo({ nome: "cobranca_dias_atraso", rotulo: "Dias depois (atraso)", tipo: "number", valor: c.cobranca_dias_atraso })}
+      ${campo({ nome: "cobranca_pagamento", rotulo: "Como pagar (vai na mensagem)", tipo: "textarea", valor: c.cobranca_pagamento, largo: true })}
+      ${campo({ nome: "cobranca_assinatura", rotulo: "Assinatura", valor: c.cobranca_assinatura })}
+      ${campo({ nome: "relatorio_ativo", rotulo: "Relatório mensal de tráfego (dia 1)", tipo: "checkbox", valor: c.relatorio_ativo })}
+    </div>`,
+    acoes: [
+      { texto: "Fazer backup agora", classe: "esquerda", acao: async () => { const x = await api("POST", "rotina/backup"); avisar(`Backup feito: ${x.arquivo}`); return false; } },
+      { texto: "Gerar relatórios do mês passado", classe: "esquerda", acao: async () => { await api("POST", "rotina/relatorios", {}); avisar("Gerando os relatórios: aparecem no painel quando ficarem prontos"); } },
+      { texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", "rotina/config", v); avisar("Rotina salva"); ROTAS.painel(); } },
+    ],
+  });
+}
 
 // ── financeiro ────────────────────────────────────────────────────────────
 function formReceita(r = {}) {

@@ -728,3 +728,16 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .traf-acao, .traf-acao * { min-width: 0; }
 .traf-acao p, .traf-acao li { overflow-wrap: anywhere; }
 .wa-audios-aviso { display: flex; align-items: center; gap: 8px; }
+
+/* ── Hoje (resumo da rotina no painel) ── */
+.hoje { margin-bottom: 20px; }
+.hoje-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 22px; }
+.hoje-bloco h3, .hoje-sub { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--cinza); margin: 4px 0 6px; }
+.hoje-sub { margin-top: 18px; }
+.hoje-bloco ul { margin: 0; padding-left: 16px; font-size: 14px; line-height: 1.5; }
+.hoje-bloco li { overflow-wrap: anywhere; }
+.hoje-botoes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.hoje-lista li { gap: 10px; flex-wrap: wrap; }
+.botao.pequeno { padding: 4px 10px; font-size: 13px; min-height: 0; }
+.hoje-lista .meta { white-space: normal; margin-left: 6px; }
+.dialogo-acoes { flex-wrap: wrap; row-gap: 8px; }

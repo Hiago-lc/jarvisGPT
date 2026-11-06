@@ -103,12 +103,22 @@ def render(html: str, saida: str, largura: int, altura: int, pagina_inteira: boo
 @mcp.tool()
 def animar(html: str, saida: str, largura: int = 1080, altura: int = 1920, segundos: float = 8, fps: int = 30,
            musica: str = "") -> str:
-    """HTML com animações CSS/JS → MP4 (quadro a quadro, no tempo exato)."""
+    """HTML com animações → MP4, quadro a quadro no tempo exato. Funciona com CSS @keyframes, GSAP (exponha
+    `window.timeline = gsap.timeline()`), Lottie (lottie-web) e uma função `window.quadro(ms)`."""
     args = ["animar", str(_dentro(html, gravar=False)), str(_dentro(saida)), "--largura", str(largura),
             "--altura", str(altura), "--segundos", str(segundos), "--fps", str(fps)]
     if musica:
         args += ["--musica", str(_dentro(musica, gravar=False))]
     return _ferr(*args, timeout=1800)
+
+
+@mcp.tool()
+def legendar(video: str, saida: str, palavras_por_vez: int = 3, cor_destaque: str = "#FFD400",
+             fonte: str = "Montserrat ExtraBold") -> str:
+    """Legenda queimada a partir da fala do vídeo (Whisper local, palavra a palavra, a falada em destaque).
+    Grava também o .srt. Use a cor de destaque da marca."""
+    return _ferr("legendar", str(_dentro(video, gravar=False)), str(_dentro(saida)), "--por-linha",
+                 str(palavras_por_vez), "--cor", cor_destaque, "--fonte", fonte, timeout=1800)
 
 
 @mcp.tool()
