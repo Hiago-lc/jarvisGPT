@@ -146,6 +146,6 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 ## Qualidade dos agentes
 
 - Cada função tem uma base de conhecimento sênior em `haizen/agentes/conhecimento/`. Para trocar por um texto seu, ponha `<nome>.md` em `%LOCALAPPDATA%\JarvisGPT\conhecimento\`.
-- Peças visuais passam por um diretor de arte (outra chamada do Claude) antes de chegarem até você; se ele reprovar, o agente corrige uma vez. Desligue em Uso do Claude (área "Checagem de qualidade") ou com `HAIZEN_QA=0`.
+- Peças visuais passam por um diretor de arte (outra chamada do Claude) antes de chegarem até você; se ele reprovar, o agente corrige uma vez. O modelo dela se escolhe em Uso do Claude ("Checagem de qualidade"); para desligar, `HAIZEN_QA=0`.
 - Vídeo: animações com GSAP/Lottie quadro a quadro e legenda automática palavra a palavra (`legendar`, Whisper local).
 - O token do Instagram fica criptografado pela sua conta do Windows (DPAPI).
