@@ -19,7 +19,7 @@ TOOL = {
     'name': 'whatsapp_desktop_search',
     'description': 'Search contacts in the native Windows WhatsApp or WhatsApp Business application using accessibility, without Gemini vision or guessed coordinates. Prefer this over screen_find plus blind typing. Requires the app already open. Verifies focus and reads back the query. Success verifies ONLY the search text, not contact selection or message composition; inspect the results and select the exact contact before typing a draft. Does not open WhatsApp Web or send messages.',
     'parameters': {'type': 'OBJECT', 'properties': {
-        'query': {'type': 'STRING', 'description': 'Contact name to search, e.g. Vitor'},
+        'query': {'type': 'STRING', 'description': 'Contact name to search, exactly as the user said it'},
         'window_title': {'type': 'STRING', 'description': 'Optional exact native WhatsApp window title if more than one exists'}}, 'required': ['query']},
     'handler': whatsapp_desktop_search,
 }

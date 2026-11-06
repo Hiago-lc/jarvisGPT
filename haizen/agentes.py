@@ -43,7 +43,8 @@ class Agente:
 
     def resumo(self) -> dict:
         return {"nome": self.nome, "titulo": self.titulo,
-                "descricao": self.descricao, "executor": self.executor}
+                "descricao": self.descricao, "executor": self.executor,
+                "cor": self.extras.get("cor", "")}
 
 
 def validar_nome(nome: str) -> str:
@@ -115,6 +116,10 @@ def salvar(nome: str, titulo: str, descricao: str, executor: str,
                descricao=(descricao or "").strip().replace("\n", " "),
                executor=(executor or "local").strip().lower(),
                instrucoes=(instrucoes or "").strip())
+    try:                                       # cor e outros extras continuam
+        a.extras = carregar(a.nome).extras
+    except (KeyError, ValueError, OSError):
+        pass
     parse(serializar(a))                       # mesma validação da leitura
     pasta = pasta_agentes()
     pasta.mkdir(parents=True, exist_ok=True)

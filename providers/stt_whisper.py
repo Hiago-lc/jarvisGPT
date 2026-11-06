@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from importlib.util import find_spec
 from typing import Optional
@@ -86,8 +87,14 @@ class WhisperSTT:
         self.base_url = (cfg.get("base_url") or "").strip()
         self.api_key = (cfg.get("api_key") or "").strip()
         self.download_root = (cfg.get("download_root") or "").strip() or None
+        # Palavras que a pessoa usa e o modelo pequeno erra ("SAP Business" no
+        # lugar de "WhatsApp Business"): nomes de apps, da empresa, de clientes.
+        # Vai como contexto inicial do Whisper, que passa a preferir essas grafias.
+        self.initial_prompt = (cfg.get("initial_prompt") or "").strip() or None
         self._model = None
         self._load_lock = asyncio.Lock()
+        global ATUAL
+        ATUAL = self      # core/transcrever.py reaproveita o modelo já carregado
         # Set by each recognition: the language Whisper heard, as a code like
         # "tr". Empty until something has been said.
         self.detected_language = ""
@@ -146,9 +153,14 @@ class WhisperSTT:
                                   # fills with an invented sentence
             condition_on_previous_text=False,   # stops one bad transcript from
                                                 # steering every one after it
+            initial_prompt=self.initial_prompt,
         )
         # The work happens HERE — `segments` is a generator.
-        text = " ".join(s.text.strip() for s in segments).strip()
+        # Um trecho que o próprio Whisper acha que não é fala (no_speech alto
+        # E baixa confiança) é ruído transformado em frase: fica de fora.
+        text = " ".join(s.text.strip() for s in segments
+                        if not (getattr(s, "no_speech_prob", 0.0) > 0.6
+                                and getattr(s, "avg_logprob", 0.0) < -1.0)).strip()
         self._accept_language(
             str(getattr(info, "language", "") or ""),
             float(getattr(info, "language_probability", 0.0) or 0.0),
@@ -241,12 +253,16 @@ class WhisperSTT:
             self.language = language
 
         if self.backend == "api":
-            return await asyncio.to_thread(self._api_blocking, pcm, sample_rate)
-
-        await self._ensure_model(log)
-        samples = audio.to_float32(
-            audio.resample(pcm, sample_rate, 16_000))    # Whisper is a 16 kHz model
-        return await asyncio.to_thread(self._transcribe_blocking, samples)
+            text = await asyncio.to_thread(self._api_blocking, pcm, sample_rate)
+        else:
+            await self._ensure_model(log)
+            samples = audio.to_float32(
+                audio.resample(pcm, sample_rate, 16_000))    # Whisper is a 16 kHz model
+            text = await asyncio.to_thread(self._transcribe_blocking, samples)
+        limpo = sem_alucinacao(text)
+        if text and not limpo:
+            print(f"[STT] ignorado (frase que o Whisper inventa no silêncio): {text[:80]!r}")
+        return limpo
 
     async def warmup(self, log=None) -> None:
         """Load the model AND run one throwaway recognition, before the user
@@ -292,6 +308,32 @@ class WhisperSTT:
             return False, "faster-whisper is not installed."
         return True, (f"{self.model_name} on {self.device} "
                       f"({self._compute_type()}, {_threads()} threads)")
+
+
+# Frases que o Whisper "ouve" no silêncio ou no ruído: vêm das legendas de
+# vídeos com que ele foi treinado ("Legendas pela comunidade de Amara.org",
+# "Obrigado por assistir"...). Ninguém diz isso para o Jarvis de propósito.
+_ALUCINACOES = re.compile(
+    r"legendas?\s+(?:pela|por|da)\s+comunidade\s+(?:de\s+|do\s+)?amara\.?\s*org"
+    r"|subt[ií]tulos?\s+(?:realizados\s+)?(?:por|pela)\s+(?:la\s+)?comunidad\s+de\s+amara\.?\s*org"
+    r"|subtitles\s+by\s+the\s+amara\.?\s*org\s+community"
+    r"|amara\.?\s*org"
+    r"|legendado\s+por\s+[\w .]{0,40}"
+    r"|obrigad[oa]\s+por\s+(?:assistir|ver|terem?\s+assistido)\W*"
+    r"|(?:n[ãa]o\s+se\s+esque[çc]a\s+de\s+)?se\s+inscrev(?:a|er)\s+no\s+canal\W*"
+    r"|inscreva-se(?:\s+no\s+canal)?\W*|ative\s+o\s+sininho\W*"
+    r"|thanks?\s+(?:you\s+)?for\s+watching\W*|please\s+subscribe\W*",
+    re.IGNORECASE)
+
+
+def sem_alucinacao(texto: str) -> str:
+    """O texto sem as frases inventadas; vazio se só sobrou pontuação."""
+    limpo = _ALUCINACOES.sub(" ", texto or "")
+    limpo = " ".join(limpo.split()).strip(" .,;:-–!")
+    return limpo if re.search(r"\w{2,}", limpo) else ""
+
+
+ATUAL: "WhisperSTT | None" = None       # a instância da voz do Jarvis, se houver
 
 
 def _make(cfg: dict) -> WhisperSTT:

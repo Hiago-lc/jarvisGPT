@@ -54,3 +54,8 @@ memory/*.bak
 memory/*.db-*
 .jarvis-data/
 **/whatsapp-web-profile/
+
+# ── Exportações do Base44 (têm senhas em texto puro) ──
+importar_base44/
+*_export*.csv
+config/python_local.txt

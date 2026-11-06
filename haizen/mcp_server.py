@@ -104,6 +104,29 @@ def salvar_cliente(nome: str, dados: dict | None = None, notas: str = "") -> dic
     return store.salvar_cliente(nome, dados or {}, notas)
 
 
+# ── projetos ────────────────────────────────────────────────────────────────
+@mcp.tool()
+def criar_projeto(pedido: str, cliente: str = "") -> dict:
+    """Abre um projeto com mais de um serviço (ex.: site + identidade + campanha).
+    O agente gerente monta o plano de etapas e cada etapa vai para o agente certo;
+    as etapas marcadas para aprovação esperam o dono da agência aprovar."""
+    from haizen import worker as _worker
+    r = servicos.criar_projeto(pedido, cliente)
+    _worker.iniciar()
+    return r
+
+
+@mcp.tool()
+def listar_projetos() -> list[dict]:
+    """Projetos recentes, com a situação e as etapas (agente, título, status)."""
+    out = []
+    for p in store.listar_projetos(20):
+        etapas = store.trabalhos_do_projeto(p["id"])
+        out.append({**p, "situacao": servicos.situacao_projeto(etapas),
+                    "etapas": [{k: t[k] for k in ("id", "agente", "titulo", "status")} for t in etapas]})
+    return out
+
+
 # ── trabalhos ───────────────────────────────────────────────────────────────
 @mcp.tool()
 def listar_trabalhos(status: str = "", limite: int = 20) -> list[dict]:
@@ -163,6 +186,50 @@ def aprovar_trabalho(id: int, observacao: str = "") -> dict:
 def refazer_trabalho(id: int, ajuste: str) -> dict:
     """Rejeita a entrega e põe uma nova versão na fila, com o ajuste pedido."""
     return servicos.refazer(id, ajuste)
+
+
+# ── central (faturamento, tarefas, pipeline) ───────────────────────────────
+@mcp.tool()
+def painel_haizen(de: str = "", ate: str = "") -> dict:
+    """Números da HAIZEN num período (datas AAAA-MM-DD; vazio = mês atual):
+    recebido, custos, lucro, margem, a receber, vencido, a pagar, tarefas
+    atrasadas, série de 12 meses, quem mais pagou, custos por categoria e pipeline."""
+    from haizen.central import dados
+    hoje = dados.hoje()
+    return dados.painel(de or hoje[:8] + "01", ate or hoje)
+
+
+@mcp.tool()
+def listar_registros(tipo: str, cliente: str = "", status: str = "") -> list[dict]:
+    """Lista registros da central. tipo: receitas, despesas, tarefas,
+    oportunidades, clientes ou marcas. Logins e senhas das tarefas nunca vêm."""
+    from haizen.central import dados
+    if tipo not in dados.ENTIDADES or tipo == "subtarefas":
+        raise ValueError("tipo: receitas, despesas, tarefas, oportunidades, clientes ou marcas")
+    filtros = {}
+    if cliente:
+        c = store.buscar_cliente(cliente)
+        if c is None:
+            raise ValueError(f"cliente não encontrado: {cliente}")
+        filtros["cliente_id"] = c["id"]
+    if status:
+        filtros["etapa" if tipo == "oportunidades" else "status"] = status
+    return dados.listar(tipo, **filtros)
+
+
+@mcp.tool()
+def registrar(tipo: str, campos: dict) -> dict:
+    """Cria um registro na central. tipo: receitas (cliente_id, descricao, valor,
+    vencimento, recebido), despesas (descricao, categoria, valor, vencimento, pago),
+    tarefas (titulo, cliente_id, status, prioridade, data_entrega, descricao) ou
+    oportunidades (titulo, cliente_id, contato, servico, valor, etapa).
+    Valores em reais; datas AAAA-MM-DD. Confirme com o usuário antes de lançar dinheiro."""
+    from haizen.central import dados
+    if tipo not in ("receitas", "despesas", "tarefas", "oportunidades"):
+        raise ValueError("tipo: receitas, despesas, tarefas ou oportunidades")
+    campos = dict(campos or {})
+    campos.pop("acessos", None)             # senhas só pela central, nunca pelo Claude
+    return dados.criar(tipo, campos)
 
 
 if __name__ == "__main__":

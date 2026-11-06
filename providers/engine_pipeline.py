@@ -77,7 +77,40 @@ _DEFAULT_HISTORY_CHARS = 24_000
 # never triggers in a noisy room and never stops in a silent one — so the noise
 # floor is measured continuously from the quietest recent frames and speech is
 # whatever stands well above it.
-_VAD_SILENCE_MS = 700      # quiet for this long after speech = the turn ended
+# 700 ms cut people off mid-sentence: a pause to think, in Portuguese, easily
+# runs past it. 1.3 s still feels immediate, and JARVIS_PAUSA_MS tunes it.
+def _pausa_ms() -> float:
+    import os
+    try:
+        return max(500.0, min(4000.0, float(os.environ.get("JARVIS_PAUSA_MS") or 1300)))
+    except ValueError:
+        return 1300.0
+
+
+_VAD_SILENCE_MS = _pausa_ms()   # quiet for this long after speech = the turn ended
+# A sentence that stops on "e", "de", "para", "que", a comma or "..." is not over:
+# wait this much longer for the rest before answering.
+_UNFINISHED_WAIT_S = 2.2
+_UNFINISHED_END = re.compile(
+    r"(?:[,;:]|\.\.\.|…|\b(?:e|de|do|da|dos|das|o|a|os|as|para|pra|pro|com|que|em|no|na|nos|nas|"
+    r"um|uma|mas|ou|se|porque|quando|onde|como|meu|minha|tipo|então|ent[aã]o|a[ií]|pelo|pela|sobre|até))\s*$",
+    re.IGNORECASE)
+
+
+# "Foram removidas com sucesso", "evento criado com sucesso"... sem ferramenta.
+_CLAIM_DONE = re.compile(
+    r"\b(?:fo(?:i|ram)\s+(?:\w+\s+)?(?:removid|exclu[ií]d|apagad|criad|adicionad|agendad|marcad|enviad|"
+    r"cancelad|remarcad|movid|registrad|atualizad|alterad)\w*|"
+    r"(?:removid|exclu[ií]d|apagad|criad|adicionad|agendad|marcad|enviad|cancelad|remarcad|movid|"
+    r"registrad|atualizad|alterad)\w*\s+com\s+sucesso)", re.IGNORECASE)
+
+
+def _claims_done(text: str) -> bool:
+    return bool(_CLAIM_DONE.search(text or "")) and not re.search(r"\bn[ãa]o\s+(?:fo(?:i|ram)|consegui)", text or "", re.I)
+
+
+def _unfinished(text: str) -> bool:
+    return bool(_UNFINISHED_END.search((text or "").strip()))
 _VAD_MIN_SPEECH_MS = 250   # shorter than this is a cough, a click, a door
 _VAD_MAX_TURN_S = 30.0     # a runaway stream is flushed rather than kept for ever
 _VAD_FLOOR_MARGIN = 3.5    # speech is this many times the measured noise floor
@@ -184,11 +217,47 @@ class PipelineEngine:
             if fd:
                 decls.extend(fd)
 
+        self._all_declarations = list(decls)
         self._declarations = schema.budget(
             decls,
             max_tools=self.caps.get("max_tools"),
             max_chars=self.caps.get("max_tool_chars"),
         )
+        self._convert_tools()
+
+        kept, total = len(self._declarations), len(decls)
+        if kept < total:
+            self._log(f"SYS: {kept} of {total} tools declared "
+                      f"({schema.payload_size(self._declarations):,} chars) — "
+                      f"this model's budget.")
+
+    # The app can say, per request, which tools matter most ("agenda" brings the
+    # calendar tool, "arquivo" the file one). A small model only gets a handful
+    # of tools; choosing them by what was asked beats a fixed handful. Set by
+    # main.py: (user text) -> [tool names in priority order].
+    tool_priority = None
+
+    def _choose_tools_for(self, text: str) -> None:
+        if not callable(self.tool_priority) or not getattr(self, "_all_declarations", None):
+            return
+        if not (self.caps.get("max_tools") or self.caps.get("max_tool_chars")):
+            return
+        if self.caps.get("tool_format") == "prompt":
+            return              # baked into the instructions once; not per turn
+        try:
+            order = list(self.tool_priority(text) or [])
+        except Exception:
+            return
+        if not order:
+            return
+        chosen = schema.budget(self._all_declarations, max_tools=self.caps.get("max_tools"),
+                               max_chars=self.caps.get("max_tool_chars"), core_names=order)
+        names = [d.get("name") if isinstance(d, dict) else getattr(d, "name", "") for d in chosen]
+        if names != self.tool_names():
+            self._declarations = chosen
+            self._convert_tools()
+
+    def _convert_tools(self) -> None:
         fmt = self.caps.get("tool_format")
         if not self.caps.get("tools") or not self._declarations:
             self._tools = None
@@ -202,12 +271,6 @@ class PipelineEngine:
             self._tools = None
         else:
             self._tools = schema.convert(self._declarations, fmt)
-
-        kept, total = len(self._declarations), len(decls)
-        if kept < total:
-            self._log(f"SYS: {kept} of {total} tools declared "
-                      f"({schema.payload_size(self._declarations):,} chars) — "
-                      f"this model's budget.")
 
     def tool_names(self) -> list[str]:
         """What the model was actually offered. main.py uses this to decide what
@@ -286,6 +349,13 @@ class PipelineEngine:
             self._vad_speech_ms += ms
             self._vad_quiet_ms = 0.0
             if self._vad_speech_ms >= _VAD_MIN_SPEECH_MS:
+                if not self._vad_started:
+                    self._log("SYS: 🎤 ouvindo você…")
+                    # The rest of an unfinished sentence: do not answer the first half.
+                    task = getattr(self, "_partial_task", None)
+                    if task is not None:
+                        task.cancel()
+                        self._partial_task = None
                 self._vad_started = True
             return
 
@@ -303,7 +373,7 @@ class PipelineEngine:
         max_bytes = int(_a.MIC_RATE * _VAD_MAX_TURN_S) * _a.SAMPLE_WIDTH
         if self._vad_quiet_ms >= _VAD_SILENCE_MS or self._mic_bytes >= max_bytes:
             self._reset_vad()
-            await self.flush_microphone()
+            await self.flush_microphone(by_pause=True)
 
     def _reset_vad(self) -> None:
         self._vad_speech_ms = 0.0
@@ -335,6 +405,8 @@ class PipelineEngine:
         # the MICROPHONE heard and nothing else, so injected text never appears
         # there. The engine matches it — the transcript is emitted where speech
         # is actually recognised, in `flush_microphone`.
+        if isinstance(content, str):
+            self._choose_tools_for(content)
         self._history.append({"role": "user", "content": content})
         self._done_calls.clear()
         self._rounds = 0
@@ -400,8 +472,34 @@ class PipelineEngine:
             warm = getattr(part, "warmup", None)
             if warm is not None:
                 jobs.append(warm(self._log))
+        jobs.append(self._prefill())
         if jobs:
             await asyncio.gather(*jobs, return_exceptions=True)
+
+    async def _prefill(self) -> None:
+        """Have a LOCAL model read the instructions and tools once, now.
+
+        The first reply was slow because the model had to read the whole system
+        prompt and every tool declaration before its first word. Ollama keeps
+        what it read: a one-token request here leaves that work cached, and the
+        first real question only pays for what is new. Never on a cloud model,
+        where it would spend the user's quota for nothing.
+        """
+        base = str(getattr(self._llm, "base", "") or "")
+        complete = getattr(self._llm, "complete", None)
+        if not complete or not self._system or not ("127.0.0.1" in base or "localhost" in base):
+            return
+        t0 = time.monotonic()
+        try:
+            await asyncio.to_thread(
+                complete, [{"role": "system", "content": self._system},
+                           {"role": "user", "content": "oi"}],
+                self._tools, timeout=300, max_tokens=1)
+            self._log(f"SYS: modelo pronto para a primeira pergunta ({time.monotonic() - t0:.0f}s).")
+        except TypeError:
+            pass        # um provedor sem max_tokens: sem aquecimento, como antes
+        except Exception as e:  # noqa: BLE001
+            print(f"[Pipeline] aquecimento do modelo falhou: {type(e).__name__}: {e}")
 
     # ── interruption ─────────────────────────────────────────────────────────
     def interrupt(self) -> None:
@@ -572,6 +670,16 @@ class PipelineEngine:
             self._tick("llm", time.monotonic() - t0, first_word, text)
             if text:
                 self._history.append({"role": "assistant", "content": text})
+            if text and self._rounds == 0 and _claims_done(text):
+                # Disse que fez sem chamar ferramenta nenhuma nesta vez. Não dá
+                # para "desdizer" o que já foi falado, mas dá para avisar, e o
+                # aviso entra no histórico para o modelo não acreditar em si mesmo.
+                aviso = ("Atenção: eu não executei essa ação, foi só uma resposta. "
+                         "Peça de novo dizendo o nome do compromisso ou o horário.")
+                self._history.append({"role": "assistant", "content": aviso})
+                self._log("SYS: o modelo disse que fez algo sem usar nenhuma ferramenta — avisei.")
+                await self._emit(Msg.said(aviso))
+                await self._speak(aviso)
 
             self._log(f"SYS: replied in {time.monotonic() - t0:.1f}s")
             self._print_timing()
@@ -751,7 +859,7 @@ class PipelineEngine:
         return content
 
     # ── speech recognition, at the end of a turn ─────────────────────────────
-    async def flush_microphone(self, sample_rate: int = 16000) -> str:
+    async def flush_microphone(self, sample_rate: int = 16000, *, by_pause: bool = False) -> str:
         """Recognise what has been buffered and start a turn with it.
 
         Called by whatever decides a turn has ended — push-to-talk releasing,
@@ -773,6 +881,36 @@ class PipelineEngine:
             self._report("speech recognition", self._stt, e)
             return ""
         self._timing["stt"] = time.monotonic() - t0
+        partial = getattr(self, "_partial", "")
+        if partial:
+            text = f"{partial} {text}".strip()
+            self._partial = ""
+        if not text:
+            self._log(f"SYS: ouvi {self._timing['heard_s']:.1f} s de áudio, mas não entendi "
+                      "nenhuma palavra. Fale mais perto do microfone.")
+            return ""
+        if by_pause and _unfinished(text) and len(text) < 800:
+            # Probably a pause to think, not the end: hold it and wait a little.
+            self._partial = text
+            self._log("SYS: 🎤 esperando você terminar a frase…")
+            self._partial_task = asyncio.ensure_future(self._finish_partial(_UNFINISHED_WAIT_S))
+            return text
+        await self._deliver_heard(text)
+        return text
+
+    async def _finish_partial(self, wait: float) -> None:
+        """Nobody continued the sentence: answer what was said."""
+        try:
+            await asyncio.sleep(wait)
+        except asyncio.CancelledError:
+            return
+        if self._vad_started:
+            return                         # talking again; the next flush joins it
+        text, self._partial, self._partial_task = getattr(self, "_partial", ""), "", None
+        if text:
+            await self._deliver_heard(text)
+
+    async def _deliver_heard(self, text: str) -> None:
         if text:
             # THIS is what the user said, and the only thing that should reach
             # the activity log as "You:". Emitted here rather than in
@@ -782,9 +920,36 @@ class PipelineEngine:
             # It also clears main.py's stall watchdog immediately, so a local
             # model taking its time never looks like a dead connection.
             await self._emit(Msg.heard(text))
-            await self.send_client_content(
-                turns={"role": "user", "parts": [{"text": text}]})
-        return text
+            resposta = await self._interceptado(text)
+            if resposta:
+                await self.answer_directly(text, resposta)
+            else:
+                await self.send_client_content(
+                    turns={"role": "user", "parts": [{"text": text}]})
+
+    # ── answers that do not need the model ──────────────────────────────────
+    # `interceptor(text) -> str | None` is set by the app. When it returns a
+    # reply, the code already did the work (e.g. saved a record) and the model
+    # is skipped: a small local model sometimes SAYS it did something without
+    # calling the tool, and for an exact request there is nothing to decide.
+    interceptor = None
+
+    async def _interceptado(self, text: str) -> str:
+        if self.interceptor is None:
+            return ""
+        try:
+            return (await asyncio.to_thread(self.interceptor, text)) or ""
+        except Exception as e:      # never lose the user's sentence over this
+            self._log(f"SYS: atalho falhou ({type(e).__name__}); segue para o modelo.")
+            return ""
+
+    async def answer_directly(self, user_text: str, reply: str) -> None:
+        """Say `reply` as this turn's answer, keeping the history coherent."""
+        self._history.append({"role": "user", "content": user_text})
+        self._history.append({"role": "assistant", "content": reply})
+        await self._emit(Msg.said(reply))
+        await self._speak(reply)
+        await self._emit(Msg.turn_end())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1060,6 +1225,13 @@ def _failure_line(what: str, exc: Exception) -> str:
     which part, because "please try again" on a server that is not running is
     advice that cannot work and wastes the listener's time."""
     name = type(exc).__name__.lower()
+    texto = str(exc)
+    if texto.startswith("503") or "high demand" in texto or "overloaded" in texto:
+        return ("O serviço de inteligência está sobrecarregado agora. Tente de novo em "
+                "alguns minutos.")
+    if texto.startswith("429") or "RESOURCE_EXHAUSTED" in texto or "quota" in texto.lower():
+        return ("Atingi o limite gratuito do modelo por agora. Tente mais tarde, ou use o "
+                "modelo local.")
     if "connect" in name or "timeout" in name:
         return (f"I could not reach {what}. It looks like the server is not "
                 f"running or the address is wrong — the details are in the log.")

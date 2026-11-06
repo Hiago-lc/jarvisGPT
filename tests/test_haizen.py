@@ -114,10 +114,13 @@ class ServicosTests(_Temp):
         self.assertEqual(r['trabalho']['executor'], 'claude')
         self.assertIn('Aurora', r['aviso'])
 
-    def test_falls_back_to_local_without_claude_code(self):
+    def test_stays_on_claude_unless_local_is_allowed(self):
         from haizen import servicos
         with patch('haizen.executor.claude_disponivel', return_value=None):
             r = servicos.delegar('comercial', 'proposta')
+            self.assertEqual(r['trabalho']['executor'], 'claude')
+            with patch('haizen.executor.PERMITIR_LOCAL', True):
+                r = servicos.delegar('comercial', 'proposta')
         self.assertEqual(r['trabalho']['executor'], 'local')
         self.assertIn('Claude Code', r['aviso'])
 
@@ -153,7 +156,7 @@ class ExecutorTests(_Temp):
         with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk-cobrada'}), \
              patch('haizen.executor.claude_disponivel', return_value='claude'), \
              patch('subprocess.run', return_value=done) as run:
-            self.assertEqual(executor.executar_claude('prompt', Path(self.dir.name) / 'w'), 'Proposta')
+            self.assertEqual(executor.executar_claude('prompt', Path(self.dir.name) / 'w')["result"], 'Proposta')
         kwargs = run.call_args.kwargs
         self.assertNotIn('ANTHROPIC_API_KEY', kwargs['env'])
         self.assertEqual(kwargs['input'], 'prompt')
