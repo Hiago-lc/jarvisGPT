@@ -36,6 +36,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .trilho {
   background: var(--petroleo); color: #B9C6C5; padding: 20px 12px 16px;
   display: flex; flex-direction: column; gap: 22px; position: sticky; top: 0; height: 100vh;
+  box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain;   /* janela baixa: o menu rola, não corta */
 }
 .marca { display: flex; align-items: center; gap: 10px; text-decoration: none; padding: 0 8px; }
 .marca-icone { width: 30px; height: 30px; flex: none; }
@@ -601,7 +602,7 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .traf-tipo.tipo-orcamento { background: #FFF4E0; color: #6B4512; }
 .traf-tipo.tipo-criativo { background: #EEF5DF; color: var(--limao-escuro); }
 .traf-alvo { font-weight: 600; overflow-wrap: anywhere; }
-.traf-mudanca { font-weight: 400; color: var(--cinza); margin-left: 4px; white-space: nowrap; }
+.traf-mudanca { font-weight: 400; color: var(--cinza); margin-left: 4px; white-space: normal; overflow-wrap: anywhere; }
 .traf-mudanca strong { color: var(--tinta); }
 .traf-motivo { font-size: 14px; line-height: 1.45; }
 .traf-impacto { font-size: 13px; }
@@ -722,3 +723,7 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .soc-adapt { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .soc-adapt li { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: 13.5px; }
 @media (max-width: 600px) { .soc-perfil { grid-template-columns: 1fr; } .soc-dl { grid-template-columns: 1fr; } }
+
+.traf-acao, .traf-acao * { min-width: 0; }
+.traf-acao p, .traf-acao li { overflow-wrap: anywhere; }
+.wa-audios-aviso { display: flex; align-items: center; gap: 8px; }

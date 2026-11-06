@@ -2225,7 +2225,7 @@ function desenharConversaWa() {
   caixa.innerHTML = `
     <header class="wa-topo"><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</header>
     <div class="wa-msgs" id="wa-msgs">${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
-    ${c.mensagens.some((m) => m.tipo === "audio" && !m.transcricao) ? '<p class="wa-audios-aviso"><button class="botao" type="button" id="wa-ouvir-todos">Transcrever todos os áudios</button> <span class="sub">O áudio é transcrito aqui no PC, sem sair dele.</span></p>' : ""}
+    ${c.mensagens.some((m) => m.tipo === "audio" && !m.transcricao) ? '<p class="wa-audios-aviso" id="wa-audios-aviso"><span class="traf-girando" aria-hidden="true"></span> <span class="sub">Transcrevendo os áudios aqui no PC para você (e o Jarvis) responder certo…</span></p>' : ""}
     <div class="wa-acoes">
       <button class="botao" type="button" id="wa-sugerir">Sugerir resposta</button>
       <button class="botao" type="button" id="wa-tarefa">Criar tarefa</button>
@@ -2251,25 +2251,31 @@ function desenharConversaWa() {
   };
   const ligarOuvir = () => $$("[data-ouvir]", msgs).forEach((b) => { if (!b.dataset.ligado) { b.dataset.ligado = "1"; b.addEventListener("click", () => transcrever(b)); } });
   ligarOuvir();
-  $("#wa-ouvir-todos")?.addEventListener("click", async (ev) => {
-    ev.currentTarget.disabled = true;
-    for (const b of $$("[data-ouvir]", msgs)) await transcrever(b);
-    ev.currentTarget.closest("p")?.remove();
-  });
-  const dele = c.mensagens.filter((m) => m.de !== "eu").map((m) => m.texto);
-  const resumo = dele.slice(-3).join("\n");
+  // Os áudios são transcritos sozinhos ao abrir a conversa (os mais recentes primeiro),
+  // para você ler e para a sugestão de resposta entender o que foi dito.
+  const pendentes = $$("[data-ouvir]", msgs).reverse().slice(0, 8);
+  const transcrevendo = (async () => {
+    for (const b of pendentes) { if (WA.conversa !== c) return; await transcrever(b); }
+    $("#wa-audios-aviso")?.remove();
+  })();
+  const dele = () => c.mensagens.filter((m) => m.de !== "eu").map((m) => m.texto);
+  const resumo = () => dele().slice(-3).join("\n");
   $("#wa-sugerir").addEventListener("click", async (ev) => {
-    const b = ev.currentTarget; b.disabled = true; b.textContent = "Pensando…";
-    try { $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens })).texto; }
+    const b = ev.currentTarget; b.disabled = true; b.textContent = pendentes.length ? "Ouvindo os áudios…" : "Pensando…";
+    try {
+      await transcrevendo;
+      b.textContent = "Pensando…";
+      $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens })).texto;
+    }
     catch (e) { avisar(e.message); }
     finally { b.disabled = false; b.textContent = "Sugerir resposta"; }
   });
   $("#wa-tarefa").addEventListener("click", () => editarTarefa({
-    titulo: `${c.contato}: ${(dele[dele.length - 1] || "").slice(0, 70)}`, cliente_id: c.cliente?.id ?? "",
-    descricao: `Pedido pelo WhatsApp:\n${resumo}`,
+    titulo: `${c.contato}: ${(dele()[dele().length - 1] || "").slice(0, 70)}`, cliente_id: c.cliente?.id ?? "",
+    descricao: `Pedido pelo WhatsApp:\n${resumo()}`,
   }, () => avisar("Tarefa criada")));
-  $("#wa-evento").addEventListener("click", () => criarEventoWa(c.contato, resumo));
-  $("#wa-livre").addEventListener("click", () => disponibilidadeWa(c.contato, resumo));
+  $("#wa-evento").addEventListener("click", () => criarEventoWa(c.contato, resumo()));
+  $("#wa-livre").addEventListener("click", () => disponibilidadeWa(c.contato, resumo()));
   $("#wa-compositor").addEventListener("submit", async (e) => {
     e.preventDefault();
     const texto = $("#wa-texto").value.trim();
