@@ -21,7 +21,8 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html { height: 100%; }
+body { min-height: 100%; }   /* não fixa a altura: o conteúdo longo estica a página e o menu fica parado ao rolar */
 body {
   margin: 0; display: grid; grid-template-columns: 216px 1fr;
   background: var(--papel); color: var(--tinta);
