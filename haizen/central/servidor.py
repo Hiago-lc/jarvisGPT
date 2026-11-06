@@ -874,6 +874,14 @@ def _retomar_fila() -> None:
     """Trabalhos que ficaram pela metade quando o Jarvis fechou voltam à fila,
     e a fila volta a andar: o escritório não fica parado esperando um comando."""
     try:
+        # Trabalhos parados pelo limite do Claude: voltam agora se ele já liberou.
+        from haizen import uso
+        lim = uso.config().get("limite") or {}
+        import time as _t
+        if lim.get("volta_em", 0) > _t.time():
+            worker.agendar_retomada(lim["volta_em"])
+        else:
+            worker.retomar_apos_limite()
         if store.recuperar_interrompidos() or store.listar_trabalhos("na_fila", 1):
             worker.iniciar()
     except Exception as e:  # noqa: BLE001

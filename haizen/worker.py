@@ -63,6 +63,18 @@ def _rodar() -> None:
                     _avisar(f"Trabalho {t['id']} ({t['agente']}) pronto para aprovação: {arq.name}")
                     _notificar("Pronto para aprovar", t.get("titulo") or t["agente"], "aprovacao", t)
             except Exception as e:
+                from . import uso
+                if uso.e_limite(str(e)):
+                    # Limite do Claude: os próximos falhariam igual. Para a fila e
+                    # volta sozinho quando o limite liberar.
+                    quando = uso.volta_em(str(e))
+                    store.atualizar(t["id"], status="erro",
+                                    erro=f"{LIMITE_MARCA} volta sozinho às {_hora(quando)}. ({e})"[:500])
+                    _avisar(f"O Claude chegou ao limite. A fila volta sozinha às {_hora(quando)}.")
+                    agendar_retomada(quando)
+                    with _lock:
+                        _thread = None
+                    return
                 store.atualizar(t["id"], status="erro", erro=f"{type(e).__name__}: {e}"[:500])
                 _avisar(f"Trabalho {t['id']} ({t['agente']}) falhou: {e}")
                 _notificar("Um trabalho travou", f"{t.get('titulo') or t['agente']}: {e}"[:200], "erro", t)
@@ -72,11 +84,52 @@ def _rodar() -> None:
         raise
 
 
+LIMITE_MARCA = "Limite do Claude:"
+_retomada: dict = {"timer": None, "em": 0.0}
+
+
+def _hora(ts: float) -> str:
+    import time as _t
+    return _t.strftime("%H:%M", _t.localtime(ts))
+
+
+def retomar_apos_limite() -> int:
+    """Os trabalhos parados pelo limite voltam para a fila e ela anda de novo."""
+    from . import servicos
+    n = 0
+    for t in store.listar_trabalhos("erro", 200):
+        if str(t.get("erro") or "").startswith(LIMITE_MARCA):
+            with contextlib.suppress(Exception):
+                servicos.tentar_de_novo(t["id"])
+                n += 1
+    _retomada.update(timer=None, em=0.0)
+    if n or store.listar_trabalhos("na_fila", 1):
+        iniciar()
+    return n
+
+
+def agendar_retomada(quando: float) -> None:
+    import time as _t
+    if _retomada["timer"] is not None:
+        _retomada["timer"].cancel()
+    tm = threading.Timer(max(1.0, quando - _t.time()), retomar_apos_limite)
+    tm.daemon = True
+    tm.start()
+    _retomada.update(timer=tm, em=quando)
+
+
+def pausado_ate() -> float:
+    import time as _t
+    return _retomada["em"] if _retomada["em"] > _t.time() else 0.0
+
+
 def iniciar(avisar: Callable[[str], None] | None = None) -> bool:
     """Garante que há alguém processando a fila. Devolve True se começou agora."""
     global _thread, _avisar
     if avisar:
         _avisar = avisar
+    if pausado_ate():                     # limite do Claude: a retomada agendada liga a fila
+        return False
     with _lock:
         if _thread is not None and _thread.is_alive():
             return False

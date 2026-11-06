@@ -63,7 +63,8 @@ def config() -> dict:
     except (OSError, ValueError):
         c = {}
     return {"modelos": {**PADRAO_MODELOS, **(c.get("modelos") or {})}, "limite": c.get("limite") or {},
-            "notificacoes": {"som": True, "windows": True, **(c.get("notificacoes") or {})}}
+            "notificacoes": {"som": True, "windows": True, **(c.get("notificacoes") or {})},
+            "sessoes": c.get("sessoes") or {}}
 
 
 def salvar_config(mud: dict) -> dict:
@@ -91,6 +92,7 @@ def registrar(dados: dict, origem: str, referencia: str = "", erro: str = "") ->
     """`dados` é o resultado do Claude Code (JSON final ou o evento result)."""
     try:
         u = dados.get("usage") or {}
+        custo = _custo_da_volta(dados)
         modelos = list((dados.get("modelUsage") or {}).keys())
         texto_erro = erro or (str(dados.get("result") or "")[:300] if dados.get("is_error") else "")
         with store.conexao() as con:
@@ -101,17 +103,66 @@ def registrar(dados: dict, origem: str, referencia: str = "", erro: str = "") ->
                 (time.time(), origem, str(referencia)[:120], ",".join(m.replace("claude-", "") for m in modelos)[:80],
                  int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
                  int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0),
-                 float(dados.get("total_cost_usd") or 0), int(dados.get("duration_ms") or 0),
+                 custo, int(dados.get("duration_ms") or 0),
                  int(dados.get("num_turns") or 0), texto_erro))
-        if texto_erro and _LIMITE.search(texto_erro):
+        if texto_erro and e_limite(texto_erro):
             marcar_limite(texto_erro)
     except Exception as e:  # noqa: BLE001 - medir nunca derruba o trabalho
         print(f"[Uso do Claude] não anotei: {e}")
 
 
+def _custo_da_volta(dados: dict) -> float:
+    """Numa conversa retomada (--resume) o Claude Code informa o custo ACUMULADO da
+    sessão: anota só a diferença desta volta."""
+    total = float(dados.get("total_cost_usd") or 0)
+    sid = str(dados.get("session_id") or "")
+    if not sid:
+        return total
+    arq = _arq_config()
+    try:
+        c = json.loads(arq.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        c = {}
+    sessoes = c.get("sessoes") or {}
+    anterior = float(sessoes.get(sid) or 0)
+    sessoes[sid] = total
+    c["sessoes"] = dict(list(sessoes.items())[-60:])
+    try:
+        arq.write_text(json.dumps(c, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return round(total - anterior, 6) if total >= anterior else total
+
+
+_RESET = re.compile(r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", re.I)
+
+
+def e_limite(texto: str) -> bool:
+    return bool(texto and (_LIMITE.search(texto) or re.search(r"hit your (?:session|usage) limit", texto, re.I)))
+
+
+def volta_em(texto: str, agora: float | None = None) -> float:
+    """Quando o limite libera ("resets 2:20pm"), com 2 minutos de folga. Sem horário
+    reconhecível, tenta de novo em uma hora."""
+    agora = agora or time.time()
+    m = _RESET.search(texto or "")
+    if not m:
+        return agora + 3600
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+    if ap == "pm" and h < 12:
+        h += 12
+    if ap == "am" and h == 12:
+        h = 0
+    base = dt.datetime.fromtimestamp(agora)
+    alvo = base.replace(hour=h % 24, minute=mi, second=0, microsecond=0)
+    if alvo.timestamp() <= agora:
+        alvo += dt.timedelta(days=1)
+    return alvo.timestamp() + 120
+
+
 def marcar_limite(texto: str) -> None:
     c = config()
-    c["limite"] = {"em": time.time(), "mensagem": str(texto)[:300]}
+    c["limite"] = {"em": time.time(), "mensagem": str(texto)[:300], "volta_em": volta_em(texto)}
     _arq_config().write_text(json.dumps(c, ensure_ascii=False, indent=1), encoding="utf-8")
     try:
         from haizen import notificar

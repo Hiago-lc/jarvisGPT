@@ -253,17 +253,29 @@ def _migrar(con) -> None:
                 "ON clientes(base44_id) WHERE base44_id IS NOT NULL")
 
 
+_PREPARADOS: set[str] = set()
+
+
 @contextmanager
 def conexao():
     db = caminho_banco()
     db.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(db, timeout=15)
+    if not db.exists():
+        _PREPARADOS.discard(str(db.resolve()))        # banco novo (ou apagado): prepara de novo
+    con = sqlite3.connect(db, timeout=30)
     con.row_factory = sqlite3.Row
     try:
-        con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA foreign_keys=ON")
-        con.executescript(_SCHEMA)
-        _migrar(con)
+        con.execute("PRAGMA busy_timeout=30000")
+        chave_db = str(db.resolve())
+        if chave_db not in _PREPARADOS:
+            # Criar tabelas e migrar só uma vez por banco: fazer isso a cada conexão
+            # pegava trava de escrita o tempo todo ("database is locked").
+            con.execute("PRAGMA journal_mode=WAL")
+            con.executescript(_SCHEMA)
+            _migrar(con)
+            con.commit()
+            _PREPARADOS.add(chave_db)
         yield con
         con.commit()
     finally:

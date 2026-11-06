@@ -117,3 +117,58 @@ class ProducaoMcpTests(unittest.TestCase):
         self.assertIn("mcp__producao", permitidas)
         self.assertIn("PowerShell(python:*)", permitidas)
         self.assertEqual(executor.arquivos_da_pasta(str(self.pasta)), [])        # a config não aparece como entrega
+
+
+class RevisaoGeralTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        b = Path(self.dir.name)
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": str(b / "d"), "HAIZEN_DB": str(b / "h.db"),
+                                           "HAIZEN_NOTIFICAR_WINDOWS": "0", "JARVIS_CEREBRO": "local"})
+        self.env.start()
+        (b / "d").mkdir()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_custo_de_sessao_retomada_conta_so_a_diferenca(self):
+        from haizen import uso
+        uso.registrar({"session_id": "S", "total_cost_usd": 1.0}, "jarvis")
+        uso.salvar_config({"modelos": {"jarvis": "sonnet"}})          # não apaga as sessões
+        uso.registrar({"session_id": "S", "total_cost_usd": 1.3}, "jarvis")
+        self.assertAlmostEqual(uso.resumo()["hoje"]["custo_usd"], 1.3)
+
+    def test_horario_de_volta_do_limite(self):
+        import datetime as dt
+        from haizen import uso
+        agora = dt.datetime(2026, 11, 5, 10, 0).timestamp()
+        v = dt.datetime.fromtimestamp(uso.volta_em("You've hit your session limit · resets 2:20pm (America/Sao_Paulo)", agora))
+        self.assertEqual((v.hour, v.minute), (14, 22))
+        self.assertTrue(uso.e_limite("You've hit your session limit · resets 2:20pm"))
+        self.assertEqual(uso.volta_em("sem horário", agora), agora + 3600)
+
+    def test_conversa_do_jarvis_recomeca_quando_cresce_ou_vira_o_dia(self):
+        import time
+        from haizen.central import claude_cerebro as cc
+        cc._guardar_sessao("A", 1000)
+        self.assertEqual(cc.sessao(), "A")
+        cc._guardar_sessao("A", cc.LIMITE_CONTEXTO + 1)
+        self.assertEqual(cc.sessao(), "")
+        cc._arquivo_sessao().write_text(json.dumps({"id": "B", "inicio": time.time() - 2 * 86400}), encoding="utf-8")
+        self.assertEqual(cc.sessao(), "")
+
+    def test_limite_para_a_fila_e_ela_volta_sozinha(self):
+        from haizen import store, worker
+        t = store.criar_trabalho("criativos", "peça", "claude")
+        if t is None:
+            self.skipTest("sem criar_trabalho")
+        with patch("haizen.executor.executar", side_effect=RuntimeError("You've hit your session limit · resets 2:20pm")), \
+                patch("haizen.worker.agendar_retomada") as ag:
+            worker._rodar()
+        self.assertTrue(store.trabalho(t["id"])["erro"].startswith(worker.LIMITE_MARCA))
+        ag.assert_called_once()
+        with patch("haizen.worker.iniciar"), patch("haizen.executor.claude_disponivel", return_value="claude"):
+            self.assertEqual(worker.retomar_apos_limite(), 1)
+        self.assertEqual(store.trabalho(t["id"])["status"], "na_fila")

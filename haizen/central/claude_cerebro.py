@@ -106,15 +106,55 @@ def _arquivo_sessao() -> Path:
     return pasta() / "sessao.json"
 
 
-def sessao() -> str:
+# A conversa contínua cresce a cada mensagem e TODA mensagem reenvia o histórico
+# inteiro: passou de 200 mil tokens e cada "oi" pesava como um trabalho grande.
+# A conversa recomeça sozinha num dia novo ou quando fica grande; as últimas
+# mensagens vão no começo da nova para não perder o fio.
+LIMITE_CONTEXTO = int(os.environ.get("JARVIS_CONTEXTO_MAX", "90000"))
+
+
+def _ler_sessao() -> dict:
     try:
-        return json.loads(_arquivo_sessao().read_text(encoding="utf-8")).get("id", "")
+        return json.loads(_arquivo_sessao().read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return {}
+
+
+def sessao() -> str:
+    s = _ler_sessao()
+    if not s.get("id"):
         return ""
+    inicio = s.get("inicio") or s.get("em") or 0
+    if time.strftime("%Y-%m-%d", time.localtime(inicio)) != time.strftime("%Y-%m-%d"):
+        return ""                                   # dia novo, conversa nova
+    if int(s.get("contexto") or 0) > LIMITE_CONTEXTO:
+        return ""                                   # ficou grande demais
+    return s["id"]
 
 
-def _guardar_sessao(sid: str) -> None:
-    _arquivo_sessao().write_text(json.dumps({"id": sid, "em": time.time()}), encoding="utf-8")
+def _guardar_sessao(sid: str, contexto: int = 0) -> None:
+    s = _ler_sessao()
+    inicio = s.get("inicio") if s.get("id") == sid else time.time()
+    _arquivo_sessao().write_text(json.dumps({"id": sid, "em": time.time(), "inicio": inicio or time.time(),
+                                             "contexto": contexto}), encoding="utf-8")
+
+
+def _contexto(dados: dict) -> int:
+    u = (dados or {}).get("usage") or {}
+    return int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0) + \
+        int(u.get("cache_creation_input_tokens") or 0)
+
+
+def _fio_da_conversa() -> str:
+    """As últimas mensagens, para uma conversa nova não começar do zero."""
+    try:
+        from haizen.central import cerebro
+        hist = cerebro.historico(8)
+    except Exception:  # noqa: BLE001
+        return ""
+    linhas = [f"- {'Usuário' if m['papel'] == 'usuario' else 'Você'}: {m['texto'][:300]}" for m in hist[-8:]]
+    return ("\n\nÚltimas mensagens desta conversa (a sessão anterior foi encerrada para economizar; continue o "
+            "assunto normalmente):\n" + "\n".join(linhas)) if linhas else ""
 
 
 def nova_conversa() -> None:
@@ -172,9 +212,9 @@ def permitidas() -> list[str]:
     return lista
 
 
-def _gravar_persona(por_voz: bool) -> Path:
+def _gravar_persona(por_voz: bool, extra: str = "") -> Path:
     arq = pasta() / ("persona-voz.md" if por_voz else "persona.md")
-    arq.write_text(_persona(por_voz), encoding="utf-8")
+    arq.write_text(_persona(por_voz) + extra, encoding="utf-8")
     return arq
 
 
@@ -187,7 +227,7 @@ def argumentos(por_voz: bool, sid: str) -> list[str]:
             "--mcp-config", str(_config_mcp()),
             "--allowedTools", ",".join(permitidas()),
             # Em arquivo: no Windows, um claude.cmd (npm) cortaria o texto nas quebras de linha.
-            "--append-system-prompt-file", str(_gravar_persona(por_voz))]
+            "--append-system-prompt-file", str(_gravar_persona(por_voz, "" if sid else _fio_da_conversa()))]
     raiz = raiz_clientes()
     if raiz:
         args += ["--add-dir", str(raiz)]
@@ -246,7 +286,7 @@ def responder(texto: str, por_voz: bool = False) -> dict:
             nova_conversa()                     # a conversa antiga sumiu: começa outra
             r, erro = _rodar(texto, por_voz, "")
         if r["sessao"]:
-            _guardar_sessao(r["sessao"])
+            _guardar_sessao(r["sessao"], _contexto(r.get("dados") or {}))
     from haizen import uso
     uso.registrar(r.get("dados") or {}, "jarvis", texto.split("\n", 1)[0][:80],
                   erro="" if r["resposta"] and not r["erro"] else (r["resposta"] or erro)[-300:])
