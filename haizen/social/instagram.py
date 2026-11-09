@@ -13,6 +13,7 @@ Instagram. Vídeo (reels) sobe direto do PC (upload resumível).
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.error
@@ -63,6 +64,25 @@ def token() -> str:
     return t
 
 
+def conferir_formato(t: str) -> str:
+    """Barra o que não é token de usuário: o "Token do cliente" (32 letras/números), a
+    "Chave secreta do app" e o ID do app costumam ser colados por engano."""
+    t = (t or "").strip().strip('"').strip()
+    if not t or " " in t:
+        raise ValueError("cole só o token, sem espaços")
+    if re.fullmatch(r"[0-9a-f]{32}", t):
+        raise ValueError("isso é o \"Token do cliente\" ou a \"Chave secreta\" do app, não o token de acesso. Gere o "
+                         "token no Explorador da Graph API (botão Generate Access Token): ele começa com EAA e é bem "
+                         "mais comprido")
+    if t.isdigit() or "|" in t:
+        raise ValueError("isso é o ID do app (ou token de app), não o token de acesso do usuário. Gere no Explorador "
+                         "da Graph API: ele começa com EAA")
+    if not t.startswith("EA") or len(t) < 100:
+        raise ValueError("isso não parece um token de acesso da Meta (ele começa com EAA e tem mais de 100 "
+                         "caracteres). Copie de novo do Explorador da Graph API ou do Depurador de Token")
+    return t
+
+
 def salvar_token(t: str) -> None:
     t = (t or "").strip()
     if len(t) < 30 or " " in t:
@@ -92,7 +112,7 @@ def _http(metodo: str, url: str, dados: bytes | None = None, cabecalhos: dict | 
             erro = {}
         msg = erro.get("error_user_msg") or erro.get("message") or f"HTTP {e.code}"
         if erro.get("code") in (190, 102) or e.code == 401:
-            msg = ("o acesso ao Instagram venceu ou foi revogado: gere um token novo e cole na aba Social "
+            msg = ("o acesso ao Instagram venceu ou o token guardado não vale: clique em \"Trocar token\" na aba Social "
                    f"({msg})")
         raise ErroInstagram(msg) from None
     except urllib.error.URLError as e:
@@ -115,9 +135,20 @@ def _post(caminho: str, tk: str | None = None, **params) -> dict:
 
 
 # ── conta ───────────────────────────────────────────────────────────────────
-def contas() -> list[dict]:
+def info_do_token(tk: str | None = None) -> dict:
+    """Quando o token vence (0 = não vence) e se ainda vale, pelo depurador da própria Meta."""
+    tk = tk or token()
+    try:
+        d = (_get("debug_token", tk, input_token=tk).get("data") or {})
+    except ErroInstagram:
+        return {}
+    return {"valido": bool(d.get("is_valid")), "vence_em": int(d.get("expires_at") or 0),
+            "acesso_vence_em": int(d.get("data_access_expires_at") or 0), "escopos": d.get("scopes") or []}
+
+
+def contas(tk: str | None = None) -> list[dict]:
     """As contas do Instagram ligadas às Páginas do token: [{ig_id, username, page_id, page_nome}]."""
-    r = _get("me/accounts", fields="id,name,access_token,instagram_business_account{id,username,name}", limit=100)
+    r = _get("me/accounts", tk, fields="id,name,access_token,instagram_business_account{id,username,name}", limit=100)
     out = []
     for p in r.get("data") or []:
         ig = p.get("instagram_business_account")

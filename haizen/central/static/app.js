@@ -1966,10 +1966,28 @@ function configSocial(dados, recarregar) {
   });
 }
 
+const SOC_PASSOS_TOKEN = `<ol><li>O Instagram da HAIZEN precisa ser <strong>conta profissional</strong> ligada à <strong>Página do Facebook</strong> da HAIZEN.</li>
+  <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
+  <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
+  <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo (o de baixo).</li>
+  <li>O token certo começa com <code>EAA</code> e é bem comprido. Não use o "Token do cliente" nem a "Chave secreta" das configurações do app.</li></ol>`;
+
+function trocarTokenSocial(recarregar) {
+  dialogo({
+    titulo: "Trocar o token do Instagram",
+    corpo: `${SOC_PASSOS_TOKEN}<div class="campos"><label class="largo">Token novo<input type="password" name="token" autocomplete="off" required></label></div>
+      <p class="sub">O Jarvis confere com a Meta antes de trocar: se o token novo não funcionar, o atual continua guardado.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Conferir e trocar", classe: "primario", enviar: true, acao: async (v) => {
+      const r = await api("POST", "social/conectar", { token: v.token.trim() });
+      avisar(`Conectado: @${r.escolhida.username}`); recarregar();
+    } }],
+  });
+}
+
 ROTAS.social = async () => {
   main.innerHTML = `
     <div class="topo"><div><h1>Social</h1><p class="sub" id="soc-sub">O Instagram da HAIZEN: análise, ideias, produção e publicação.</p></div>
-      <div class="traf-topo-botoes"><button class="botao" id="soc-config">Configurar</button><button class="botao" id="soc-novo">Novo post</button><button class="botao primario" id="soc-analisar">Analisar agora</button></div></div>
+      <div class="traf-topo-botoes"><button class="botao" id="soc-token-topo">Trocar token</button><button class="botao" id="soc-config">Configurar</button><button class="botao" id="soc-novo">Novo post</button><button class="botao primario" id="soc-analisar">Analisar agora</button></div></div>
     <div id="soc-corpo"><p class="vazio">Carregando…</p></div>`;
   const corpo = $("#soc-corpo");
   let dados = null; let timer = null;
@@ -1977,17 +1995,18 @@ ROTAS.social = async () => {
     if (!document.body.contains(corpo)) { clearInterval(timer); return; }
     dados = await api("GET", "social");
     const { config: c, estado, analise: an, itens, raiox } = dados;
-    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
+    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}${c.token_vence ? ` · token vale até ${new Date(c.token_vence * 1000).toLocaleDateString("pt-BR")}` : ""}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
     const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc(estado.fazendo[0].toUpperCase() + estado.fazendo.slice(1))}… leva alguns minutos.</div>` : "";
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    const vence = c.token_vence ? new Date(c.token_vence * 1000) : null;
+    const diasVence = vence ? Math.ceil((vence - Date.now()) / 86400000) : null;
+    const tokenRuim = /token|OAuth|venceu|revogad/i.test(estado.erro || "");
+    const faixaToken = dados.conectado && (tokenRuim || (diasVence !== null && diasVence <= 7))
+      ? `<div class="traf-faixa erro">${tokenRuim ? "O token do Instagram não está valendo." : diasVence <= 0 ? "O token do Instagram venceu." : `O token do Instagram vence em ${diasVence} dia(s).`} <button class="botao" data-soc-token>Trocar token</button></div>` : "";
     if (!dados.conectado) {
       corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar o Instagram da HAIZEN</h2>
         <p>Pela API oficial da Meta, com o mesmo app que você criou para o Meta Ads. Uma vez só:</p>
-        <ol><li>O Instagram da HAIZEN precisa ser <strong>conta profissional</strong> ligada à <strong>Página do Facebook</strong> da HAIZEN.</li>
-          <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
-          <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
-          <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo.</li>
-          <li>Cole abaixo. Ele fica só neste PC.</li></ol>
+        ${SOC_PASSOS_TOKEN}
         <div class="campos"><label class="largo">Token de acesso<input type="password" id="soc-token" autocomplete="off"></label></div>
         <div class="traf-botoes"><button class="botao primario" id="soc-conectar">Conectar</button></div></section>`;
       $("#soc-conectar").addEventListener("click", async () => {
@@ -2009,7 +2028,7 @@ ROTAS.social = async () => {
       </section>` : `<section class="bloco"><p class="vazio">Ainda sem análise. Clique em "Analisar agora".</p></section>`;
     const ativos = itens.filter((i) => i.status !== "publicado");
     const publicados = itens.filter((i) => i.status === "publicado").slice(-6);
-    corpo.innerHTML = `${fazendo}${erro}${perfilHtml}
+    corpo.innerHTML = `${fazendo}${tokenRuim ? "" : erro}${faixaToken}${perfilHtml}
       <section class="traf-secao" style="margin-top:22px"><h2>Calendário</h2>
         ${ativos.length ? `<div class="soc-posts">${ativos.map(cartaoPost).join("")}</div>` : '<p class="vazio">Nenhum post planejado.</p>'}</section>
       ${publicados.length ? `<section class="traf-secao"><h2>Publicados</h2><div class="soc-posts">${publicados.map(cartaoPost).join("")}</div></section>` : ""}
@@ -2032,6 +2051,7 @@ ROTAS.social = async () => {
     on("[data-soc-agendar]", (b) => dialogo({ titulo: "Agendar publicação", corpo: `<div class="campos">${campo({ nome: "quando", rotulo: "Dia e hora", tipo: "datetime-local", largo: true, obrig: true })}</div>`,
       acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Agendar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `social/itens/${b.dataset.socAgendar}/publicar`, { quando: v.quando }); avisar("Agendado"); desenhar(); } }] }));
     on("[data-soc-adaptar]", (b) => { const [r, i] = b.dataset.socAdaptar.split(":"); chamar(() => api("POST", `social/raiox/${r}/adaptar/${i}`, {}), "No calendário como ideia"); });
+    $$("[data-soc-token]", corpo).forEach((b) => b.addEventListener("click", () => trocarTokenSocial(desenhar)));
     $("#soc-raiox", corpo)?.addEventListener("click", () => chamar(() => api("POST", "social/raiox", { alvo: $("#soc-alvo").value }), "Raio-x começou"));
     $("#soc-copiar-bio", corpo)?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(an.bio_sugerida); avisar("Bio copiada"); } catch (_) { avisar("Não consegui copiar"); } });
     $("#soc-relatorio", corpo)?.addEventListener("click", () => dialogo({ titulo: "Relatório do Instagram", corpo: `<div class="md traf-relatorio">${mdSimples(an.relatorio || an.resumo)}</div>`, acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] }));
@@ -2041,6 +2061,7 @@ ROTAS.social = async () => {
   $("#soc-analisar").addEventListener("click", async () => { try { await api("POST", "social/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); } });
   $("#soc-novo").addEventListener("click", () => editarPost({}, desenhar));
   $("#soc-config").addEventListener("click", () => dados && configSocial(dados, desenhar));
+  $("#soc-token-topo").addEventListener("click", () => trocarTokenSocial(desenhar));
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open || document.activeElement?.id === "soc-alvo") return;

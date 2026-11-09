@@ -71,7 +71,7 @@ def _pasta(*partes) -> Path:
 
 # ── configuração ────────────────────────────────────────────────────────────
 PADRAO = {"ig_id": "", "page_id": "", "username": "", "dia": 0, "horario": "08:00", "posts_semana": 4,
-          "whatsapp_ativo": False, "ultima_rodada": "", "conectado_em": 0}
+          "whatsapp_ativo": False, "ultima_rodada": "", "conectado_em": 0, "token_vence": 0}
 
 
 def _arq_config() -> Path:
@@ -114,12 +114,20 @@ def salvar_config(m: dict) -> dict:
 def conectar(tk: str = "") -> dict:
     """Guarda o token (se veio), confere e escolhe a conta (a única, ou a que tem HAIZEN no nome)."""
     if tk:
-        instagram.salvar_token(tk)
-    contas = instagram.contas()
+        tk = instagram.conferir_formato(tk)
+    try:
+        contas = instagram.contas(tk or None)      # confere ANTES de trocar: um token ruim não apaga o que funcionava
+    except instagram.ErroInstagram as e:
+        raise ValueError(f"a Meta não aceitou este token, e o anterior continua guardado: {e}") from None
     if not contas:
         raise ValueError("o token não enxerga nenhum Instagram profissional ligado a uma Página. Confira se o "
                          "Instagram da HAIZEN é conta profissional, está ligado à Página e se as permissões foram marcadas.")
+    if tk:
+        instagram.salvar_token(tk)
+    ESTADO["erro"] = ""
     c = config()
+    info = instagram.info_do_token()
+    c["token_vence"] = info.get("vence_em", 0) if info else c.get("token_vence", 0)
     escolhida = next((x for x in contas if x["ig_id"] == c["ig_id"]), None) or \
         next((x for x in contas if "haizen" in (x["username"] + x["nome"]).lower()), None) or contas[0]
     c.update(ig_id=escolhida["ig_id"], page_id=escolhida["page_id"], username=escolhida["username"],
@@ -616,6 +624,7 @@ def painel() -> dict:
         sincronizar()
     except Exception:  # noqa: BLE001
         pass
-    return {"config": {k: c[k] for k in ("username", "dia", "horario", "posts_semana", "whatsapp_ativo", "ultima_rodada")},
+    return {"config": {**{k: c[k] for k in ("username", "dia", "horario", "posts_semana", "whatsapp_ativo", "ultima_rodada")},
+                       "token_vence": c.get("token_vence", 0)},
             "conectado": bool(c["ig_id"] and instagram.token()), "tem_token": bool(instagram.token()),
             "estado": dict(ESTADO), "analise": analise(), "itens": itens(), "raiox": raiox_lista(6)}
