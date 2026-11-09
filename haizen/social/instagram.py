@@ -111,6 +111,12 @@ def _http(metodo: str, url: str, dados: bytes | None = None, cabecalhos: dict | 
         except Exception:  # noqa: BLE001
             erro = {}
         msg = erro.get("error_user_msg") or erro.get("message") or f"HTTP {e.code}"
+        m = re.search(r"Requires (\w+) permission", str(erro.get("message") or ""))
+        if m or erro.get("code") == 10:
+            perm = m.group(1) if m else "a permissão necessária"
+            msg = (f"o token não tem a permissão {perm}. Gere um token novo marcando {perm} (veja o passo a passo "
+                   f"em \"Trocar token\" na aba Social) e troque. ({msg})")
+            raise ErroInstagram(msg) from None
         if erro.get("code") in (190, 102) or e.code == 401:
             msg = ("o acesso ao Instagram venceu ou o token guardado não vale: clique em \"Trocar token\" na aba Social "
                    f"({msg})")

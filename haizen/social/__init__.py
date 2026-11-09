@@ -70,8 +70,13 @@ def _pasta(*partes) -> Path:
 
 
 # ── configuração ────────────────────────────────────────────────────────────
+# O que o token precisa ter: ler o perfil e os números, e publicar.
+PERMISSOES = ("instagram_basic", "instagram_manage_insights", "instagram_content_publish", "pages_show_list",
+              "pages_read_engagement", "pages_manage_posts", "business_management")
+
 PADRAO = {"ig_id": "", "page_id": "", "username": "", "dia": 0, "horario": "08:00", "posts_semana": 4,
-          "whatsapp_ativo": False, "ultima_rodada": "", "conectado_em": 0, "token_vence": 0}
+          "whatsapp_ativo": False, "ultima_rodada": "", "conectado_em": 0, "token_vence": 0,
+          "token_faltando": []}
 
 
 def _arq_config() -> Path:
@@ -128,6 +133,8 @@ def conectar(tk: str = "") -> dict:
     c = config()
     info = instagram.info_do_token()
     c["token_vence"] = info.get("vence_em", 0) if info else c.get("token_vence", 0)
+    if info:
+        c["token_faltando"] = [e for e in PERMISSOES if e not in (info.get("escopos") or [])]
     escolhida = next((x for x in contas if x["ig_id"] == c["ig_id"]), None) or \
         next((x for x in contas if "haizen" in (x["username"] + x["nome"]).lower()), None) or contas[0]
     c.update(ig_id=escolhida["ig_id"], page_id=escolhida["page_id"], username=escolhida["username"],
@@ -618,13 +625,30 @@ def iniciar_agenda() -> None:
     _AGENDA["thread"].start()
 
 
+def conferir_token(forcar: bool = False) -> None:
+    """Uma vez por hora: até quando o token vale e se tem todas as permissões."""
+    c = config()
+    if not instagram.token() or (not forcar and time.time() - float(c.get("token_checado_em") or 0) < 3600):
+        return
+    info = instagram.info_do_token()
+    c["token_checado_em"] = time.time()
+    if info:
+        c["token_vence"] = info.get("vence_em", 0)
+        c["token_faltando"] = [e for e in PERMISSOES if e not in (info.get("escopos") or [])]
+    _gravar(c)
+
+
 def painel() -> dict:
+    try:
+        conferir_token()
+    except Exception:  # noqa: BLE001
+        pass
     c = config()
     try:
         sincronizar()
     except Exception:  # noqa: BLE001
         pass
     return {"config": {**{k: c[k] for k in ("username", "dia", "horario", "posts_semana", "whatsapp_ativo", "ultima_rodada")},
-                       "token_vence": c.get("token_vence", 0)},
+                       "token_vence": c.get("token_vence", 0), "token_faltando": c.get("token_faltando") or []},
             "conectado": bool(c["ig_id"] and instagram.token()), "tem_token": bool(instagram.token()),
             "estado": dict(ESTADO), "analise": analise(), "itens": itens(), "raiox": raiox_lista(6)}

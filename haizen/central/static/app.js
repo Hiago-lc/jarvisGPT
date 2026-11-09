@@ -1970,6 +1970,8 @@ const SOC_PASSOS_TOKEN = `<ol><li>O Instagram da HAIZEN precisa ser <strong>cont
   <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
   <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
   <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo (o de baixo).</li>
+  <li>Se alguma permissão (como <code>instagram_content_publish</code>) não aparece na lista: no <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">painel do app</a>, em <strong>Casos de uso</strong>, adicione/personalize o de Instagram ("Gerenciar mensagens e conteúdo no Instagram") e inclua a permissão. Com o app em modo de desenvolvimento ela já vale para você, que é administrador.</li>
+  <li>Antes de copiar, confira na caixa de permissões do Explorador que <code>instagram_content_publish</code> e <code>pages_manage_posts</code> estão lá.</li>
   <li>O token certo começa com <code>EAA</code> e é bem comprido. Não use o "Token do cliente" nem a "Chave secreta" das configurações do app.</li></ol>`;
 
 function trocarTokenSocial(recarregar) {
@@ -2000,9 +2002,10 @@ ROTAS.social = async () => {
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
     const vence = c.token_vence ? new Date(c.token_vence * 1000) : null;
     const diasVence = vence ? Math.ceil((vence - Date.now()) / 86400000) : null;
-    const tokenRuim = /token|OAuth|venceu|revogad/i.test(estado.erro || "");
-    const faixaToken = dados.conectado && (tokenRuim || (diasVence !== null && diasVence <= 7))
-      ? `<div class="traf-faixa erro">${tokenRuim ? "O token do Instagram não está valendo." : diasVence <= 0 ? "O token do Instagram venceu." : `O token do Instagram vence em ${diasVence} dia(s).`} <button class="botao" data-soc-token>Trocar token</button></div>` : "";
+    const tokenRuim = /token|OAuth|venceu|revogad|permiss/i.test(estado.erro || "");
+    const faltando = c.token_faltando || [];
+    const faixaToken = dados.conectado && (tokenRuim || faltando.length || (diasVence !== null && diasVence <= 7))
+      ? `<div class="traf-faixa erro">${faltando.length ? `O token não tem a(s) permissão(ões) <strong>${faltando.map(esc).join(", ")}</strong>: sem elas ${faltando.includes("instagram_content_publish") || faltando.includes("pages_manage_posts") ? "o Jarvis não consegue publicar" : "parte da análise fica de fora"}.` : tokenRuim ? esc(estado.erro) : diasVence <= 0 ? "O token do Instagram venceu." : `O token do Instagram vence em ${diasVence} dia(s).`} <button class="botao" data-soc-token>Trocar token</button></div>` : "";
     if (!dados.conectado) {
       corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar o Instagram da HAIZEN</h2>
         <p>Pela API oficial da Meta, com o mesmo app que você criou para o Meta Ads. Uma vez só:</p>

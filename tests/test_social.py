@@ -117,6 +117,26 @@ class SocialTests(unittest.TestCase):
         self.assertIn("anterior continua guardado", str(e.exception))
         self.assertEqual(self.ig.token(), bom)
 
+    def test_permissao_que_falta_aparece(self):
+        self._conectar()
+        with patch.object(self.ig, "info_do_token", return_value={"valido": True, "vence_em": 0,
+                                                                  "escopos": ["instagram_basic", "pages_show_list"]}):
+            self.s.conferir_token(forcar=True)
+        self.assertIn("instagram_content_publish", self.s.painel()["config"]["token_faltando"])
+        import io
+        import urllib.error
+        corpo = io.BytesIO(json.dumps({"error": {"code": 10, "message": "(#10) Requires instagram_content_publish "
+                                                                       "permission to manage the object"}}).encode())
+        err = urllib.error.HTTPError("u", 403, "x", {}, corpo)
+        self.p[0].stop()
+        try:
+            with patch("urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(self.ig.ErroInstagram) as e:
+                    self.ig._http("POST", "https://graph/x")
+        finally:
+            self.p[0].start()
+        self.assertIn("não tem a permissão instagram_content_publish", str(e.exception))
+
     def test_analise_ve_a_grade_e_monta_o_calendario(self):
         self._conectar()
         self.respostas.append(json.dumps(ANALISE))
