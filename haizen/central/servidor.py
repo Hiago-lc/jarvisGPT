@@ -625,7 +625,8 @@ class _Handler(BaseHTTPRequestHandler):
             host = self.headers.get("Host", f"127.0.0.1:{PORTA}")
             if not host.split(":")[0] in ("127.0.0.1", "localhost"):
                 raise ValueError("conecte o Google Ads pelo próprio computador (o Google só volta para 127.0.0.1)")
-            return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads")}
+            return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads",
+                                                youtube=self._corpo().get("youtube", True) is not False)}
         if rota == "midia" and metodo == "GET":
             from haizen.googleads import midia
             ref = str((q or {}).get("ref") or "")

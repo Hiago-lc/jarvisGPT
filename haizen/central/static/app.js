@@ -2074,12 +2074,16 @@ ROTAS.googleads = async () => {
           <li>Em <strong>APIs e serviços → Credenciais</strong>, use (ou crie) um <strong>ID do cliente OAuth</strong> do tipo <strong>App para computador</strong> e copie o Client ID e o Client secret (ou cole o JSON baixado). Se a tela de consentimento estiver em "Teste", adicione o seu e-mail como usuário de teste.</li>
           <li>Cole abaixo, salve e clique em <strong>Conectar com o Google</strong>, neste computador, com a conta Google que acessa as contas dos clientes (ou a conta de administrador/MCC da agência).</li></ol>
         <div class="campos">${campo({ nome: "client_id", rotulo: "Client ID (ou o JSON inteiro)", largo: true })}${campo({ nome: "client_secret", rotulo: "Client secret", tipo: "password", largo: true })}</div>
-        <div class="traf-botoes"><button class="botao" id="ga-salvar-cliente">Salvar</button><button class="botao primario" id="ga-conectar"${dados.tem_cliente ? "" : " disabled"}>Conectar com o Google</button></div></section>`;
+        <div class="traf-botoes"><button class="botao" id="ga-salvar-cliente">Salvar</button><button class="botao" id="ga-conectar-sem"${dados.tem_cliente ? "" : " disabled"}>Conectar sem o YouTube</button><button class="botao primario" id="ga-conectar"${dados.tem_cliente ? "" : " disabled"}>Conectar com o Google</button></div>
+        <p class="sub">"Sem o YouTube" pede só o acesso ao Google Ads: tudo funciona, mas vídeo para anúncio precisa ser um link do YouTube (o Jarvis não envia o arquivo).</p></section>`;
       $("#ga-salvar-cliente").addEventListener("click", async () => {
         try { await api("POST", "googleads/config", { client_id: $("[name=client_id]", corpo).value, client_secret: $("[name=client_secret]", corpo).value }); avisar("Salvo"); desenhar(); } catch (e) { avisar(e.message); }
       });
       $("#ga-conectar").addEventListener("click", async () => {
         try { const r = await api("POST", "googleads/autorizar", {}); window.open(r.url, "_blank"); avisar("Autorize na janela do Google; esta tela atualiza sozinha"); } catch (e) { avisar(e.message); }
+      });
+      $("#ga-conectar-sem").addEventListener("click", async () => {
+        try { const r = await api("POST", "googleads/autorizar", { youtube: false }); window.open(r.url, "_blank"); avisar("Autorize na janela do Google; esta tela atualiza sozinha"); } catch (e) { avisar(e.message); }
       });
       return;
     }

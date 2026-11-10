@@ -93,7 +93,7 @@ def tem_cliente() -> bool:
     return bool(cofre.ler(_CHAVE).get("client_id"))
 
 
-def url_autorizacao(redirect: str) -> str:
+def url_autorizacao(redirect: str, youtube: bool = True) -> str:
     a = cofre.ler(_CHAVE)
     if not a.get("client_id"):
         raise ValueError("primeiro cole o Client ID e o Client secret")
@@ -103,7 +103,7 @@ def url_autorizacao(redirect: str) -> str:
     _PENDENTE.clear()
     _PENDENTE[state] = {"verifier": verifier, "redirect": redirect, "criado": time.time()}
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
-        "client_id": a["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": ESCOPO,
+        "client_id": a["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": ESCOPO if youtube else ESCOPO.split()[0],
         "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": desafio,
         "code_challenge_method": "S256"})
 
