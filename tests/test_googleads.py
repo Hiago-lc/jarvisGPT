@@ -180,6 +180,30 @@ class GoogleAdsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.ga.propor(c["id"], "pausar_palavra", "x", "", {"recurso": "customers/1/adGroupCriteria/9~9"})
 
+    def test_uma_analise_por_vez_e_proposta_substituida_explicada(self):
+        import threading
+        c = self._conectar()
+        segura, entrou = threading.Event(), threading.Event()
+        with patch.object(self.ga, "analisar", side_effect=lambda *a, **k: (entrou.set(), segura.wait(5))):
+            self.assertTrue(self.ga.analisar_em_segundo_plano(c["id"]))
+            self.assertTrue(entrou.wait(5))
+            self.assertFalse(self.ga.analisar_em_segundo_plano(c["id"]))          # clique duplo não roda outra
+            segura.set()
+            for _ in range(100):
+                if self.ga._UMA_POR_VEZ.acquire(blocking=False):
+                    self.ga._UMA_POR_VEZ.release()
+                    break
+                import time
+                time.sleep(0.02)
+        for _ in range(2):
+            self.respostas.append(json.dumps({"resumo": "ok", "acoes": [{"tipo": "alerta", "titulo": "Conferir tag"}]}))
+        self.ga.analisar(c["id"], HOJE)
+        velha = self.ga.acoes(c["id"])[0]
+        self.ga.analisar(c["id"], HOJE)
+        with self.assertRaises(ValueError) as e:
+            self.ga.aprovar(velha["id"])
+        self.assertIn("análise mais nova", str(e.exception))
+
     def test_mensagens_de_erro_claras(self):
         corpo = {"error": {"message": "x", "details": [{"errors": [{"errorCode": {"authorizationError":
                  "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"}, "message": "no"}]}]}}

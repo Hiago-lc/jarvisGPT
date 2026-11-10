@@ -482,14 +482,16 @@ def propor(cid: str, tipo: str, titulo: str, motivo: str = "", detalhes: dict | 
 
 def rejeitar(aid: int, nota: str = "") -> dict:
     if acao(aid)["status"] != "proposta":
-        raise ValueError("esta ação não está esperando aprovação")
+        raise ValueError("esta proposta não está mais esperando aprovação (a tela foi atualizada)")
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 
 
 def aprovar(aid: int, detalhes: dict | None = None) -> dict:
     a = acao(aid)
     if a["status"] not in ("proposta", "erro"):
-        raise ValueError("esta ação já foi aplicada ou rejeitada")
+        if a["status"] == "rejeitada" and str(a.get("resultado") or "").startswith("substituída"):
+            raise ValueError("esta proposta foi trocada por uma análise mais nova: a tela foi atualizada com as propostas atuais")
+        raise ValueError("esta ação já foi aplicada ou rejeitada (a tela foi atualizada)")
     c = conta(a["conta_id"])
     det = {k: v for k, v in (detalhes if detalhes is not None else a["detalhes"]).items() if not k.startswith("_")}
     if a["tipo"] != "alerta":
@@ -553,6 +555,9 @@ def _descrever(tipo: str, d: dict) -> str:
 
 # ── agenda, painel, resumo ──────────────────────────────────────────────────
 ESTADO = {"fazendo": "", "erro": ""}
+# Uma análise por vez: duas ao mesmo tempo geravam duas levas de propostas e a primeira
+# (ainda na tela) virava "substituída" — o clique dava "já foi aplicada ou rejeitada".
+_UMA_POR_VEZ = threading.Lock()
 
 
 def rodada(hoje: dt.date | None = None) -> dict:
@@ -576,7 +581,11 @@ def rodada(hoje: dt.date | None = None) -> dict:
     return {"feitas": feitas, "erros": erros}
 
 
-def analisar_em_segundo_plano(cid: str | None = None) -> None:
+def analisar_em_segundo_plano(cid: str | None = None) -> bool:
+    """Começa a análise; False se já tem uma rodando."""
+    if not _UMA_POR_VEZ.acquire(blocking=False):
+        return False
+
     def _fazer():
         try:
             if cid:
@@ -589,7 +598,9 @@ def analisar_em_segundo_plano(cid: str | None = None) -> None:
             ESTADO["erro"] = str(e)[:400]
         finally:
             ESTADO["fazendo"] = ""
+            _UMA_POR_VEZ.release()
     threading.Thread(target=_fazer, daemon=True, name="googleads-analise").start()
+    return True
 
 
 _AGENDA = {"thread": None}
@@ -611,7 +622,8 @@ def iniciar_agenda() -> None:
                     salvar_config({"ultima_rodada": agora.date().isoformat()})
                     from haizen import executor
                     if executor.claude_disponivel():
-                        rodada(agora.date())
+                        with _UMA_POR_VEZ:
+                            rodada(agora.date())
             except Exception as e:  # noqa: BLE001
                 print(f"[Google Ads] {e}")
             time.sleep(120)

@@ -550,7 +550,7 @@ def propor(lid: str, tipo: str, titulo: str, motivo: str = "", detalhes: dict | 
 def rejeitar(aid: int, nota: str = "") -> dict:
     a = acao(aid)
     if a["status"] != "proposta":
-        raise ValueError("esta ação não está esperando aprovação")
+        raise ValueError("esta proposta não está mais esperando aprovação (a tela foi atualizada)")
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 
 
@@ -558,7 +558,9 @@ def aprovar(aid: int, detalhes: dict | None = None) -> dict:
     """Aplica na loja exatamente o que está na proposta (com os ajustes que você fez)."""
     a = acao(aid)
     if a["status"] not in ("proposta", "erro"):
-        raise ValueError("esta ação já foi aplicada ou rejeitada")
+        if a["status"] == "rejeitada" and str(a.get("resultado") or "").startswith("substituída"):
+            raise ValueError("esta proposta foi trocada por uma análise mais nova: a tela foi atualizada com as propostas atuais")
+        raise ValueError("esta ação já foi aplicada ou rejeitada (a tela foi atualizada)")
     lj = loja(a["loja_id"])
     det = validar(lj, a["tipo"], detalhes if detalhes is not None else a["detalhes"]) if a["tipo"] != "alerta" else {}
     try:
@@ -649,6 +651,9 @@ def listar_cupons(lid: str) -> list[dict]:
 
 # ── agenda diária ───────────────────────────────────────────────────────────
 ESTADO = {"fazendo": "", "erro": ""}
+# Uma análise por vez: duas ao mesmo tempo geravam duas levas de propostas e a primeira
+# (ainda na tela) virava "substituída" — o clique dava "já foi aplicada ou rejeitada".
+_UMA_POR_VEZ = threading.Lock()
 
 
 def rodada(hoje: dt.date | None = None) -> dict:
@@ -701,7 +706,8 @@ def iniciar_agenda() -> None:
                     salvar_config({"ultima_rodada": agora.date().isoformat()})
                     from haizen import executor
                     if executor.claude_disponivel() and lojas(so_ativas=True):
-                        rodada(agora.date())
+                        with _UMA_POR_VEZ:
+                            rodada(agora.date())
             except Exception as e:  # noqa: BLE001
                 print(f"[E-commerce] {e}")
             time.sleep(120)
@@ -709,7 +715,11 @@ def iniciar_agenda() -> None:
     _AGENDA["thread"].start()
 
 
-def analisar_em_segundo_plano(lid: str | None = None) -> None:
+def analisar_em_segundo_plano(lid: str | None = None) -> bool:
+    """Começa a análise; False se já tem uma rodando."""
+    if not _UMA_POR_VEZ.acquire(blocking=False):
+        return False
+
     def _fazer():
         try:
             if lid:
@@ -722,7 +732,9 @@ def analisar_em_segundo_plano(lid: str | None = None) -> None:
             ESTADO["erro"] = str(e)[:400]
         finally:
             ESTADO["fazendo"] = ""
+            _UMA_POR_VEZ.release()
     threading.Thread(target=_fazer, daemon=True, name="ecommerce-analise").start()
+    return True
 
 
 # ── painel e resumo ─────────────────────────────────────────────────────────

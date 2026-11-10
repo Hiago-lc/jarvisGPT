@@ -1849,14 +1849,14 @@ ROTAS.ecommerce = async () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.ecAprovar);
       if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar na loja ${a.loja_nome}: ${a.titulo}?`, "Aplicar"))) return;
       b.disabled = true;
-      try { const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+      try { const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); } desenhar();
     }));
     $$("[data-ec-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => {
-      try { await api("POST", `ecommerce/acoes/${b.dataset.ecRejeitar}/rejeitar`, {}); desenhar(); } catch (e) { avisar(e.message); }
+      try { await api("POST", `ecommerce/acoes/${b.dataset.ecRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar();
     }));
     $$("[data-ec-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => ecAjustar(propostas.find((x) => String(x.id) === b.dataset.ecAjustar), desenhar)));
     $$("[data-ec-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => {
-      try { await api("POST", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecAnalisar)}/analisar`, {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+      try { const r = await api("POST", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecAnalisar)}/analisar`, {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
     }));
     $$("[data-ec-reconectar]", corpo).forEach((b) => b.addEventListener("click", () => ecConectar(dados, desenhar, lojas.find((l) => l.id === b.dataset.ecReconectar))));
     $$("[data-ec-pedir]", corpo).forEach((b) => b.addEventListener("click", () => ecPedir(lojas.find((l) => l.id === b.dataset.ecPedir), desenhar)));
@@ -1878,7 +1878,7 @@ ROTAS.ecommerce = async () => {
     $("#ec-analisar").disabled = !!estado.fazendo || !lojas.length;
   };
   $("#ec-analisar").addEventListener("click", async () => {
-    try { await api("POST", "ecommerce/analisar", {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+    try { const r = await api("POST", "ecommerce/analisar", {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
   });
   $("#ec-conectar").addEventListener("click", () => dados && ecConectar(dados, desenhar));
   $("#ec-config").addEventListener("click", () => dados && dialogo({
@@ -1996,9 +1996,9 @@ ROTAS.googleads = async () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.gaAprovar);
       if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar no Google Ads (${a.conta_nome}): ${a.titulo}?`, "Aplicar"))) return;
       b.disabled = true;
-      try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+      try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); } desenhar();
     }));
-    $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); desenhar(); } catch (e) { avisar(e.message); } }));
+    $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar(); }));
     $$("[data-ga-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.gaAjustar);
       dialogo({ titulo: `Ajustar · ${a.titulo}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Salvar e aplicar já muda a campanha.</p>`,
@@ -2008,7 +2008,7 @@ ROTAS.googleads = async () => {
           avisar(r.resultado); desenhar();
         } }] });
     }));
-    $$("[data-ga-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/contas/${b.dataset.gaAnalisar}/analisar`, {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } }));
+    $$("[data-ga-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { const r = await api("POST", `googleads/contas/${b.dataset.gaAnalisar}/analisar`, {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } }));
     $$("[data-ga-ativo]", corpo).forEach((cx) => cx.addEventListener("change", async () => { await api("POST", `googleads/contas/${cx.dataset.gaAtivo}`, { ativo: cx.checked }); desenhar(); }));
     $$("[data-ga-ligar]", corpo).forEach((b) => b.addEventListener("click", async () => { await api("POST", `googleads/contas/${b.dataset.gaLigar}`, { ativo: true }); avisar("Conta marcada: clique em Analisar agora no cartão dela"); desenhar(); }));
     $$("[data-ga-editar]", corpo).forEach((b) => b.addEventListener("click", async () => {
@@ -2021,7 +2021,7 @@ ROTAS.googleads = async () => {
     }));
     $("#ga-analisar").disabled = !!estado.fazendo || !ativas.length;
   };
-  $("#ga-analisar").addEventListener("click", async () => { try { await api("POST", "googleads/analisar", {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } });
+  $("#ga-analisar").addEventListener("click", async () => { try { const r = await api("POST", "googleads/analisar", {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } });
   $("#ga-sync").addEventListener("click", async () => { try { await api("POST", "googleads/sincronizar", {}); avisar("Contas atualizadas"); desenhar(); } catch (e) { avisar(e.message); } });
   $("#ga-config").addEventListener("click", () => dados && dialogo({
     titulo: "Google Ads",
@@ -2036,7 +2036,7 @@ ROTAS.googleads = async () => {
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open) return;
-    if (dados?.estado?.fazendo || !dados?.conectado) desenhar().catch(() => {});
+    if (dados?.estado?.fazendo || !dados?.conectado || Date.now() - (window.__gaVisto || 0) > 60000) { window.__gaVisto = Date.now(); desenhar().catch(() => {}); }
   }, 6000);
 };
 

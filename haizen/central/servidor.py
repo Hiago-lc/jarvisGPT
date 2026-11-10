@@ -570,8 +570,7 @@ class _Handler(BaseHTTPRequestHandler):
             if acao == "" and metodo == "POST":
                 return ec.editar_loja(lid, self._corpo())
             if acao == "analisar" and metodo == "POST":
-                ec.analisar_em_segundo_plano(lid)
-                return {"ok": True}
+                return {"ok": ec.analisar_em_segundo_plano(lid)}
             if acao == "produtos" and metodo == "GET":
                 return ec.buscar_produtos(lid, str((q or {}).get("busca") or ""))
             if acao == "propor" and metodo == "POST":
@@ -579,8 +578,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return ec.propor(lid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
                                  c.get("detalhes") or {}, "manual")
         if rota == "analisar" and metodo == "POST":
-            ec.analisar_em_segundo_plano(None)
-            return {"ok": True}
+            return {"ok": ec.analisar_em_segundo_plano(None)}
         if rota == "acoes" and len(partes) == 3 and metodo == "POST":
             aid, acao = int(partes[1]), partes[2]
             if acao == "aprovar":
@@ -635,15 +633,13 @@ class _Handler(BaseHTTPRequestHandler):
             ga.sincronizar_contas()
             return ga.painel()
         if rota == "analisar" and metodo == "POST":
-            ga.analisar_em_segundo_plano(None)
-            return {"ok": True}
+            return {"ok": ga.analisar_em_segundo_plano(None)}
         if rota == "contas" and len(partes) >= 2:
             cid, acao = partes[1], (partes[2] if len(partes) > 2 else "")
             if acao == "" and metodo == "POST":
                 return ga.editar_conta(cid, self._corpo())
             if acao == "analisar" and metodo == "POST":
-                ga.analisar_em_segundo_plano(cid)
-                return {"ok": True}
+                return {"ok": ga.analisar_em_segundo_plano(cid)}
             if acao == "propor" and metodo == "POST":
                 c = self._corpo()
                 return ga.propor(cid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
