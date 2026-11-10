@@ -37,9 +37,10 @@ CREATE INDEX IF NOT EXISTS claude_uso_data ON claude_uso(criado_em);
 # Modelos que a pessoa escolhe por área. "" = o padrão do Claude Code.
 AREAS = {"jarvis": "Jarvis (conversa)", "agentes": "Agentes (produção)", "gerente": "Gerente (planos)",
          "trafego": "Gestor de tráfego", "social": "Social (Instagram)",
-         "qualidade": "Checagem de qualidade", "ecommerce": "Gestor de e-commerce"}
+         "qualidade": "Checagem de qualidade", "ecommerce": "Gestor de e-commerce",
+         "googleads": "Gestor de Google Ads"}
 PADRAO_MODELOS = {"jarvis": "sonnet", "agentes": "", "gerente": "sonnet", "trafego": "sonnet", "social": "sonnet",
-                  "qualidade": "sonnet", "ecommerce": "sonnet"}
+                  "qualidade": "sonnet", "ecommerce": "sonnet", "googleads": "sonnet"}
 MODELOS = ("", "sonnet", "opus", "haiku")
 _LIMITE = re.compile(r"usage limit|limit reached|rate limit|limite de uso|resets? (?:at|in)|5-hour limit|weekly limit",
                      re.I)

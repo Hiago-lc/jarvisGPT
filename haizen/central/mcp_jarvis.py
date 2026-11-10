@@ -418,6 +418,52 @@ def ecommerce_rejeitar(acao_id: int, nota: str = "") -> dict:
     return _api("POST", f"ecommerce/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
 
 
+# ── Google Ads dos clientes ────────────────────────────────────────────────
+@mcp.tool()
+def googleads_painel() -> list:
+    """Contas do Google Ads: gasto e conversões (ontem, 7 e 30 dias, com variação), CPA/ROAS por campanha,
+    desperdício em termos de pesquisa, resumo da última análise e propostas esperando aprovação (com id)."""
+    out = []
+    for c in _api("GET", "googleads").get("contas", []):
+        m = c.get("metricas") or {}
+        out.append({"id": c["id"], "nome": c["nome"], "ativa": bool(c.get("ativo")), "cliente": c.get("cliente_nome"),
+                    "ontem": m.get("ontem"), "ult7": m.get("ult7"), "var7": m.get("var7"), "ult30": m.get("ult30"),
+                    "var30": m.get("var30"), "campanhas": (m.get("campanhas") or [])[:8],
+                    "desperdicio_termos": m.get("desperdicio_termos"), "analise": c.get("analise"),
+                    "propostas": [{k: a.get(k) for k in ("id", "tipo", "titulo", "motivo", "detalhes")}
+                                  for a in c.get("propostas") or []]})
+    return out
+
+
+@mcp.tool()
+def googleads_analisar(conta_id: str = "") -> dict:
+    """Roda a análise de uma conta do Google Ads (ou de todas as ativas) em segundo plano."""
+    return _api("POST", f"googleads/contas/{conta_id}/analisar" if conta_id else "googleads/analisar")
+
+
+@mcp.tool()
+def googleads_propor(conta_id: str, tipo: str, titulo: str, detalhes: dict, motivo: str = "") -> dict:
+    """Cria uma PROPOSTA (não aplica). Tipos: orcamento {campanha_id, orcamento_diario (R$/dia)};
+    pausar_campanha/ativar_campanha {campanha_id}; negativar_termos {campanha_id, termos: [...],
+    correspondencia: PHRASE|EXACT|BROAD}; pausar_palavra {recurso}; pausar_anuncio {recurso}. Ids e recursos vêm
+    do googleads_painel (campanhas) ou da última análise."""
+    return _api("POST", f"googleads/contas/{conta_id}/propor", {"tipo": tipo, "titulo": titulo, "motivo": motivo,
+                                                               "detalhes": detalhes})
+
+
+@mcp.tool()
+def googleads_aprovar(acao_id: int) -> dict:
+    """APLICA no Google Ads uma proposta. SÓ depois de mostrar o que muda (conta, campanha, valores) e o usuário
+    confirmar explicitamente nesta conversa."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/aprovar", {})
+
+
+@mcp.tool()
+def googleads_rejeitar(acao_id: int, nota: str = "") -> dict:
+    """Descarta uma proposta do Google Ads."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
+
+
 # ── rotina (resumo do dia, cobranças, relatórios mensais) ─────────────────
 @mcp.tool()
 def resumo_do_dia() -> dict:

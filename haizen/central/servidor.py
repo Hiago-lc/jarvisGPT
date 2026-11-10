@@ -234,6 +234,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._erro(HTTPStatus.FORBIDDEN, "host não permitido")
         url = urlparse(self.path)
+        if url.path == "/oauth/google-ads" and metodo == "GET":
+            return self._retorno_google_ads(url)
         if not url.path.startswith("/api/"):
             if metodo != "GET":
                 return self._erro(HTTPStatus.METHOD_NOT_ALLOWED, "método não permitido")
@@ -312,6 +314,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._rotina(metodo, partes[1:], q)
         if partes and partes[0] == "ecommerce":
             return self._ecommerce(metodo, partes[1:], q)
+        if partes and partes[0] == "googleads":
+            return self._googleads(metodo, partes[1:], q)
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
@@ -584,6 +588,73 @@ class _Handler(BaseHTTPRequestHandler):
                 return ec.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None)
             if acao == "rejeitar":
                 return ec.rejeitar(aid, str(self._corpo().get("nota") or ""))
+        return _NAO_ACHOU
+
+    def _retorno_google_ads(self, url):
+        """O Google volta aqui depois de você autorizar (página normal, não /api)."""
+        from haizen.googleads import api as gapi
+        q = {k: v[-1] for k, v in parse_qs(url.query).items()}
+        try:
+            if q.get("error"):
+                raise ValueError(f"o Google não autorizou ({q['error']})")
+            gapi.concluir(q.get("state", ""), q.get("code", ""))
+            from haizen import googleads
+            googleads.sincronizar_contas()
+            titulo, texto = "Google Ads conectado", "Pode fechar esta aba e voltar ao Jarvis: as contas já aparecem na tela Google Ads."
+        except Exception as e:  # noqa: BLE001
+            titulo, texto = "Não conectou", str(e)
+        import html as _html
+        corpo = (f"<!doctype html><meta charset=utf-8><title>{_html.escape(titulo)}</title>"
+                 f"<body style='font:18px system-ui;max-width:560px;margin:80px auto;padding:0 20px'>"
+                 f"<h1>{_html.escape(titulo)}</h1><p>{_html.escape(texto)}</p>"
+                 f"<p><a href='/#/googleads'>Voltar para a tela Google Ads</a></p></body>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _googleads(self, metodo, partes, q=None):
+        from haizen import googleads as ga
+        from haizen.googleads import api as gapi
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return ga.painel()
+        if rota == "config" and metodo == "POST":
+            ga.salvar_config(self._corpo())
+            return ga.painel()
+        if rota == "autorizar" and metodo == "POST":
+            host = self.headers.get("Host", f"127.0.0.1:{PORTA}")
+            if not host.split(":")[0] in ("127.0.0.1", "localhost"):
+                raise ValueError("conecte o Google Ads pelo próprio computador (o Google só volta para 127.0.0.1)")
+            return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads")}
+        if rota == "desconectar" and metodo == "POST":
+            gapi.desconectar()
+            return ga.painel()
+        if rota == "sincronizar" and metodo == "POST":
+            ga.sincronizar_contas()
+            return ga.painel()
+        if rota == "analisar" and metodo == "POST":
+            ga.analisar_em_segundo_plano(None)
+            return {"ok": True}
+        if rota == "contas" and len(partes) >= 2:
+            cid, acao = partes[1], (partes[2] if len(partes) > 2 else "")
+            if acao == "" and metodo == "POST":
+                return ga.editar_conta(cid, self._corpo())
+            if acao == "analisar" and metodo == "POST":
+                ga.analisar_em_segundo_plano(cid)
+                return {"ok": True}
+            if acao == "propor" and metodo == "POST":
+                c = self._corpo()
+                return ga.propor(cid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
+                                 c.get("detalhes") or {}, "manual")
+        if rota == "acoes" and len(partes) == 3 and metodo == "POST":
+            aid, acao = int(partes[1]), partes[2]
+            if acao == "aprovar":
+                c = self._corpo()
+                return ga.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None)
+            if acao == "rejeitar":
+                return ga.rejeitar(aid, str(self._corpo().get("nota") or ""))
         return _NAO_ACHOU
 
     def _rotina(self, metodo, partes, q=None):
@@ -936,6 +1007,8 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                     rotina.iniciar_agenda()           # resumo da manhã, backup, cobranças, relatório mensal
                     from haizen import ecommerce
                     ecommerce.iniciar_agenda()        # lojas Shopify/Tray: análise diária, fim das promoções
+                    from haizen import googleads
+                    googleads.iniciar_agenda()        # Google Ads dos clientes: análise diária
                 except Exception as e:  # noqa: BLE001
                     print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:

@@ -190,6 +190,12 @@ async function atualizarSelo() {
     s.title = `${n} otimização(ões) do Meta Ads esperando sua aprovação`;
   } catch (_) { /* silencioso */ }
   try {
+    const ga = await api("GET", "googleads");
+    const n = ga.contas.filter((c) => c.ativo).reduce((t, c) => t + c.propostas.length, 0);
+    const s = $("#selo-googleads");
+    s.hidden = !n; s.textContent = n; s.title = `${n} mudança(s) no Google Ads esperando sua aprovação`;
+  } catch (_) { /* silencioso */ }
+  try {
     const ec = await api("GET", "ecommerce");
     const n = ec.lojas.reduce((t, l) => t + l.propostas.length, 0);
     const s = $("#selo-ecommerce");
@@ -1888,6 +1894,150 @@ ROTAS.ecommerce = async () => {
     if (document.hidden || $("#dialogo").open) return;
     if (dados?.estado?.fazendo) desenhar().catch(() => {});
   }, 8000);
+};
+
+// ── Google Ads dos clientes ─────────────────────────────────────────────────
+function gaDetalhes(a) {
+  const d = a.detalhes || {};
+  const camp = d.campanha_nome ? `<span class="sub">${esc(d.campanha_nome)}</span>` : "";
+  switch (a.tipo) {
+    case "orcamento": return `<p class="ec-mudanca">${d.orcamento_anterior ? `${moeda(d.orcamento_anterior)} → ` : ""}<strong>${moeda(d.orcamento_diario)}/dia</strong> ${camp}</p>`;
+    case "negativar_termos": return `<p class="ec-mudanca">${camp}</p><p class="ga-termos">${(d.termos || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(" ")}</p>`;
+    case "pausar_campanha": case "ativar_campanha": return `<p class="ec-mudanca">${camp}</p>`;
+    default: return "";
+  }
+}
+
+function gaCartaoAcao(a) {
+  return `<article class="traf-acao">
+    <div class="traf-acao-topo"><span class="traf-tipo">${esc(a.tipo_nome)}</span><span class="sub">${esc(a.conta_nome)}${a.origem !== "analise" ? " · pedido seu" : ""}</span></div>
+    <p class="traf-alvo">${esc(a.titulo)}</p>${gaDetalhes(a)}
+    ${a.motivo ? `<p class="traf-motivo">${esc(a.motivo)}</p>` : ""}${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
+    ${a.status === "erro" ? `<p class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</p>` : ""}
+    <div class="traf-botoes"><button class="botao" data-ga-rejeitar="${a.id}">${a.tipo === "alerta" ? "Dispensar" : "Rejeitar"}</button>
+      ${a.tipo === "orcamento" ? `<button class="botao" data-ga-ajustar="${a.id}">Ajustar</button>` : ""}
+      <button class="botao primario" data-ga-aprovar="${a.id}">${a.tipo === "alerta" ? "Ciente" : a.status === "erro" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div></article>`;
+}
+
+function gaCartaoConta(c) {
+  const m = c.metricas;
+  const kpi = (rot, val, extra = "") => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong>${extra}</div>`;
+  const maxDia = m ? Math.max(1, ...m.por_dia.map((d) => d.custo)) : 1;
+  const an = c.analise;
+  return `<article class="traf-conta">
+    <div class="traf-conta-topo"><div><h3>${esc(c.nome)}</h3>
+      <p class="sub">${esc(c.id_formatado)} · ${esc(c.cliente_nome || "sem cliente")}${an ? ` · análise de ${new Date(an.criado_em * 1000).toLocaleDateString("pt-BR")}` : " · ainda sem análise"}${an && an.saude != null ? ` · saúde ${an.saude}/100` : ""}</p></div>
+      <label class="caixa traf-ativo"><input type="checkbox" data-ga-ativo="${esc(c.id)}" checked> Análise diária</label></div>
+    ${c.erro ? `<p class="traf-estado erro">${esc(c.erro)}</p>` : ""}
+    ${m ? `<div class="traf-kpis">
+      ${kpi("Ontem", moeda(m.ontem.custo), `<small>${numBR(m.ontem.conversoes, 1).replace(",0", "")} conversões</small>`)}
+      ${kpi("Gasto 30d", moeda(m.ult30.custo), ecVar(m.var30.custo))}
+      ${kpi("Conversões 30d", numBR(m.ult30.conversoes, 1).replace(",0", ""), ecVar(m.var30.conversoes))}
+      ${kpi("CPA", m.ult30.cpa ? moeda(m.ult30.cpa) : "—", m.var30.cpa != null ? `<em class="ec-var ${m.var30.cpa <= 0 ? "sobe" : "desce"}">${m.var30.cpa > 0 ? "+" : ""}${numBR(m.var30.cpa)}%</em>` : "")}
+      ${kpi("ROAS", m.ult30.roas ? `${numBR(m.ult30.roas, 2)}x` : "—")}
+      ${kpi("Desperdício em termos", moeda(m.desperdicio_termos), "<small>sem conversão, 30d</small>")}
+    </div>
+    <div class="ec-barras" title="Gasto por dia, últimos 30 dias">${m.por_dia.map((d) => `<span style="height:${Math.max(2, Math.round(d.custo / maxDia * 100))}%" title="${dataBr(d.dia)}: ${moeda(d.custo)} · ${d.conversoes} conv."></span>`).join("")}</div>` : ""}
+    ${m?.rastreamento_suspeito ? '<p class="traf-estado erro">Cliques sem nenhuma conversão em 30 dias: confira se a conversão está sendo registrada.</p>' : ""}
+    ${an?.resumo ? `<p class="traf-resumo">${esc(an.resumo)}</p>` : ""}
+    ${an?.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    ${m?.campanhas?.length ? `<details class="traf-detalhes"><summary>Campanhas (30 dias)</summary>
+      <table class="ec-tabela"><tr><th>Campanha</th><th>Gasto</th><th>Conv.</th><th>CPA</th><th>Orç./dia</th><th>Perde por orç.</th></tr>
+      ${m.campanhas.slice(0, 12).map((x) => `<tr><td>${esc(x.nome)}${x.status !== "ENABLED" ? ' <span class="sub">(pausada)</span>' : ""}</td><td>${moeda(x.custo)}</td><td>${numBR(x.conversoes, 1).replace(",0", "")}</td><td>${x.cpa ? moeda(x.cpa) : "—"}</td><td>${moeda(x.orcamento_diario)}</td><td>${x.perda_orcamento != null ? `${numBR(x.perda_orcamento, 1)}%` : "—"}</td></tr>`).join("")}</table></details>` : ""}
+    ${m?.termos_sem_conversao?.length ? `<details class="traf-detalhes"><summary>Termos que gastaram sem converter</summary><table class="ec-tabela"><tr><th>Termo</th><th>Campanha</th><th>Gasto</th><th>Cliques</th></tr>
+      ${m.termos_sem_conversao.slice(0, 15).map((t) => `<tr><td>${esc(t.termo)}</td><td>${esc(t.campanha)}</td><td>${moeda(t.custo)}</td><td>${t.cliques}</td></tr>`).join("")}</table></details>` : ""}
+    ${c.historico?.length ? `<details class="traf-detalhes"><summary>Aplicado recentemente</summary><ul class="ec-hist">${c.historico.map((a) => `<li><span class="traf-tipo">${esc(a.tipo_nome)}</span> ${esc(a.titulo)} <span class="sub">${esc(a.resultado)}</span></li>`).join("")}</ul></details>` : ""}
+    <div class="traf-botoes"><button class="botao" data-ga-editar="${esc(c.id)}">Cliente e objetivo</button><button class="botao primario" data-ga-analisar="${esc(c.id)}">Analisar agora</button></div></article>`;
+}
+
+ROTAS.googleads = async () => {
+  main.innerHTML = `
+    <div class="topo"><div><h1>Google Ads</h1><p class="sub" id="ga-sub">Contas dos clientes: análise diária e mudanças com a sua aprovação.</p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ga-config">Configurar</button><button class="botao" id="ga-sync">Atualizar contas</button><button class="botao primario" id="ga-analisar">Analisar ativas</button></div></div>
+    <div id="ga-corpo"><p class="vazio">Carregando…</p></div>`;
+  const corpo = $("#ga-corpo");
+  let dados = null; let timer = null;
+  const desenhar = async () => {
+    if (!document.body.contains(corpo)) { clearInterval(timer); return; }
+    dados = await api("GET", "googleads");
+    const { contas, estado, config: cfg } = dados;
+    $("#ga-sub").textContent = dados.conectado ? `Análise todo dia às ${cfg.horario} das contas marcadas. Nada muda sem a sua aprovação.` : "Conecte a sua conta Google que acessa as contas dos clientes.";
+    ["#ga-sync", "#ga-analisar"].forEach((s) => { $(s).hidden = !dados.conectado; });
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>Analisando ${esc(estado.fazendo)}… leva 1 a 3 minutos por conta.</div>` : "";
+    const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    if (!dados.conectado) {
+      corpo.innerHTML = `${erro}<section class="bloco traf-conectar"><h2>Conectar o Google Ads</h2>
+        <p>Pela API oficial do Google. Desde setembro de 2026 não precisa mais de developer token: o acesso é pelo projeto do Google Cloud. Uma vez só:</p>
+        <ol><li>No <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, use o mesmo projeto do Google Agenda do Jarvis (ou crie um). Em <strong>APIs e serviços → Biblioteca</strong>, ative a <strong>Google Ads API</strong>.</li>
+          <li>Na página da Google Ads API, em <strong>Visão geral → Upgrade access level</strong>, peça o acesso <strong>Explorer</strong> (aprovação automática na maioria dos casos). Sem ele, o projeto só enxerga contas de teste.</li>
+          <li>Em <strong>APIs e serviços → Credenciais</strong>, use (ou crie) um <strong>ID do cliente OAuth</strong> do tipo <strong>App para computador</strong> e copie o Client ID e o Client secret (ou cole o JSON baixado). Se a tela de consentimento estiver em "Teste", adicione o seu e-mail como usuário de teste.</li>
+          <li>Cole abaixo, salve e clique em <strong>Conectar com o Google</strong>, neste computador, com a conta Google que acessa as contas dos clientes (ou a conta de administrador/MCC da agência).</li></ol>
+        <div class="campos">${campo({ nome: "client_id", rotulo: "Client ID (ou o JSON inteiro)", largo: true })}${campo({ nome: "client_secret", rotulo: "Client secret", tipo: "password", largo: true })}</div>
+        <div class="traf-botoes"><button class="botao" id="ga-salvar-cliente">Salvar</button><button class="botao primario" id="ga-conectar"${dados.tem_cliente ? "" : " disabled"}>Conectar com o Google</button></div></section>`;
+      $("#ga-salvar-cliente").addEventListener("click", async () => {
+        try { await api("POST", "googleads/config", { client_id: $("[name=client_id]", corpo).value, client_secret: $("[name=client_secret]", corpo).value }); avisar("Salvo"); desenhar(); } catch (e) { avisar(e.message); }
+      });
+      $("#ga-conectar").addEventListener("click", async () => {
+        try { const r = await api("POST", "googleads/autorizar", {}); window.open(r.url, "_blank"); avisar("Autorize na janela do Google; esta tela atualiza sozinha"); } catch (e) { avisar(e.message); }
+      });
+      return;
+    }
+    const ativas = contas.filter((c) => c.ativo);
+    const outras = contas.filter((c) => !c.ativo);
+    const propostas = ativas.flatMap((c) => c.propostas);
+    corpo.innerHTML = `${fazendo}${erro}
+      <section class="traf-secao"><h2>Esperando sua aprovação ${propostas.length ? `<span class="selo">${propostas.length}</span>` : ""}</h2>
+        ${propostas.length ? `<div class="traf-acoes">${propostas.map(gaCartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma mudança pendente.</p>'}</section>
+      <section class="traf-secao"><h2>Contas analisadas</h2>${ativas.length ? `<div class="traf-contas">${ativas.map(gaCartaoConta).join("")}</div>` : '<p class="vazio">Marque abaixo as contas que o Jarvis deve analisar.</p>'}</section>
+      ${outras.length ? `<section class="traf-secao"><h2>Outras contas que o seu login acessa</h2><ul class="lista">${outras.map((c) => `<li><span>${esc(c.nome)} <span class="sub">${esc(c.id_formatado)}${c.cliente_nome ? ` · ${esc(c.cliente_nome)}` : ""}</span></span>
+        <span class="hoje-botoes"><button class="botao pequeno" data-ga-editar="${esc(c.id)}">Cliente</button><button class="botao pequeno primario" data-ga-ligar="${esc(c.id)}">Analisar esta conta</button></span></li>`).join("")}</ul></section>` : ""}`;
+    const todas = contas;
+    $$("[data-ga-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const a = propostas.find((x) => String(x.id) === b.dataset.gaAprovar);
+      if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar no Google Ads (${a.conta_nome}): ${a.titulo}?`, "Aplicar"))) return;
+      b.disabled = true;
+      try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+    }));
+    $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); desenhar(); } catch (e) { avisar(e.message); } }));
+    $$("[data-ga-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => {
+      const a = propostas.find((x) => String(x.id) === b.dataset.gaAjustar);
+      dialogo({ titulo: `Ajustar · ${a.titulo}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Salvar e aplicar já muda a campanha.</p>`,
+        acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar e aplicar", classe: "primario", enviar: true, acao: async (v) => {
+          const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, { detalhes: { ...a.detalhes, orcamento_diario: +v.orcamento_diario } });
+          if (r.status === "erro") throw new Error(`Não aplicou: ${r.resultado}`);
+          avisar(r.resultado); desenhar();
+        } }] });
+    }));
+    $$("[data-ga-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/contas/${b.dataset.gaAnalisar}/analisar`, {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } }));
+    $$("[data-ga-ativo]", corpo).forEach((cx) => cx.addEventListener("change", async () => { await api("POST", `googleads/contas/${cx.dataset.gaAtivo}`, { ativo: cx.checked }); desenhar(); }));
+    $$("[data-ga-ligar]", corpo).forEach((b) => b.addEventListener("click", async () => { await api("POST", `googleads/contas/${b.dataset.gaLigar}`, { ativo: true }); avisar("Conta marcada: clique em Analisar agora no cartão dela"); desenhar(); }));
+    $$("[data-ga-editar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const c = todas.find((x) => x.id === b.dataset.gaEditar);
+      const clientes = await api("GET", "clientes").catch(() => []);
+      dialogo({ titulo: c.nome, corpo: `<div class="campos">${campo({ nome: "cliente_id", rotulo: "Cliente", tipo: "select", valor: c.cliente_id || "", opcoes: [["", "—"], ...clientes.map((x) => [x.id, x.nome])] })}
+          ${campo({ nome: "meta_cpa", rotulo: "CPA alvo (R$)", tipo: "number", valor: c.meta_cpa ?? "" })}
+          ${campo({ nome: "objetivo", rotulo: "Objetivo e observações (o que conta como conversão, campanhas que não pode mexer, sazonalidade)", tipo: "textarea", valor: c.objetivo, largo: true })}</div>`,
+        acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `googleads/contas/${c.id}`, v); desenhar(); } }] });
+    }));
+    $("#ga-analisar").disabled = !!estado.fazendo || !ativas.length;
+  };
+  $("#ga-analisar").addEventListener("click", async () => { try { await api("POST", "googleads/analisar", {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } });
+  $("#ga-sync").addEventListener("click", async () => { try { await api("POST", "googleads/sincronizar", {}); avisar("Contas atualizadas"); desenhar(); } catch (e) { avisar(e.message); } });
+  $("#ga-config").addEventListener("click", () => dados && dialogo({
+    titulo: "Google Ads",
+    corpo: `<div class="campos">${campo({ nome: "agenda_ativa", rotulo: "Análise diária", tipo: "checkbox", valor: dados.config.agenda_ativa })}
+      ${campo({ nome: "horario", rotulo: "Horário", tipo: "time", valor: dados.config.horario })}
+      ${campo({ nome: "client_id", rotulo: "Trocar Client ID (vazio = manter)", largo: true })}${campo({ nome: "client_secret", rotulo: "Client secret", tipo: "password", largo: true })}</div>`,
+    acoes: [
+      ...(dados.conectado ? [{ texto: "Desconectar", classe: "esquerda", acao: async () => { await api("POST", "googleads/desconectar", {}); desenhar(); } }] : []),
+      { texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", "googleads/config", v); avisar("Salvo"); desenhar(); } }],
+  }));
+  await desenhar();
+  timer = setInterval(() => {
+    if (document.hidden || $("#dialogo").open) return;
+    if (dados?.estado?.fazendo || !dados?.conectado) desenhar().catch(() => {});
+  }, 6000);
 };
 
 // ── Social: o Instagram da HAIZEN ───────────────────────────────────────────

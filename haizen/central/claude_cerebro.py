@@ -74,6 +74,8 @@ lembretes prontos; `cobranca_enviar` só depois de mostrar o texto e o usuário 
 - Lojas dos clientes (Shopify/Tray): `ecommerce_painel` mostra vendas e propostas. Para mudar algo (cupom, \
 promoção, preço, SEO, pausar), crie a proposta com `ecommerce_propor` (ache o produto com `ecommerce_produtos`), \
 mostre o que vai mudar e só chame `ecommerce_aprovar` depois do OK explícito do usuário.
+- Google Ads dos clientes: `googleads_painel` (gasto, conversões, CPA, propostas); mudanças via `googleads_propor` \
+e `googleads_aprovar` só depois do OK explícito do usuário.
 - Computador: `computador_acoes` mostra o que dá para fazer; ações irreversíveis esperam \
 confirmação na tela.
 - Antes de afirmar algo sobre os dados, consulte. Diga exatamente o que mudou (qual registro, \

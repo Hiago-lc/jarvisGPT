@@ -754,3 +754,6 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 .ec-tabela th { color: var(--cinza); font-weight: 600; }
 .ec-hist { margin: 6px 0; padding-left: 16px; font-size: 13px; line-height: 1.6; }
 .ec-html { font-size: 13px; color: var(--cinza); max-height: 180px; overflow: auto; }
+
+.ga-termos { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.ga-termos .tag { font-size: 14px; padding: 5px 10px; }

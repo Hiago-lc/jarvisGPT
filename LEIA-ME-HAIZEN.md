@@ -167,3 +167,9 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - **Duas direções** da peça principal, comparadas lado a lado antes de escolher.
 - **Vídeo** conferido em folha de contato (12 quadros). O agente de vídeo passou a usar o Opus.
 - **Diretor de criação** revisa comparando com as referências; só passa com nota ≥ 8, senão o agente refaz.
+
+## Google Ads (contas dos clientes)
+
+- Tela **Google Ads**: gasto, conversões, CPA e ROAS (ontem, 7 e 30 dias), campanhas com perda por orçamento, termos de pesquisa que gastaram sem converter. Análise todo dia às 07:20 das contas marcadas (entra no resumo da manhã).
+- O Jarvis **propõe** (orçamento, pausar/ativar campanha, negativar termos, pausar palavra-chave ou anúncio) e **você aprova**. Mudança de orçamento acima de 50% de uma vez e orçamento compartilhado são barrados.
+- **Conectar** (uma vez, neste PC): no Google Cloud, ativar a Google Ads API, pedir o acesso **Explorer** (Google Ads API → Visão geral → Upgrade access level) e usar um cliente OAuth "App para computador". Desde 09/2026 não existe mais developer token. O refresh token fica criptografado (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`.
