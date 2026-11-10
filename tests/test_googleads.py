@@ -347,6 +347,9 @@ class GoogleAdsTests(unittest.TestCase):
         self.assertIn("mínimo R$ 25,00 por dia", r["resultado"])
         self.assertIn(r["id"], [x["id"] for x in self.ga.acoes(c["id"], ("proposta", "erro"))])
         e = self.ga.editar(r["id"], {**r["detalhes"], "orcamento_diario": 30})
+        x = self.ga.propor(c["id"], "alerta", "x")
+        self.ga._mudar_acao(x["id"], status="erro")
+        self.assertEqual(self.ga.rejeitar(x["id"])["status"], "rejeitada")          # com erro também some
         self.assertEqual((e["status"], e["detalhes"]["orcamento_diario"]), ("proposta", 30.0))
         self.assertEqual(e["detalhes"]["anuncio_video"]["videos"], [{"youtube": "abcdefghijk"}])
 

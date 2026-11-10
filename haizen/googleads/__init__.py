@@ -877,7 +877,7 @@ def editar(aid: int, detalhes: dict) -> dict:
 
 
 def rejeitar(aid: int, nota: str = "") -> dict:
-    if acao(aid)["status"] != "proposta":
+    if acao(aid)["status"] not in ("proposta", "erro"):
         raise ValueError("esta proposta não está mais esperando aprovação (a tela foi atualizada)")
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 

@@ -549,7 +549,7 @@ def propor(lid: str, tipo: str, titulo: str, motivo: str = "", detalhes: dict | 
 
 def rejeitar(aid: int, nota: str = "") -> dict:
     a = acao(aid)
-    if a["status"] != "proposta":
+    if a["status"] not in ("proposta", "erro"):
         raise ValueError("esta proposta não está mais esperando aprovação (a tela foi atualizada)")
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 
