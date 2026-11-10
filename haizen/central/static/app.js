@@ -1900,7 +1900,7 @@ ROTAS.ecommerce = async () => {
 // ── Pedir ao Jarvis em cada ferramenta ─────────────────────────────────────
 const CHAT_TELAS = {
   googleads: { nome: "Google Ads", dica: "Ex.: “Cria uma campanha de pesquisa para a Loja X em São Paulo, R$ 50/dia, para a página…”",
-    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Para criar campanha de pesquisa ou mudar algo, monte a proposta com googleads_propor (pergunte o que faltar: conta, link da página, verba, cidades, oferta). NÃO aprove: eu aprovo na tela Google Ads." },
+    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Para criar campanha (pesquisa, YouTube/Demand Gen com vídeo ou imagem, Display) ou mudar algo, monte a proposta com googleads_propor; confira vídeos/imagens anexados com midia_info; pergunte o que faltar (conta, link da página, verba, cidades, oferta, logo). NÃO aprove: eu aprovo na tela Google Ads." },
   trafego: { nome: "Tráfego (Meta Ads)", dica: "Ex.: “Monta uma campanha de mensagens para a Clínica X com os criativos aprovados”",
     contexto: "Meta Ads dos clientes. Use trafego_painel, trafego_relatorio, trafego_analisar, trafego_propor (inclusive estrutura de campanha nova) e trafego_subir_criativos. NÃO aprove: eu aprovo na tela Tráfego." },
   ecommerce: { nome: "E-commerce", dica: "Ex.: “Cupom BLACK15 de 15% na loja X até domingo”",
@@ -1989,6 +1989,22 @@ function gaDetalhes(a) {
             <ul class="ga-lista">${g.descricoes.map((t) => `<li>${esc(t)} <span class="sub">${t.length}</span></li>`).join("")}</ul></details></div>`).join("")}
         ${d.negativas?.length ? `<p class="sub">Negativas: ${esc(d.negativas.join(", "))}</p>` : ""}`;
     }
+    case "criar_campanha_demand_gen": case "criar_campanha_display": {
+      const lance = { conversoes: "maximizar conversões", cliques: "maximizar cliques", cpa: `CPA alvo ${moeda(d.cpa_alvo)}` }[d.lance] || d.lance;
+      const nomeArq = (r) => esc(String(r).split(/[\\/]/).pop().replace(/^anexo:/, ""));
+      const v = d.anuncio_video, im = d.anuncio_imagem;
+      const lista = (t, xs) => xs?.length ? `<p class="sub">${t}: ${xs.map(esc).join(" · ")}</p>` : "";
+      return `<p class="ec-mudanca"><strong>${esc(d.nome)}</strong> · ${moeda(d.orcamento_diario)}/dia · ${esc(lance)} · ${esc((d.locais || []).join(", ") || "Brasil")}</p>
+        <p class="sub">${esc(d.nome_empresa)} · logo ${nomeArq(d.logo)}</p>
+        ${v ? `<div class="ga-anuncio"><span class="ga-patrocinado">Vídeo · ${v.videos.map((x) => x.youtube ? `youtu.be/${esc(x.youtube)}` : `${nomeArq(x.arquivo)} (vai para o YouTube, não listado)`).join(", ")} · botão ${esc(v.cta)}</span>
+          <p class="ga-titulo">${esc(v.titulos[0] || "")}</p><p class="ga-desc">${esc(v.descricoes[0] || "")}</p>
+          ${lista("Títulos", v.titulos)}${lista("Títulos longos", v.titulos_longos)}${lista("Descrições", v.descricoes)}</div>` : ""}
+        ${im ? `<div class="ga-anuncio"><span class="ga-patrocinado">Imagem · ${im.imagens.map(nomeArq).join(", ")} (cortes 1,91:1, 1:1 e 4:5)</span>
+          <p class="ga-titulo">${esc(im.titulos[0] || "")}</p><p class="ga-desc">${esc(im.descricoes[0] || "")}</p>
+          ${lista("Títulos", im.titulos)}${lista("Descrições", im.descricoes)}</div>` : ""}
+        ${a.tipo === "criar_campanha_display" ? `<div class="ga-anuncio"><span class="ga-patrocinado">Display responsivo · ${(d.imagens || []).map(nomeArq).join(", ")}</span>
+          <p class="ga-titulo">${esc(d.titulos?.[0] || "")}</p><p class="ga-desc">${esc(d.titulo_longo || "")}</p>${lista("Títulos", d.titulos)}${lista("Descrições", d.descricoes)}</div>` : ""}`;
+    }
     default: return "";
   }
 }
@@ -2070,7 +2086,10 @@ ROTAS.googleads = async () => {
     const ativas = contas.filter((c) => c.ativo);
     const outras = contas.filter((c) => !c.ativo);
     const propostas = ativas.flatMap((c) => c.propostas);
-    corpo.innerHTML = `${fazendo}${erro}
+    const aplicando = contas.flatMap((c) => (c.historico || []).filter((a) => a.status === "aplicando"));
+    dados.aplicando = aplicando.length;
+    const faixaAplicando = aplicando.map((a) => `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>Criando "${esc(a.detalhes?.nome || a.titulo)}": ${esc(a.resultado)} Pode levar alguns minutos (vídeo indo para o YouTube).</div>`).join("");
+    corpo.innerHTML = `${fazendo}${erro}${faixaAplicando}
       <section class="traf-secao"><h2>Esperando sua aprovação ${propostas.length ? `<span class="selo">${propostas.length}</span>` : ""}</h2>
         ${propostas.length ? `<div class="traf-acoes">${propostas.map(gaCartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma mudança pendente.</p>'}</section>
       <section class="traf-secao"><h2>Contas analisadas</h2>${ativas.length ? `<div class="traf-contas">${ativas.map(gaCartaoConta).join("")}</div>` : '<p class="vazio">Marque abaixo as contas que o Jarvis deve analisar.</p>'}</section>
@@ -2084,7 +2103,7 @@ ROTAS.googleads = async () => {
         try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, corpoReq); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); }
         desenhar();
       };
-      if (a.tipo === "criar_campanha_pesquisa") {
+      if (a.tipo.startsWith("criar_campanha")) {
         dialogo({ titulo: `Criar "${a.detalhes.nome}"`, corpo: `<p>A campanha vai ser criada na conta ${esc(a.conta_nome)} com ${moeda(a.detalhes.orcamento_diario)}/dia.</p>
             <div class="campos">${campo({ nome: "ativar", rotulo: "Criar já ativa (começa a gastar hoje)", tipo: "checkbox", valor: false, largo: true })}</div>
             <p class="sub">Sem marcar, ela nasce pausada: confira no Google Ads e ative quando quiser.</p>`,
@@ -2132,7 +2151,7 @@ ROTAS.googleads = async () => {
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open) return;
-    if (dados?.estado?.fazendo || !dados?.conectado || Date.now() - (window.__gaVisto || 0) > 60000) { window.__gaVisto = Date.now(); desenhar().catch(() => {}); }
+    if (dados?.estado?.fazendo || dados?.aplicando || !dados?.conectado || Date.now() - (window.__gaVisto || 0) > 60000) { window.__gaVisto = Date.now(); desenhar().catch(() => {}); }
   }, 6000);
 };
 

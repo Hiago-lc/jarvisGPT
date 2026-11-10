@@ -21,7 +21,12 @@ from haizen.googleads import api
 
 TIPOS = {"orcamento": "Orçamento", "pausar_campanha": "Pausar campanha", "ativar_campanha": "Ativar campanha",
          "negativar_termos": "Negativar termos", "pausar_palavra": "Pausar palavra-chave",
-         "pausar_anuncio": "Pausar anúncio", "criar_campanha_pesquisa": "Nova campanha de pesquisa", "alerta": "Aviso"}
+         "pausar_anuncio": "Pausar anúncio", "criar_campanha_pesquisa": "Nova campanha de pesquisa",
+         "criar_campanha_demand_gen": "Nova campanha YouTube / Demand Gen", "criar_campanha_display": "Nova campanha de Display",
+         "alerta": "Aviso"}
+PESADAS = ("criar_campanha_demand_gen", "criar_campanha_display")      # sobem arquivos: rodam em segundo plano
+CTAS = ("LEARN_MORE", "SHOP_NOW", "BUY_NOW", "ORDER_NOW", "SIGN_UP", "SUBSCRIBE", "CONTACT_US", "GET_QUOTE", "BOOK_NOW",
+        "APPLY_NOW", "DOWNLOAD", "SEE_MORE", "START_NOW", "VISIT_SITE", "WATCH_NOW")
 BRASIL = "geoTargetConstants/2076"
 PORTUGUES = "languageConstants/1014"
 LANCES = ("conversoes", "cliques", "cpa")
@@ -387,6 +392,10 @@ def validar(tipo: str, det: dict, m: dict | None = None) -> dict:
             else "PHRASE"
     if tipo == "criar_campanha_pesquisa":
         return _validar_campanha(det)
+    if tipo == "criar_campanha_demand_gen":
+        return _validar_demand_gen(det)
+    if tipo == "criar_campanha_display":
+        return _validar_display(det)
     if tipo in ("pausar_palavra", "pausar_anuncio"):
         det["recurso"] = str(det.get("recurso") or "")
         padrao = r"customers/\d+/adGroupCriteria/\d+~\d+" if tipo == "pausar_palavra" else r"customers/\d+/adGroupAds/\d+~\d+"
@@ -450,6 +459,247 @@ def _validar_campanha(det: dict) -> dict:
         raise ValueError("a campanha não passaria no Google: " + "; ".join(erros))
     d["ativar"] = bool(det.get("ativar"))
     return d
+
+
+def _textos(lista, minimo: int, maximo: int, limite: int, rotulo: str, erros: list) -> list[str]:
+    itens = [re.sub(r"\s+", " ", str(t)).strip() for t in lista or [] if str(t).strip()]
+    longos = [t for t in itens if len(t) > limite]
+    if not minimo <= len(itens) <= maximo:
+        erros.append(f"{rotulo}: de {minimo} a {maximo}")
+    if longos:
+        erros.append(f"{rotulo} passam de {limite} caracteres: " + " | ".join(longos[:3]))
+    return itens[:maximo]
+
+
+def _validar_base(det: dict, erros: list) -> dict:
+    d = {"nome": re.sub(r"\s+", " ", str(det.get("nome") or "")).strip()[:120]}
+    if len(d["nome"]) < 3:
+        erros.append("falta o nome da campanha")
+    d["orcamento_diario"] = round(float(det.get("orcamento_diario") or 0), 2)
+    if not 1 <= d["orcamento_diario"] <= 5000:
+        erros.append("orçamento diário entre R$ 1 e R$ 5.000")
+    d["lance"] = det.get("lance") if det.get("lance") in LANCES else "conversoes"
+    if d["lance"] == "cpa":
+        d["cpa_alvo"] = round(float(det.get("cpa_alvo") or 0), 2)
+        if d["cpa_alvo"] <= 0:
+            erros.append("lance por CPA alvo precisa do cpa_alvo")
+    d["locais"] = [str(x).strip() for x in det.get("locais") or [] if str(x).strip()][:20]
+    d["url_final"] = str(det.get("url_final") or "").strip()
+    if not re.fullmatch(r"https?://[^\s]+\.[^\s]+", d["url_final"]):
+        erros.append("url_final inválida (link completo da página, com https://)")
+    d["nome_empresa"] = str(det.get("nome_empresa") or "").strip()
+    if not 1 <= len(d["nome_empresa"]) <= 25:
+        erros.append("nome_empresa de 1 a 25 caracteres")
+    d["logo"] = str(det.get("logo") or "").strip()
+    if not d["logo"]:
+        erros.append("falta o logo (imagem; vira quadrado 1:1)")
+    else:
+        try:
+            from haizen.googleads import midia
+            midia.conferir_imagem(d["logo"])
+        except ValueError as e:
+            erros.append(f"logo: {e}")
+    d["ativar"] = bool(det.get("ativar"))
+    return d
+
+
+def _validar_imagens(refs, erros: list, rotulo: str = "imagens") -> list[str]:
+    from haizen.googleads import midia
+    ok = []
+    for r in (refs or [])[:10]:
+        try:
+            i = midia.conferir_imagem(r)
+            if min(i["largura"], i["altura"]) < 314:
+                erros.append(f"{i['nome']}: pequena demais (mínimo ~600x314 px)")
+            ok.append(str(r))
+        except ValueError as e:
+            erros.append(f"{rotulo}: {e}")
+    if not ok:
+        erros.append(f"falta pelo menos 1 imagem em {rotulo} (cortada sozinha em 1,91:1, 1:1 e 4:5)")
+    return ok
+
+
+def _validar_demand_gen(det: dict) -> dict:
+    erros: list = []
+    d = _validar_base(det, erros)
+    v = det.get("anuncio_video") or None
+    im = det.get("anuncio_imagem") or None
+    if not v and not im:
+        erros.append("inclua anuncio_video (YouTube) e/ou anuncio_imagem")
+    if v:
+        from haizen.googleads import midia
+        vids = []
+        for ref in (v.get("videos") or [])[:5]:
+            if isinstance(ref, dict):                       # já normalizado (reaprovação)
+                ref = ref.get("youtube") or ref.get("arquivo") or ""
+            if midia.id_youtube(ref):
+                vids.append({"youtube": midia.id_youtube(ref)})
+            else:
+                try:
+                    p = midia.arquivo(ref)
+                    if p.suffix.lower() not in midia.VIDEOS:
+                        raise ValueError(f"não é vídeo: {p.name}")
+                    vids.append({"arquivo": str(ref)})
+                except ValueError as e:
+                    erros.append(f"vídeo: {e}")
+        if not vids:
+            erros.append("anuncio_video: falta o vídeo (link do YouTube ou o arquivo anexado)")
+        d["anuncio_video"] = {
+            "videos": vids, "titulos": _textos(v.get("titulos"), 1, 5, 40, "títulos do vídeo", erros),
+            "titulos_longos": _textos(v.get("titulos_longos"), 1, 5, 90, "títulos longos do vídeo", erros),
+            "descricoes": _textos(v.get("descricoes"), 1, 5, 90, "descrições do vídeo", erros),
+            "cta": v.get("cta") if v.get("cta") in CTAS else "LEARN_MORE",
+            "caminho1": str(v.get("caminho1") or "")[:15], "caminho2": str(v.get("caminho2") or "")[:15]}
+    if im:
+        d["anuncio_imagem"] = {"imagens": _validar_imagens(im.get("imagens"), erros),
+                               "titulos": _textos(im.get("titulos"), 1, 5, 40, "títulos da imagem", erros),
+                               "descricoes": _textos(im.get("descricoes"), 1, 5, 90, "descrições da imagem", erros),
+                               "cta_texto": str(im.get("cta_texto") or "Saiba mais")[:30]}
+    if erros:
+        raise ValueError("a campanha não passaria no Google: " + "; ".join(erros))
+    return d
+
+
+def _validar_display(det: dict) -> dict:
+    erros: list = []
+    d = _validar_base(det, erros)
+    d["imagens"] = _validar_imagens(det.get("imagens"), erros)
+    d["titulos"] = _textos(det.get("titulos"), 1, 5, 30, "títulos", erros)
+    d["titulo_longo"] = (_textos([det.get("titulo_longo")], 1, 1, 90, "título longo", erros) or [""])[0]
+    d["descricoes"] = _textos(det.get("descricoes"), 1, 5, 90, "descrições", erros)
+    if erros:
+        raise ValueError("a campanha não passaria no Google: " + "; ".join(erros))
+    return d
+
+
+def _lance(d: dict) -> dict:
+    return {"conversoes": {"maximizeConversions": {}}, "cliques": {"targetSpend": {}},
+            "cpa": {"maximizeConversions": {"targetCpaMicros": str(int(d.get("cpa_alvo", 0) * 1_000_000))}}}[d["lance"]]
+
+
+def _locais_recursos(d: dict) -> list[str]:
+    if not d["locais"]:
+        return [BRASIL]
+    achados = api.sugerir_locais(d["locais"])
+    faltou = [x for x in d["locais"] if x.lower() not in achados]
+    if faltou:
+        raise ValueError(f"não achei estes locais no Google: {', '.join(faltou)}")
+    return [achados[x.lower()]["recurso"] for x in d["locais"]]
+
+
+class _Ids:
+    """Ids temporários negativos para ligar tudo numa chamada só."""
+    def __init__(self, cid: str):
+        self.cid, self.n = cid, 0
+
+    def novo(self, tipo: str) -> str:
+        self.n -= 1
+        return f"customers/{self.cid}/{tipo}/{self.n}"
+
+
+def _asset_imagem(ids: _Ids, ops: list, nome: str, dados: bytes) -> str:
+    import base64
+    rn = ids.novo("assets")
+    ops.append({"assetOperation": {"create": {"resourceName": rn, "name": nome[:120], "type": "IMAGE",
+                                              "imageAsset": {"data": base64.b64encode(dados).decode()}}}})
+    return rn
+
+
+def _base_campanha(c: dict, d: dict, canal: str, ids: _Ids, ops: list) -> str:
+    orc, camp = ids.novo("campaignBudgets"), ids.novo("campaigns")
+    ops.append({"campaignBudgetOperation": {"create": {"resourceName": orc, "name": f"{d['nome']} · orçamento {time.strftime('%Y%m%d-%H%M')}",
+                                                       "amountMicros": str(int(d["orcamento_diario"] * 1_000_000)),
+                                                       "deliveryMethod": "STANDARD", "explicitlyShared": False}}})
+    ops.append({"campaignOperation": {"create": {"resourceName": camp, "name": d["nome"],
+                                                 "status": "ENABLED" if d["ativar"] else "PAUSED",
+                                                 "advertisingChannelType": canal, "campaignBudget": orc,
+                                                 "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+                                                 **_lance(d)}}})
+    return camp
+
+
+def _criar_demand_gen(c: dict, d: dict) -> dict:
+    from haizen.googleads import midia
+    ids, ops = _Ids(c["id"]), []
+    camp = _base_campanha(c, d, "DEMAND_GEN", ids, ops)
+    grupo = ids.novo("adGroups")
+    ops.append({"adGroupOperation": {"create": {"resourceName": grupo, "name": f"{d['nome']} · público", "campaign": camp,
+                                                "status": "ENABLED"}}})
+    for g in _locais_recursos(d):          # no Demand Gen, local e idioma ficam no grupo
+        ops.append({"adGroupCriterionOperation": {"create": {"adGroup": grupo, "location": {"geoTargetConstant": g}}}})
+    ops.append({"adGroupCriterionOperation": {"create": {"adGroup": grupo, "language": {"languageConstant": PORTUGUES}}}})
+    logo = _asset_imagem(ids, ops, f"{d['nome_empresa']} logo", midia.logo_quadrado(d["logo"]))
+    enviados = []
+    if d.get("anuncio_video"):
+        v = d["anuncio_video"]
+        videos = []
+        for x in v["videos"]:
+            vid = x.get("youtube") or midia.subir_youtube(x["arquivo"], d["nome"], f"Anúncio · {d['nome_empresa']}")
+            enviados.append(vid)
+            rn = ids.novo("assets")
+            ops.append({"assetOperation": {"create": {"resourceName": rn, "name": f"{d['nome']} vídeo {vid}",
+                                                      "type": "YOUTUBE_VIDEO", "youtubeVideoAsset": {"youtubeVideoId": vid}}}})
+            videos.append({"asset": rn})
+        cta = ids.novo("assets")
+        ops.append({"assetOperation": {"create": {"resourceName": cta, "name": f"{d['nome']} CTA",
+                                                  "type": "CALL_TO_ACTION", "callToActionAsset": {"callToAction": v["cta"]}}}})
+        anuncio = {"headlines": [{"text": t} for t in v["titulos"]], "longHeadlines": [{"text": t} for t in v["titulos_longos"]],
+                   "descriptions": [{"text": t} for t in v["descricoes"]], "videos": videos, "logoImages": [{"asset": logo}],
+                   "businessName": {"text": d["nome_empresa"]}, "callToActions": [{"asset": cta}]}
+        if v.get("caminho1"):
+            anuncio["breadcrumb1"] = v["caminho1"]
+            if v.get("caminho2"):
+                anuncio["breadcrumb2"] = v["caminho2"]
+        ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED", "ad": {
+            "name": f"{d['nome']} · vídeo", "finalUrls": [d["url_final"]], "demandGenVideoResponsiveAd": anuncio}}}})
+    if d.get("anuncio_imagem"):
+        im = d["anuncio_imagem"]
+        campos = {"paisagem": "marketingImages", "quadrada": "squareMarketingImages", "retrato": "portraitMarketingImages"}
+        imagens: dict = {v: [] for v in campos.values()}
+        for i, ref in enumerate(im["imagens"]):
+            for formato, dados in midia.cortes(ref).items():
+                imagens[campos[formato]].append({"asset": _asset_imagem(ids, ops, f"{d['nome']} {formato} {i + 1}", dados)})
+        anuncio = {k: v for k, v in imagens.items() if v}
+        anuncio.update({"logoImages": [{"asset": logo}], "headlines": [{"text": t} for t in im["titulos"]],
+                        "descriptions": [{"text": t} for t in im["descricoes"]], "businessName": d["nome_empresa"],
+                        "callToActionText": im["cta_texto"]})
+        ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED", "ad": {
+            "name": f"{d['nome']} · imagem", "finalUrls": [d["url_final"]], "demandGenMultiAssetAd": anuncio}}}})
+    r = api.mutate_tudo(c, ops)
+    criada = next((x.get("campaignResult", {}).get("resourceName") for x in r.get("mutateOperationResponses") or []
+                   if x.get("campaignResult")), "")
+    return {"campanha": criada, "videos_youtube": enviados, "operacoes": len(ops)}
+
+
+def _criar_display(c: dict, d: dict) -> dict:
+    from haizen.googleads import midia
+    ids, ops = _Ids(c["id"]), []
+    camp = _base_campanha(c, d, "DISPLAY", ids, ops)
+    for g in _locais_recursos(d):
+        ops.append({"campaignCriterionOperation": {"create": {"campaign": camp, "location": {"geoTargetConstant": g}}}})
+    ops.append({"campaignCriterionOperation": {"create": {"campaign": camp, "language": {"languageConstant": PORTUGUES}}}})
+    grupo = ids.novo("adGroups")
+    ops.append({"adGroupOperation": {"create": {"resourceName": grupo, "name": f"{d['nome']} · grupo", "campaign": camp,
+                                                "status": "ENABLED", "type": "DISPLAY_STANDARD"}}})
+    logo = _asset_imagem(ids, ops, f"{d['nome_empresa']} logo", midia.logo_quadrado(d["logo"]))
+    paisagem, quadrada = [], []
+    for i, ref in enumerate(d["imagens"]):
+        cs = midia.cortes(ref)
+        if "paisagem" in cs:
+            paisagem.append({"asset": _asset_imagem(ids, ops, f"{d['nome']} paisagem {i + 1}", cs["paisagem"])})
+        if "quadrada" in cs:
+            quadrada.append({"asset": _asset_imagem(ids, ops, f"{d['nome']} quadrada {i + 1}", cs["quadrada"])})
+    if not paisagem or not quadrada:
+        raise ValueError("as imagens precisam render pelo menos um corte 1,91:1 (600x314) e um 1:1 (300x300)")
+    ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED", "ad": {
+        "finalUrls": [d["url_final"]], "responsiveDisplayAd": {
+            "marketingImages": paisagem, "squareMarketingImages": quadrada, "squareLogoImages": [{"asset": logo}],
+            "headlines": [{"text": t} for t in d["titulos"]], "longHeadline": {"text": d["titulo_longo"]},
+            "descriptions": [{"text": t} for t in d["descricoes"]], "businessName": d["nome_empresa"]}}}}})
+    r = api.mutate_tudo(c, ops)
+    criada = next((x.get("campaignResult", {}).get("resourceName") for x in r.get("mutateOperationResponses") or []
+                   if x.get("campaignResult")), "")
+    return {"campanha": criada, "operacoes": len(ops)}
 
 
 def _criar_campanha(c: dict, d: dict) -> dict:
@@ -565,7 +815,7 @@ def acoes(cid: str | None = None, status: tuple = ("proposta",), limite: int = 1
 
 
 def acao(aid: int) -> dict:
-    for a in acoes(status=("proposta", "aplicada", "rejeitada", "erro"), limite=100000):
+    for a in acoes(status=("proposta", "aplicando", "aplicada", "rejeitada", "erro"), limite=100000):
         if a["id"] == int(aid):
             return a
     raise KeyError("ação não encontrada")
@@ -600,9 +850,11 @@ def rejeitar(aid: int, nota: str = "") -> dict:
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 
 
-def aprovar(aid: int, detalhes: dict | None = None, ativar: bool | None = None) -> dict:
+def aprovar(aid: int, detalhes: dict | None = None, ativar: bool | None = None, em_segundo_plano: bool = True) -> dict:
     a = acao(aid)
     if a["status"] not in ("proposta", "erro"):
+        if a["status"] == "aplicando":
+            raise ValueError("esta campanha já está sendo criada: aguarde")
         if a["status"] == "rejeitada" and str(a.get("resultado") or "").startswith("substituída"):
             raise ValueError("esta proposta foi trocada por uma análise mais nova: a tela foi atualizada com as propostas atuais")
         raise ValueError("esta ação já foi aplicada ou rejeitada (a tela foi atualizada)")
@@ -613,11 +865,36 @@ def aprovar(aid: int, detalhes: dict | None = None, ativar: bool | None = None) 
     if a["tipo"] != "alerta":
         extra = {k: det[k] for k in ("orcamento_recurso", "orcamento_anterior", "campanha_nome") if k in det}
         det = {**validar(a["tipo"], det), **extra}
+    if a["tipo"] in PESADAS and em_segundo_plano:
+        # Sobe vídeo ao YouTube e imagens: pode levar minutos. A tela acompanha pelo status.
+        _mudar_acao(aid, status="aplicando", detalhes=det, resultado="Subindo arquivos e criando a campanha…")
+        threading.Thread(target=_aplicar_e_guardar, args=(aid, c, a["tipo"], det), daemon=True,
+                         name=f"googleads-aplicar-{aid}").start()
+        return acao(aid)
+    return _aplicar_e_guardar(aid, c, a["tipo"], det)
+
+
+def _aplicar_e_guardar(aid: int, c: dict, tipo: str, det: dict) -> dict:
     try:
-        res = _aplicar(c, a["tipo"], det)
+        res = _aplicar(c, tipo, det)
     except Exception as e:  # noqa: BLE001
-        return _mudar_acao(aid, status="erro", detalhes=det, resultado=str(e)[:600])
-    return _mudar_acao(aid, status="aplicada", detalhes={**det, "_aplicado": res}, resultado=_descrever(a["tipo"], det))
+        r = _mudar_acao(aid, status="erro", detalhes=det, resultado=str(e)[:600])
+        _avisar_fim(r)
+        return r
+    r = _mudar_acao(aid, status="aplicada", detalhes={**det, "_aplicado": res}, resultado=_descrever(tipo, det))
+    if tipo in PESADAS:
+        _avisar_fim(r)
+    return r
+
+
+def _avisar_fim(a: dict) -> None:
+    try:
+        from haizen import notificar
+        ok = a["status"] == "aplicada"
+        notificar.avisar("Google Ads: " + ("campanha criada" if ok else "não aplicou"), a["resultado"][:200],
+                         "info" if ok else "erro", "#/googleads")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _aplicar(c: dict, tipo: str, det: dict) -> dict:
@@ -648,6 +925,10 @@ def _aplicar(c: dict, tipo: str, det: dict) -> dict:
         return api.mutate(c, "campaignCriteria", ops)
     if tipo == "criar_campanha_pesquisa":
         return _criar_campanha(c, det)
+    if tipo == "criar_campanha_demand_gen":
+        return _criar_demand_gen(c, det)
+    if tipo == "criar_campanha_display":
+        return _criar_display(c, det)
     if tipo == "pausar_palavra":
         return api.mutate(c, "adGroupCriteria", [{"update": {"resourceName": det["recurso"], "status": "PAUSED"},
                                                  "updateMask": "status"}])
@@ -667,6 +948,10 @@ def _descrever(tipo: str, d: dict) -> str:
         return f"Orçamento de {nome}: {_brl(d.get('orcamento_anterior'))} → {_brl(d['orcamento_diario'])} por dia."
     if tipo == "negativar_termos":
         return f"{len(d['termos'])} termo(s) negativado(s) em {nome}."
+    if tipo in ("criar_campanha_demand_gen", "criar_campanha_display"):
+        rot = "YouTube / Demand Gen" if tipo == "criar_campanha_demand_gen" else "Display"
+        return (f"Campanha {rot} \"{d['nome']}\" criada {'ATIVA' if d.get('ativar') else 'PAUSADA (ative no Google Ads ou peça aqui)'}"
+                f" com {_brl(d['orcamento_diario'])}/dia.")
     if tipo == "criar_campanha_pesquisa":
         return (f"Campanha \"{d['nome']}\" criada {'ATIVA' if d.get('ativar') else 'PAUSADA (ative no Google Ads ou peça aqui)'}"
                 f" com {len(d['grupos'])} grupo(s) e {_brl(d['orcamento_diario'])}/dia.")
@@ -761,7 +1046,7 @@ def painel() -> dict:
                     "metricas": {k: m.get(k) for k in ("ontem", "ult7", "ult30", "var7", "var30", "por_dia", "campanhas",
                                                         "desperdicio_termos", "termos_sem_conversao",
                                                         "rastreamento_suspeito")} if m else None,
-                    "propostas": acoes(c["id"]), "historico": acoes(c["id"], ("aplicada", "erro"), 8)})
+                    "propostas": acoes(c["id"]), "historico": acoes(c["id"], ("aplicando", "aplicada", "erro"), 8)})
     return {"conectado": api.conectado(), "tem_cliente": api.tem_cliente(), "contas": out, "estado": ESTADO,
             "config": config(), "tipos": TIPOS}
 

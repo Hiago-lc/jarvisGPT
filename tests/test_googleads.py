@@ -111,7 +111,7 @@ class GoogleAdsTests(unittest.TestCase):
         url = self.api.url_autorizacao("http://127.0.0.1:8765/oauth/google-ads")
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
         self.assertEqual((q["scope"], q["code_challenge_method"], q["access_type"]),
-                         ("https://www.googleapis.com/auth/adwords", "S256", "offline"))
+                         ("https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/youtube.upload", "S256", "offline"))
         with self.assertRaises(ValueError):
             self.api.concluir("state-errado", "code")
         self.api.concluir(q["state"], "CODE")
@@ -242,6 +242,77 @@ class GoogleAdsTests(unittest.TestCase):
         self.assertEqual(len(ad["responsiveSearchAd"]["headlines"]), 3)
         kws = [o["adGroupCriterionOperation"]["create"]["keyword"] for o in ops if "adGroupCriterionOperation" in o]
         self.assertEqual(kws[1], {"text": "camiseta básica", "matchType": "PHRASE"})
+
+    def _anexos(self):
+        import io
+        import subprocess
+        from PIL import Image
+        from haizen.central import anexos
+        from haizen.producao.ferramentas import ffmpeg
+        b = io.BytesIO(); Image.new("RGB", (1600, 1000), (200, 50, 50)).save(b, "JPEG")
+        foto = anexos.salvar("criativo.jpg", b.getvalue())["id"]
+        b = io.BytesIO(); Image.new("RGBA", (400, 160), (0, 0, 0, 255)).save(b, "PNG")
+        logo = anexos.salvar("logo.png", b.getvalue())["id"]
+        mov = Path(self.dir.name) / "YOUTUBE.mov"
+        subprocess.run([ffmpeg(), "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=d=12:s=1280x720:r=25",
+                        "-pix_fmt", "yuv420p", str(mov)], check=True)
+        video = anexos.salvar("YOUTUBE.mov", mov.read_bytes())["id"]
+        return foto, logo, video
+
+    def test_demand_gen_com_video_do_anexo_e_imagem(self):
+        from haizen.googleads import midia
+        c = self._conectar()
+        foto, logo, video = self._anexos()
+        info = midia.info_video(video)
+        self.assertEqual((info["segundos"], info["largura"], info["proporcao"]), (12.0, 1280, "16:9 (horizontal)"))
+        with self.assertRaises(ValueError):
+            midia.arquivo("/etc/passwd")
+        det = {"nome": "YouTube | Camisetas", "orcamento_diario": 40, "url_final": "https://loja.exemplo.com",
+               "nome_empresa": "Loja Exemplo", "logo": f"[anexo:{logo}]",
+               "anuncio_video": {"videos": [f"anexo:{video}"], "titulos": ["Camisetas que duram"],
+                                 "titulos_longos": ["Camisetas premium com frete grátis acima de R$ 199"],
+                                 "descricoes": ["Algodão de verdade. Troca grátis."], "cta": "SHOP_NOW"},
+               "anuncio_imagem": {"imagens": [foto], "titulos": ["Nova coleção"], "descricoes": ["Peça já a sua."]}}
+        with self.assertRaises(ValueError) as e:
+            self.ga.propor(c["id"], "criar_campanha_demand_gen", "x", "", {**det, "nome_empresa": "Um nome de empresa longo demais aqui"})
+        self.assertIn("nome_empresa", str(e.exception))
+        a = self.ga.propor(c["id"], "criar_campanha_demand_gen", "Campanha YouTube", "", det)
+        with patch.object(midia, "subir_youtube", return_value="dQw4w9WgXcQ") as up:
+            r = self.ga.aprovar(a["id"], ativar=False, em_segundo_plano=False)
+        self.assertEqual(r["status"], "aplicada", r["resultado"])
+        up.assert_called_once()
+        ops = json.loads([x for x in self.chamadas if x[1].endswith("googleAds:mutate")][-1][2])["mutateOperations"]
+        camp = [o for o in ops if "campaignOperation" in o][0]["campaignOperation"]["create"]
+        self.assertEqual((camp["advertisingChannelType"], camp["status"]), ("DEMAND_GEN", "PAUSED"))
+        assets = [o["assetOperation"]["create"] for o in ops if "assetOperation" in o]
+        self.assertIn({"youtubeVideoId": "dQw4w9WgXcQ"}, [x.get("youtubeVideoAsset") for x in assets])
+        self.assertEqual(sum(1 for x in assets if x.get("type") == "IMAGE"), 4)           # logo + 3 cortes
+        ads = [o["adGroupAdOperation"]["create"]["ad"] for o in ops if "adGroupAdOperation" in o]
+        dv = ads[0]["demandGenVideoResponsiveAd"]
+        self.assertEqual(dv["businessName"], {"text": "Loja Exemplo"})
+        self.assertTrue(ads[1]["demandGenMultiAssetAd"]["squareMarketingImages"])
+        crit = [o["adGroupCriterionOperation"]["create"] for o in ops if "adGroupCriterionOperation" in o]
+        self.assertIn({"adGroup": crit[0]["adGroup"], "language": {"languageConstant": "languageConstants/1014"}}, crit)
+
+    def test_display_em_segundo_plano(self):
+        import time as _t
+        c = self._conectar()
+        foto, logo, _ = self._anexos()
+        a = self.ga.propor(c["id"], "criar_campanha_display", "Display", "", {
+            "nome": "Display | Remarketing", "orcamento_diario": 20, "url_final": "https://loja.exemplo.com",
+            "nome_empresa": "Loja Exemplo", "logo": logo, "imagens": [foto], "titulos": ["Volte e ganhe 10%"],
+            "titulo_longo": "Sua camiseta favorita está esperando por você", "descricoes": ["Frete grátis acima de R$ 199."]})
+        r = self.ga.aprovar(a["id"])
+        self.assertEqual(r["status"], "aplicando")
+        for _ in range(100):
+            if self.ga.acao(a["id"])["status"] != "aplicando":
+                break
+            _t.sleep(0.05)
+        self.assertEqual(self.ga.acao(a["id"])["status"], "aplicada", self.ga.acao(a["id"])["resultado"])
+        ops = json.loads([x for x in self.chamadas if x[1].endswith("googleAds:mutate")][-1][2])["mutateOperations"]
+        ad = [o for o in ops if "adGroupAdOperation" in o][0]["adGroupAdOperation"]["create"]["ad"]["responsiveDisplayAd"]
+        self.assertEqual(ad["longHeadline"], {"text": "Sua camiseta favorita está esperando por você"})
+        self.assertTrue(ad["marketingImages"] and ad["squareMarketingImages"] and ad["squareLogoImages"])
 
     def test_mensagens_de_erro_claras(self):
         corpo = {"error": {"message": "x", "details": [{"errors": [{"errorCode": {"authorizationError":

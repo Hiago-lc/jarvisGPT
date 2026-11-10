@@ -626,6 +626,13 @@ class _Handler(BaseHTTPRequestHandler):
             if not host.split(":")[0] in ("127.0.0.1", "localhost"):
                 raise ValueError("conecte o Google Ads pelo próprio computador (o Google só volta para 127.0.0.1)")
             return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads")}
+        if rota == "midia" and metodo == "GET":
+            from haizen.googleads import midia
+            ref = str((q or {}).get("ref") or "")
+            p_ = midia.arquivo(ref)
+            if p_.suffix.lower() in midia.VIDEOS:
+                return midia.info_video(ref)
+            return midia.conferir_imagem(ref)
         if rota == "desconectar" and metodo == "POST":
             gapi.desconectar()
             return ga.painel()

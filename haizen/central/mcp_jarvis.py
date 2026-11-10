@@ -449,9 +449,25 @@ def googleads_propor(conta_id: str, tipo: str, titulo: str, detalhes: dict, moti
     criar_campanha_pesquisa {nome, orcamento_diario, lance: conversoes|cliques|cpa, cpa_alvo, locais: ["São Paulo"]
     (vazio = Brasil), url_final, negativas: [...], grupos: [{nome, palavras: [{texto, correspondencia}], titulos: [3–15,
     até 30 caracteres], descricoes: [2–4, até 90], caminho1, caminho2}]} — nasce pausada. Pergunte ao usuário o que
-    faltar (link da página, verba, cidades, oferta) antes de propor. Ids e recursos vêm do googleads_painel."""
+    faltar (link da página, verba, cidades, oferta) antes de propor. Ids e recursos vêm do googleads_painel.
+    criar_campanha_demand_gen (YouTube, Discover, Gmail e Display; é o jeito de anunciar vídeo pela API):
+    {nome, orcamento_diario, lance, cpa_alvo, locais, url_final, nome_empresa (até 25), logo (anexo ou caminho),
+    anuncio_video: {videos: [link do YouTube OU o anexo do vídeo, que é enviado ao YouTube como não listado],
+    titulos [1–5, até 40], titulos_longos [1–5, até 90], descricoes [1–5, até 90], cta: LEARN_MORE|SHOP_NOW|BUY_NOW|
+    ORDER_NOW|SIGN_UP|CONTACT_US|GET_QUOTE|BOOK_NOW|...}, anuncio_imagem: {imagens [anexos; cortadas em 1,91:1, 1:1 e
+    4:5], titulos [1–5, até 40], descricoes [1–5, até 90], cta_texto}} — um dos dois anúncios ou os dois.
+    criar_campanha_display: {nome, orcamento_diario, lance, locais, url_final, nome_empresa, logo, imagens [anexos],
+    titulos [1–5, até 30], titulo_longo (até 90), descricoes [1–5, até 90]}. Campanhas novas nascem pausadas.
+    Arquivos: passe o id do anexo (o que vem em [anexo:ID]) ou o caminho do arquivo."""
     return _api("POST", f"googleads/contas/{conta_id}/propor", {"tipo": tipo, "titulo": titulo, "motivo": motivo,
                                                                "detalhes": detalhes})
+
+
+@mcp.tool()
+def midia_info(arquivo: str) -> dict:
+    """Abre um vídeo ou imagem anexado (id do [anexo:ID] ou caminho) e diz duração, resolução, proporção, tamanho
+    e avisos para anúncio. Use antes de montar campanha com vídeo/imagem."""
+    return _api("GET", "googleads/midia", ref=arquivo)
 
 
 @mcp.tool()

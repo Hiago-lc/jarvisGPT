@@ -20,7 +20,8 @@ import urllib.request
 
 from haizen.ecommerce import cofre
 
-ESCOPO = "https://www.googleapis.com/auth/adwords"
+# Google Ads + envio de vídeo ao YouTube (anúncio em vídeo só usa vídeo do YouTube).
+ESCOPO = "https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/youtube.upload"
 VERSOES = [v for v in (os.environ.get("HAIZEN_GADS_API", ""), "v25", "v24", "v23", "v22") if v]
 _CHAVE = "_google_ads"          # no cofre: client_id, client_secret, refresh_token, token, expira, versao
 _PENDENTE: dict = {}            # state -> {verifier, redirect, criado}
