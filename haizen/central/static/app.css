@@ -757,3 +757,30 @@ dialog.confirmar::backdrop { background: rgba(11, 29, 35, .35); }
 
 .ga-termos { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .ga-termos .tag { font-size: 14px; padding: 5px 10px; }
+
+/* ── Pedir ao Jarvis (em cada ferramenta) ── */
+#doca-chat { position: fixed; right: 22px; bottom: 22px; z-index: 40; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.doca-botao { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--petroleo); color: #fff; font: 600 15px/1 inherit; box-shadow: 0 10px 30px -10px rgba(0,0,0,.45); }
+.doca-botao svg { width: 20px; height: 20px; }
+.doca-botao[aria-expanded="true"] { display: none; }
+.doca-painel { width: min(420px, calc(100vw - 32px)); height: min(620px, calc(100vh - 120px)); background: var(--superficie);
+  border: 1px solid var(--linha); border-radius: 18px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.4); display: flex; flex-direction: column; overflow: hidden; }
+.doca-painel[hidden] { display: none; }
+.doca-painel header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--linha); }
+.doca-painel header .sub { display: block; font-size: 12px; margin-top: 2px; }
+.doca-fechar { border: 0; background: none; font-size: 24px; line-height: 1; cursor: pointer; color: var(--cinza); }
+.doca-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.doca-msgs .msg { max-width: 92%; font-size: 14px; }
+.doca-vazio { margin: auto 0; text-align: center; }
+.doca-anexos .anexos-lista { padding: 0 12px; }
+.doca-form { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 12px; border-top: 1px solid var(--linha); }
+.doca-form textarea { flex: 1; resize: none; font: inherit; font-size: 14px; padding: 9px 10px; border: 1px solid var(--linha); border-radius: 10px; background: var(--fundo-campo, transparent); color: inherit; }
+.doca-clipe { border: 0; background: none; cursor: pointer; font-size: 18px; padding: 8px 4px; }
+@media (max-width: 700px) { #doca-chat { right: 12px; bottom: 12px; } }
+/* anúncio de pesquisa (prévia) */
+.ga-anuncio { border: 1px solid var(--linha); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.ga-patrocinado { font-size: 12px; color: var(--cinza); }
+.ga-titulo { color: #1a0dab; font-size: 17px; margin: 4px 0 2px; overflow-wrap: anywhere; }
+.ga-desc { font-size: 13px; color: var(--cinza); margin: 0; }
+.ga-lista { margin: 6px 0; padding-left: 20px; font-size: 13px; line-height: 1.5; }

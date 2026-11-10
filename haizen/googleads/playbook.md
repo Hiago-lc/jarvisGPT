@@ -32,3 +32,14 @@ recebidos; nunca invente métrica, meta ou valor. Valores em reais.
 - `pausar_palavra`: {"recurso": "customers/.../adGroupCriteria/...~..."}  (o resource_name da palavra-chave)
 - `pausar_anuncio`: {"recurso": "customers/.../adGroupAds/...~..."}
 - `alerta`: {} — aviso para o dono (rastreamento, landing page, anúncio fraco). Não muda nada.
+- `criar_campanha_pesquisa` (quando o dono pedir uma campanha nova): {"nome", "orcamento_diario", "lance": "conversoes"|"cliques"|"cpa",
+  "cpa_alvo", "locais": ["São Paulo", "Campinas"] (vazio = Brasil), "url_final", "negativas": [...],
+  "grupos": [{"nome", "palavras": [{"texto", "correspondencia": "PHRASE"|"EXACT"|"BROAD"}], "titulos": [3–15, até 30
+  caracteres], "descricoes": [2–4, até 90 caracteres], "caminho1", "caminho2"}]}. Nasce PAUSADA, salvo pedido.
+
+## Campanha de pesquisa nova (boas práticas)
+- 1 grupo por intenção/serviço (3 a 5 grupos), 5–15 palavras de frase/exata por grupo, nada de palavra solta genérica.
+- Títulos: palavra-chave no título 1, benefício, prova, oferta, CTA, marca; variados (o Google combina). Descrições com
+  benefício + diferencial + chamada. Sem promessa ou preço que o cliente não deu.
+- Negativas de partida: emprego, vagas, grátis, curso, como fazer, pdf, reclame aqui (ajuste ao negócio).
+- Lance: "conversoes" se a conta já tem conversões registradas; "cliques" em conta nova sem histórico.

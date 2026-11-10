@@ -648,7 +648,8 @@ class _Handler(BaseHTTPRequestHandler):
             aid, acao = int(partes[1]), partes[2]
             if acao == "aprovar":
                 c = self._corpo()
-                return ga.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None)
+                return ga.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None,
+                                  c.get("ativar") if isinstance(c.get("ativar"), bool) else None)
             if acao == "rejeitar":
                 return ga.rejeitar(aid, str(self._corpo().get("nota") or ""))
         return _NAO_ACHOU

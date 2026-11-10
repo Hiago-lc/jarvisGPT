@@ -445,8 +445,11 @@ def googleads_analisar(conta_id: str = "") -> dict:
 def googleads_propor(conta_id: str, tipo: str, titulo: str, detalhes: dict, motivo: str = "") -> dict:
     """Cria uma PROPOSTA (não aplica). Tipos: orcamento {campanha_id, orcamento_diario (R$/dia)};
     pausar_campanha/ativar_campanha {campanha_id}; negativar_termos {campanha_id, termos: [...],
-    correspondencia: PHRASE|EXACT|BROAD}; pausar_palavra {recurso}; pausar_anuncio {recurso}. Ids e recursos vêm
-    do googleads_painel (campanhas) ou da última análise."""
+    correspondencia: PHRASE|EXACT|BROAD}; pausar_palavra {recurso}; pausar_anuncio {recurso};
+    criar_campanha_pesquisa {nome, orcamento_diario, lance: conversoes|cliques|cpa, cpa_alvo, locais: ["São Paulo"]
+    (vazio = Brasil), url_final, negativas: [...], grupos: [{nome, palavras: [{texto, correspondencia}], titulos: [3–15,
+    até 30 caracteres], descricoes: [2–4, até 90], caminho1, caminho2}]} — nasce pausada. Pergunte ao usuário o que
+    faltar (link da página, verba, cidades, oferta) antes de propor. Ids e recursos vêm do googleads_painel."""
     return _api("POST", f"googleads/contas/{conta_id}/propor", {"tipo": tipo, "titulo": titulo, "motivo": motivo,
                                                                "detalhes": detalhes})
 

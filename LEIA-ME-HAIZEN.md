@@ -173,3 +173,8 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - Tela **Google Ads**: gasto, conversões, CPA e ROAS (ontem, 7 e 30 dias), campanhas com perda por orçamento, termos de pesquisa que gastaram sem converter. Análise todo dia às 07:20 das contas marcadas (entra no resumo da manhã).
 - O Jarvis **propõe** (orçamento, pausar/ativar campanha, negativar termos, pausar palavra-chave ou anúncio) e **você aprova**. Mudança de orçamento acima de 50% de uma vez e orçamento compartilhado são barrados.
 - **Conectar** (uma vez, neste PC): no Google Cloud, ativar a Google Ads API, pedir o acesso **Explorer** (Google Ads API → Visão geral → Upgrade access level) e usar um cliente OAuth "App para computador". Desde 09/2026 não existe mais developer token. O refresh token fica criptografado (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`.
+
+## Pedir ao Jarvis em cada ferramenta
+
+- Nas telas Google Ads, Tráfego, E-commerce, Social, Financeiro e Clientes há o botão **Pedir ao Jarvis** (canto inferior direito): um chat que já sabe em que tela você está. Pedidos de mudança viram propostas na própria tela, para você aprovar; dá para anexar arquivos.
+- Google Ads: o Jarvis cria **campanha de pesquisa completa** (orçamento, lance, cidades, grupos, palavras-chave, anúncios responsivos, negativas) como proposta, com prévia do anúncio. Ao aprovar você escolhe se ela nasce ativa ou pausada (padrão: pausada).

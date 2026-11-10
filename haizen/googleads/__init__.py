@@ -21,7 +21,10 @@ from haizen.googleads import api
 
 TIPOS = {"orcamento": "Orçamento", "pausar_campanha": "Pausar campanha", "ativar_campanha": "Ativar campanha",
          "negativar_termos": "Negativar termos", "pausar_palavra": "Pausar palavra-chave",
-         "pausar_anuncio": "Pausar anúncio", "alerta": "Aviso"}
+         "pausar_anuncio": "Pausar anúncio", "criar_campanha_pesquisa": "Nova campanha de pesquisa", "alerta": "Aviso"}
+BRASIL = "geoTargetConstants/2076"
+PORTUGUES = "languageConstants/1014"
+LANCES = ("conversoes", "cliques", "cpa")
 PLAYBOOK = Path(__file__).resolve().parent / "playbook.md"
 TIMEOUT = 900
 
@@ -382,6 +385,8 @@ def validar(tipo: str, det: dict, m: dict | None = None) -> dict:
             raise ValueError("faltaram os termos")
         det["correspondencia"] = det.get("correspondencia") if det.get("correspondencia") in ("EXACT", "PHRASE", "BROAD") \
             else "PHRASE"
+    if tipo == "criar_campanha_pesquisa":
+        return _validar_campanha(det)
     if tipo in ("pausar_palavra", "pausar_anuncio"):
         det["recurso"] = str(det.get("recurso") or "")
         padrao = r"customers/\d+/adGroupCriteria/\d+~\d+" if tipo == "pausar_palavra" else r"customers/\d+/adGroupAds/\d+~\d+"
@@ -392,6 +397,115 @@ def validar(tipo: str, det: dict, m: dict | None = None) -> dict:
             if det["recurso"] not in {x["recurso"] for x in lista}:
                 raise ValueError("palavra-chave/anúncio não encontrado")
     return det
+
+
+def _validar_campanha(det: dict) -> dict:
+    """Campanha de pesquisa completa: confere tudo que o Google recusaria, com mensagem clara."""
+    erros = []
+    d = {"nome": re.sub(r"\s+", " ", str(det.get("nome") or "")).strip()[:120]}
+    if len(d["nome"]) < 3:
+        erros.append("falta o nome da campanha")
+    d["orcamento_diario"] = round(float(det.get("orcamento_diario") or 0), 2)
+    if not 1 <= d["orcamento_diario"] <= 5000:
+        erros.append("orçamento diário entre R$ 1 e R$ 5.000")
+    d["lance"] = det.get("lance") if det.get("lance") in LANCES else "conversoes"
+    if d["lance"] == "cpa":
+        d["cpa_alvo"] = round(float(det.get("cpa_alvo") or 0), 2)
+        if d["cpa_alvo"] <= 0:
+            erros.append("lance por CPA alvo precisa do cpa_alvo")
+    d["locais"] = [str(x).strip() for x in det.get("locais") or [] if str(x).strip()][:20]
+    d["url_final"] = str(det.get("url_final") or "").strip()
+    if not re.fullmatch(r"https?://[^\s]+\.[^\s]+", d["url_final"]):
+        erros.append("url_final inválida (use o link completo da página, com https://)")
+    d["rede_de_pesquisa"] = bool(det.get("rede_de_pesquisa"))
+    d["negativas"] = [str(x).strip().lower() for x in det.get("negativas") or [] if 1 < len(str(x).strip()) <= 80][:50]
+    grupos = det.get("grupos") or []
+    if not 1 <= len(grupos) <= 5:
+        erros.append("de 1 a 5 grupos de anúncios")
+    d["grupos"] = []
+    for i, g in enumerate(grupos[:5], 1):
+        nome = str(g.get("nome") or f"Grupo {i}").strip()[:100]
+        pal = []
+        for k in g.get("palavras") or []:
+            texto = k.get("texto") if isinstance(k, dict) else k
+            corr = (k.get("correspondencia") if isinstance(k, dict) else "") or "PHRASE"
+            texto = re.sub(r"\s+", " ", str(texto or "")).strip().lower()
+            if 1 < len(texto) <= 80:
+                pal.append({"texto": texto, "correspondencia": corr if corr in ("EXACT", "PHRASE", "BROAD") else "PHRASE"})
+        tit = [str(t).strip() for t in g.get("titulos") or [] if str(t).strip()]
+        desc = [str(t).strip() for t in g.get("descricoes") or [] if str(t).strip()]
+        longos = [t for t in tit if len(t) > 30] + [t for t in desc if len(t) > 90]
+        if not 1 <= len(pal) <= 50:
+            erros.append(f"{nome}: de 1 a 50 palavras-chave")
+        if not 3 <= len(tit) <= 15:
+            erros.append(f"{nome}: de 3 a 15 títulos")
+        if not 2 <= len(desc) <= 4:
+            erros.append(f"{nome}: de 2 a 4 descrições")
+        if longos:
+            erros.append(f"{nome}: passam do limite (títulos 30, descrições 90 caracteres): " + " | ".join(longos[:4]))
+        c1, c2 = str(g.get("caminho1") or "")[:15], str(g.get("caminho2") or "")[:15]
+        d["grupos"].append({"nome": nome, "palavras": pal, "titulos": tit[:15], "descricoes": desc[:4],
+                            "caminho1": re.sub(r"\s+", "-", c1), "caminho2": re.sub(r"\s+", "-", c2) if c1 else ""})
+    if erros:
+        raise ValueError("a campanha não passaria no Google: " + "; ".join(erros))
+    d["ativar"] = bool(det.get("ativar"))
+    return d
+
+
+def _criar_campanha(c: dict, d: dict) -> dict:
+    cid = c["id"]
+    rec = lambda tipo, n: f"customers/{cid}/{tipo}/{n}"  # noqa: E731
+    locais = []
+    if d["locais"]:
+        achados = api.sugerir_locais(d["locais"])
+        faltou = [x for x in d["locais"] if x.lower() not in achados]
+        if faltou:
+            raise ValueError(f"não achei estes locais no Google: {', '.join(faltou)}")
+        locais = [achados[x.lower()]["recurso"] for x in d["locais"]]
+    lance = {"conversoes": {"maximizeConversions": {}}, "cliques": {"targetSpend": {}},
+             "cpa": {"maximizeConversions": {"targetCpaMicros": str(int(d.get("cpa_alvo", 0) * 1_000_000))}}}[d["lance"]]
+    carimbo = time.strftime("%Y%m%d-%H%M")
+    ops = [
+        {"campaignBudgetOperation": {"create": {"resourceName": rec("campaignBudgets", -1),
+                                                "name": f"{d['nome']} · orçamento {carimbo}",
+                                                "amountMicros": str(int(d["orcamento_diario"] * 1_000_000)),
+                                                "deliveryMethod": "STANDARD", "explicitlyShared": False}}},
+        {"campaignOperation": {"create": {"resourceName": rec("campaigns", -2), "name": d["nome"],
+                                          "status": "ENABLED" if d["ativar"] else "PAUSED",
+                                          "advertisingChannelType": "SEARCH", "campaignBudget": rec("campaignBudgets", -1),
+                                          "networkSettings": {"targetGoogleSearch": True,
+                                                              "targetSearchNetwork": d["rede_de_pesquisa"],
+                                                              "targetContentNetwork": False,
+                                                              "targetPartnerSearchNetwork": False},
+                                          "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+                                          **lance}}},
+        {"campaignCriterionOperation": {"create": {"campaign": rec("campaigns", -2),
+                                                   "language": {"languageConstant": PORTUGUES}}}},
+    ]
+    for g in locais or [BRASIL]:
+        ops.append({"campaignCriterionOperation": {"create": {"campaign": rec("campaigns", -2),
+                                                              "location": {"geoTargetConstant": g}}}})
+    for n in d["negativas"]:
+        ops.append({"campaignCriterionOperation": {"create": {"campaign": rec("campaigns", -2), "negative": True,
+                                                              "keyword": {"text": n, "matchType": "PHRASE"}}}})
+    for i, g in enumerate(d["grupos"]):
+        grupo = rec("adGroups", -(10 + i))
+        ops.append({"adGroupOperation": {"create": {"resourceName": grupo, "name": g["nome"], "campaign": rec("campaigns", -2),
+                                                    "status": "ENABLED", "type": "SEARCH_STANDARD"}}})
+        for k in g["palavras"]:
+            ops.append({"adGroupCriterionOperation": {"create": {"adGroup": grupo, "status": "ENABLED",
+                                                                 "keyword": {"text": k["texto"], "matchType": k["correspondencia"]}}}})
+        rsa = {"headlines": [{"text": t} for t in g["titulos"]], "descriptions": [{"text": t} for t in g["descricoes"]]}
+        if g["caminho1"]:
+            rsa["path1"] = g["caminho1"]
+            if g["caminho2"]:
+                rsa["path2"] = g["caminho2"]
+        ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED",
+                                                      "ad": {"finalUrls": [d["url_final"]], "responsiveSearchAd": rsa}}}})
+    r = api.mutate_tudo(c, ops)
+    criada = next((x.get("campaignResult", {}).get("resourceName") for x in r.get("mutateOperationResponses") or []
+                   if x.get("campaignResult")), "")
+    return {"campanha": criada, "operacoes": len(ops)}
 
 
 def analisar(cid: str, hoje: dt.date | None = None) -> dict:
@@ -486,7 +600,7 @@ def rejeitar(aid: int, nota: str = "") -> dict:
     return _mudar_acao(aid, status="rejeitada", resultado=nota[:300])
 
 
-def aprovar(aid: int, detalhes: dict | None = None) -> dict:
+def aprovar(aid: int, detalhes: dict | None = None, ativar: bool | None = None) -> dict:
     a = acao(aid)
     if a["status"] not in ("proposta", "erro"):
         if a["status"] == "rejeitada" and str(a.get("resultado") or "").startswith("substituída"):
@@ -494,6 +608,8 @@ def aprovar(aid: int, detalhes: dict | None = None) -> dict:
         raise ValueError("esta ação já foi aplicada ou rejeitada (a tela foi atualizada)")
     c = conta(a["conta_id"])
     det = {k: v for k, v in (detalhes if detalhes is not None else a["detalhes"]).items() if not k.startswith("_")}
+    if ativar is not None:
+        det["ativar"] = bool(ativar)
     if a["tipo"] != "alerta":
         extra = {k: det[k] for k in ("orcamento_recurso", "orcamento_anterior", "campanha_nome") if k in det}
         det = {**validar(a["tipo"], det), **extra}
@@ -530,6 +646,8 @@ def _aplicar(c: dict, tipo: str, det: dict) -> dict:
         ops = [{"create": {"campaign": f"customers/{cid}/campaigns/{det['campanha_id']}", "negative": True,
                            "keyword": {"text": t, "matchType": det["correspondencia"]}}} for t in det["termos"]]
         return api.mutate(c, "campaignCriteria", ops)
+    if tipo == "criar_campanha_pesquisa":
+        return _criar_campanha(c, det)
     if tipo == "pausar_palavra":
         return api.mutate(c, "adGroupCriteria", [{"update": {"resourceName": det["recurso"], "status": "PAUSED"},
                                                  "updateMask": "status"}])
@@ -549,6 +667,9 @@ def _descrever(tipo: str, d: dict) -> str:
         return f"Orçamento de {nome}: {_brl(d.get('orcamento_anterior'))} → {_brl(d['orcamento_diario'])} por dia."
     if tipo == "negativar_termos":
         return f"{len(d['termos'])} termo(s) negativado(s) em {nome}."
+    if tipo == "criar_campanha_pesquisa":
+        return (f"Campanha \"{d['nome']}\" criada {'ATIVA' if d.get('ativar') else 'PAUSADA (ative no Google Ads ou peça aqui)'}"
+                f" com {len(d['grupos'])} grupo(s) e {_brl(d['orcamento_diario'])}/dia.")
     return {"pausar_campanha": f"Campanha {nome} pausada.", "ativar_campanha": f"Campanha {nome} ativada.",
             "pausar_palavra": "Palavra-chave pausada.", "pausar_anuncio": "Anúncio pausado.", "alerta": "Ciente."}.get(tipo, "Feito.")
 

@@ -79,6 +79,13 @@ class GoogleAdsTests(unittest.TestCase):
                      "metrics": _met(200, 70, 9)}]}
             if "FROM ad_group_ad" in q:
                 return {"results": []}
+            if url.endswith("geoTargetConstants:suggest"):
+                return {"geoTargetConstantSuggestions": [
+                    {"searchTerm": "São Paulo", "geoTargetConstant": {"resourceName": "geoTargetConstants/1001773",
+                                                                       "name": "São Paulo", "status": "ENABLED"}}]}
+            if url.endswith("googleAds:mutate"):
+                return {"mutateOperationResponses": [{"campaignBudgetResult": {}},
+                                                     {"campaignResult": {"resourceName": "customers/4445556666/campaigns/77"}}]}
             if url.endswith(":mutate"):
                 return {"results": [{"resourceName": "ok"}]}
             return {}
@@ -203,6 +210,38 @@ class GoogleAdsTests(unittest.TestCase):
         with self.assertRaises(ValueError) as e:
             self.ga.aprovar(velha["id"])
         self.assertIn("análise mais nova", str(e.exception))
+
+    def test_criar_campanha_de_pesquisa(self):
+        c = self._conectar()
+        grupo = {"nome": "Camisetas", "palavras": [{"texto": "camiseta masculina", "correspondencia": "PHRASE"}, "camiseta básica"],
+                 "titulos": ["Camisetas Masculinas", "Frete Grátis Acima de R$199", "Compre na Loja Exemplo"],
+                 "descricoes": ["Algodão premium, caimento perfeito. Troca grátis em 30 dias.", "Peça já a sua."],
+                 "caminho1": "camisetas", "caminho2": "masculinas"}
+        base = {"nome": "Pesquisa | Camisetas", "orcamento_diario": 50, "lance": "conversoes", "locais": ["São Paulo"],
+                "url_final": "https://loja.exemplo.com/camisetas", "negativas": ["vagas", "grátis"], "grupos": [grupo]}
+        ruim = {**base, "grupos": [{**grupo, "titulos": ["Um título que passa e muito dos trinta caracteres", "a"]}]}
+        with self.assertRaises(ValueError) as e:
+            self.ga.propor(c["id"], "criar_campanha_pesquisa", "x", "", ruim)
+        self.assertIn("de 3 a 15 títulos", str(e.exception))
+        self.assertIn("passam do limite", str(e.exception))
+        a = self.ga.propor(c["id"], "criar_campanha_pesquisa", "Campanha camisetas", "", base)
+        self.assertFalse([x for x in self.chamadas if "mutate" in x[1]])
+        r = self.ga.aprovar(a["id"], ativar=False)
+        self.assertEqual(r["status"], "aplicada", r["resultado"])
+        self.assertIn("PAUSADA", r["resultado"])
+        ops = json.loads([x for x in self.chamadas if x[1].endswith("googleAds:mutate")][-1][2])["mutateOperations"]
+        camp = ops[1]["campaignOperation"]["create"]
+        self.assertEqual((camp["status"], camp["advertisingChannelType"], camp["campaignBudget"]),
+                         ("PAUSED", "SEARCH", "customers/4445556666/campaignBudgets/-1"))
+        self.assertEqual(ops[0]["campaignBudgetOperation"]["create"]["amountMicros"], "50000000")
+        crits = [o["campaignCriterionOperation"]["create"] for o in ops if "campaignCriterionOperation" in o]
+        self.assertIn({"campaign": "customers/4445556666/campaigns/-2", "location": {"geoTargetConstant": "geoTargetConstants/1001773"}}, crits)
+        self.assertEqual(sum(1 for x in crits if x.get("negative")), 2)
+        ad = [o for o in ops if "adGroupAdOperation" in o][0]["adGroupAdOperation"]["create"]["ad"]
+        self.assertEqual(ad["finalUrls"], ["https://loja.exemplo.com/camisetas"])
+        self.assertEqual(len(ad["responsiveSearchAd"]["headlines"]), 3)
+        kws = [o["adGroupCriterionOperation"]["create"]["keyword"] for o in ops if "adGroupCriterionOperation" in o]
+        self.assertEqual(kws[1], {"text": "camiseta básica", "matchType": "PHRASE"})
 
     def test_mensagens_de_erro_claras(self):
         corpo = {"error": {"message": "x", "details": [{"errors": [{"errorCode": {"authorizationError":

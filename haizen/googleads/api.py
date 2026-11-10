@@ -192,6 +192,29 @@ def mutate(conta: dict, recurso: str, operacoes: list[dict]) -> dict:
                    conta.get("login_id", ""))
 
 
+def mutate_tudo(conta: dict, operacoes: list[dict]) -> dict:
+    """Várias criações de uma vez, tudo ou nada (ids temporários negativos ligam as peças)."""
+    cid = str(conta["id"]).replace("-", "")
+    return _chamar("POST", f"customers/{cid}/googleAds:mutate", {"mutateOperations": operacoes},
+                   conta.get("login_id", ""))
+
+
+def sugerir_locais(nomes: list[str]) -> dict[str, dict]:
+    """Nome da cidade/estado → geoTargetConstant do Google (Brasil)."""
+    if not nomes:
+        return {}
+    r = _chamar("POST", "geoTargetConstants:suggest", {"locale": "pt-BR", "countryCode": "BR",
+                                                      "locationNames": {"names": nomes}})
+    achados = {}
+    for sug in r.get("geoTargetConstantSuggestions") or []:
+        g = sug.get("geoTargetConstant") or {}
+        chave = str(sug.get("searchTerm") or g.get("name") or "").lower()
+        if chave and chave not in achados and g.get("status", "ENABLED") == "ENABLED":
+            achados[chave] = {"recurso": g.get("resourceName"), "nome": g.get("canonicalName") or g.get("name"),
+                              "tipo": g.get("targetType")}
+    return achados
+
+
 def contas_acessiveis() -> list[dict]:
     """As contas que o seu login enxerga, abrindo as contas de administrador (MCC)."""
     nomes = (_chamar("GET", "customers:listAccessibleCustomers").get("resourceNames") or [])

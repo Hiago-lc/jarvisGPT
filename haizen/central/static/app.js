@@ -165,6 +165,7 @@ async function navegar() {
   if (CONVERSA.ligada && tela !== "jarvis") desligarConversa();   // sair da tela desliga o microfone
   try {
     await opcoes();
+    chatDaTela(tela);
     await ROTAS[tela](param);
   } catch (e) {
     main.innerHTML = `<p class="erro">Não consegui carregar esta tela: ${esc(e.message)}. Confira se o Jarvis está aberto e recarregue a página.</p>`;
@@ -1896,6 +1897,78 @@ ROTAS.ecommerce = async () => {
   }, 8000);
 };
 
+// ── Pedir ao Jarvis em cada ferramenta ─────────────────────────────────────
+const CHAT_TELAS = {
+  googleads: { nome: "Google Ads", dica: "Ex.: “Cria uma campanha de pesquisa para a Loja X em São Paulo, R$ 50/dia, para a página…”",
+    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Para criar campanha de pesquisa ou mudar algo, monte a proposta com googleads_propor (pergunte o que faltar: conta, link da página, verba, cidades, oferta). NÃO aprove: eu aprovo na tela Google Ads." },
+  trafego: { nome: "Tráfego (Meta Ads)", dica: "Ex.: “Monta uma campanha de mensagens para a Clínica X com os criativos aprovados”",
+    contexto: "Meta Ads dos clientes. Use trafego_painel, trafego_relatorio, trafego_analisar, trafego_propor (inclusive estrutura de campanha nova) e trafego_subir_criativos. NÃO aprove: eu aprovo na tela Tráfego." },
+  ecommerce: { nome: "E-commerce", dica: "Ex.: “Cupom BLACK15 de 15% na loja X até domingo”",
+    contexto: "Lojas Shopify/Tray dos clientes. Use ecommerce_painel, ecommerce_produtos e ecommerce_propor. NÃO aprove: eu aprovo na tela E-commerce." },
+  social: { nome: "Social", dica: "Ex.: “Cria um carrossel sobre os 3 erros de marca para quinta”",
+    contexto: "Instagram da HAIZEN. Use social_painel, social_novo_post, social_analisar, social_raio_x. Não publique sem eu pedir." },
+  financeiro: { nome: "Financeiro", dica: "Ex.: “Quanto falta receber este mês?”", contexto: "Financeiro da HAIZEN (receitas, despesas). Use painel, listar e registrar." },
+  clientes: { nome: "Clientes", dica: "Ex.: “Resume a ficha do cliente X”", contexto: "Clientes da HAIZEN. Use ficha_cliente, listar, registrar." },
+};
+
+function chatDaTela(tela) {
+  const def = CHAT_TELAS[tela];
+  let doca = $("#doca-chat");
+  if (!def || PONTE) { doca?.remove(); return; }
+  if (doca?.dataset.tela === tela) return;
+  doca?.remove();
+  const chave = `central.chat.${tela}`;
+  let msgs = [];
+  try { msgs = JSON.parse(sessionStorage.getItem(chave) || "[]"); } catch (_) { msgs = []; }
+  const guardar = () => { try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch (_) { /* sem armazenamento */ } };
+  document.body.insertAdjacentHTML("beforeend", `<div id="doca-chat" data-tela="${tela}">
+    <button class="doca-botao" type="button" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Pedir ao Jarvis</span></button>
+    <section class="doca-painel" hidden aria-label="Conversa com o Jarvis sobre ${esc(def.nome)}">
+      <header><div><strong>Jarvis · ${esc(def.nome)}</strong><span class="sub">Mudanças viram propostas para você aprovar aqui.</span></div>
+        <button type="button" class="doca-fechar" aria-label="Fechar">×</button></header>
+      <div class="doca-msgs"></div>
+      <div class="doca-anexos"></div>
+      <form class="doca-form"><button type="button" class="doca-clipe" aria-label="Anexar arquivo">📎</button>
+        <textarea rows="2" placeholder="Escreva o pedido… (Enter envia)"></textarea><button class="botao primario" type="submit">Enviar</button></form>
+    </section></div>`);
+  doca = $("#doca-chat");
+  const painel = $(".doca-painel", doca), lista = $(".doca-msgs", doca), campoTexto = $("textarea", doca);
+  const anexos = seletorAnexos($(".doca-anexos", doca), painel, { compacto: true });
+  const desenhar = () => {
+    lista.innerHTML = msgs.length ? msgs.map((m) => balao(m)).join("") : `<p class="sub doca-vazio">${esc(def.dica)}</p>`;
+    hidratarAnexos(lista);
+    lista.scrollTop = lista.scrollHeight;
+  };
+  const abrir = (sim) => { painel.hidden = !sim; $(".doca-botao", doca).setAttribute("aria-expanded", String(sim)); if (sim) { desenhar(); campoTexto.focus(); } };
+  $(".doca-botao", doca).addEventListener("click", () => abrir(painel.hidden));
+  $(".doca-fechar", doca).addEventListener("click", () => abrir(false));
+  $(".doca-clipe", doca).addEventListener("click", () => anexos.abrir());
+  campoTexto.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $(".doca-form", doca).requestSubmit(); } });
+  $(".doca-form", doca).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const texto = campoTexto.value.trim();
+    let ids = [];
+    try { ids = exigirAnexosProntos(anexos); } catch (err) { avisar(err.message); return; }
+    if ((!texto && !ids.length) || JARVIS.ocupado) return;
+    JARVIS.ocupado = true;
+    const marcas = ids.map((id) => `\n[anexo:${id}]`).join("");
+    msgs.push({ papel: "usuario", texto: texto + marcas });
+    campoTexto.value = ""; anexos.limpar(); desenhar();
+    lista.insertAdjacentHTML("beforeend", '<div class="msg ele pensando"><p>Pensando…</p></div>');
+    lista.scrollTop = lista.scrollHeight;
+    try {
+      const r = await api("POST", "jarvis/mensagem", { texto: `[Pedido feito na tela ${def.nome}. ${def.contexto}]\n${texto}`, anexos: ids });
+      msgs.push({ papel: "jarvis", texto: r.resposta, acoes: r.acoes });
+      if (r.confirmacao) msgs.push({ papel: "jarvis", texto: `Preciso da sua confirmação: ${r.confirmacao.titulo}. Abra a tela do Jarvis para confirmar.` });
+      if (location.hash.replace(/^#\/?/, "").split("/")[0] === tela && !$("#dialogo").open) ROTAS[tela]().catch(() => {});
+    } catch (err) {
+      msgs.push({ papel: "jarvis", texto: `Não consegui: ${err.message}` });
+    } finally {
+      JARVIS.ocupado = false; guardar(); desenhar();
+    }
+  });
+}
+
 // ── Google Ads dos clientes ─────────────────────────────────────────────────
 function gaDetalhes(a) {
   const d = a.detalhes || {};
@@ -1904,6 +1977,18 @@ function gaDetalhes(a) {
     case "orcamento": return `<p class="ec-mudanca">${d.orcamento_anterior ? `${moeda(d.orcamento_anterior)} → ` : ""}<strong>${moeda(d.orcamento_diario)}/dia</strong> ${camp}</p>`;
     case "negativar_termos": return `<p class="ec-mudanca">${camp}</p><p class="ga-termos">${(d.termos || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(" ")}</p>`;
     case "pausar_campanha": case "ativar_campanha": return `<p class="ec-mudanca">${camp}</p>`;
+    case "criar_campanha_pesquisa": {
+      const lance = { conversoes: "maximizar conversões", cliques: "maximizar cliques", cpa: `CPA alvo ${moeda(d.cpa_alvo)}` }[d.lance] || d.lance;
+      const dominio = (() => { try { return new URL(d.url_final).hostname.replace(/^www\./, ""); } catch (_) { return d.url_final; } })();
+      return `<p class="ec-mudanca"><strong>${esc(d.nome)}</strong> · ${moeda(d.orcamento_diario)}/dia · ${esc(lance)} · ${esc((d.locais || []).join(", ") || "Brasil")}</p>
+        ${(d.grupos || []).map((g) => `<div class="ga-anuncio"><span class="ga-patrocinado">Patrocinado · ${esc(dominio)}${g.caminho1 ? ` › ${esc(g.caminho1)}` : ""}${g.caminho2 ? ` › ${esc(g.caminho2)}` : ""}</span>
+          <p class="ga-titulo">${esc(g.titulos.slice(0, 3).join(" | "))}</p><p class="ga-desc">${esc(g.descricoes[0] || "")}</p>
+          <details class="traf-detalhes"><summary>${esc(g.nome)}: ${g.palavras.length} palavras, ${g.titulos.length} títulos, ${g.descricoes.length} descrições</summary>
+            <p class="ga-termos">${g.palavras.map((k) => `<span class="tag">${esc(k.correspondencia === "EXACT" ? `[${k.texto}]` : k.correspondencia === "PHRASE" ? `"${k.texto}"` : k.texto)}</span>`).join(" ")}</p>
+            <ol class="ga-lista">${g.titulos.map((t) => `<li>${esc(t)} <span class="sub">${t.length}</span></li>`).join("")}</ol>
+            <ul class="ga-lista">${g.descricoes.map((t) => `<li>${esc(t)} <span class="sub">${t.length}</span></li>`).join("")}</ul></details></div>`).join("")}
+        ${d.negativas?.length ? `<p class="sub">Negativas: ${esc(d.negativas.join(", "))}</p>` : ""}`;
+    }
     default: return "";
   }
 }
@@ -1994,9 +2079,20 @@ ROTAS.googleads = async () => {
     const todas = contas;
     $$("[data-ga-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.gaAprovar);
+      const aplicar = async (corpoReq) => {
+        b.disabled = true;
+        try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, corpoReq); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); }
+        desenhar();
+      };
+      if (a.tipo === "criar_campanha_pesquisa") {
+        dialogo({ titulo: `Criar "${a.detalhes.nome}"`, corpo: `<p>A campanha vai ser criada na conta ${esc(a.conta_nome)} com ${moeda(a.detalhes.orcamento_diario)}/dia.</p>
+            <div class="campos">${campo({ nome: "ativar", rotulo: "Criar já ativa (começa a gastar hoje)", tipo: "checkbox", valor: false, largo: true })}</div>
+            <p class="sub">Sem marcar, ela nasce pausada: confira no Google Ads e ative quando quiser.</p>`,
+          acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Criar campanha", classe: "primario", enviar: true, acao: async (v) => { await aplicar({ ativar: !!v.ativar }); } }] });
+        return;
+      }
       if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar no Google Ads (${a.conta_nome}): ${a.titulo}?`, "Aplicar"))) return;
-      b.disabled = true;
-      try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); } desenhar();
+      await aplicar({});
     }));
     $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar(); }));
     $$("[data-ga-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => {
