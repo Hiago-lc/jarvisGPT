@@ -2016,7 +2016,7 @@ function gaCartaoAcao(a) {
     ${a.motivo ? `<p class="traf-motivo">${esc(a.motivo)}</p>` : ""}${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
     ${a.status === "erro" ? `<p class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</p>` : ""}
     <div class="traf-botoes"><button class="botao" data-ga-rejeitar="${a.id}">${a.tipo === "alerta" ? "Dispensar" : "Rejeitar"}</button>
-      ${a.tipo === "orcamento" ? `<button class="botao" data-ga-ajustar="${a.id}">Ajustar</button>` : ""}
+      ${a.tipo === "orcamento" || a.tipo.startsWith("criar_campanha") ? `<button class="botao" data-ga-ajustar="${a.id}">Ajustar verba</button>` : ""}
       <button class="botao primario" data-ga-aprovar="${a.id}">${a.tipo === "alerta" ? "Ciente" : a.status === "erro" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div></article>`;
 }
 
@@ -2120,6 +2120,13 @@ ROTAS.googleads = async () => {
     $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar(); }));
     $$("[data-ga-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.gaAjustar);
+      if (a.tipo.startsWith("criar_campanha")) {
+        dialogo({ titulo: `Verba · ${a.detalhes.nome}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Só muda a proposta; a campanha é criada quando você clicar em Aprovar.</p>`,
+          acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+            await api("POST", `googleads/acoes/${a.id}/editar`, { detalhes: { ...a.detalhes, orcamento_diario: +v.orcamento_diario } }); avisar("Verba ajustada"); desenhar();
+          } }] });
+        return;
+      }
       dialogo({ titulo: `Ajustar · ${a.titulo}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Salvar e aplicar já muda a campanha.</p>`,
         acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar e aplicar", classe: "primario", enviar: true, acao: async (v) => {
           const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, { detalhes: { ...a.detalhes, orcamento_diario: +v.orcamento_diario } });

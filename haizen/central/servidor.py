@@ -660,6 +660,8 @@ class _Handler(BaseHTTPRequestHandler):
                                   c.get("ativar") if isinstance(c.get("ativar"), bool) else None)
             if acao == "rejeitar":
                 return ga.rejeitar(aid, str(self._corpo().get("nota") or ""))
+            if acao == "editar":
+                return ga.editar(aid, self._corpo().get("detalhes") or {})
         return _NAO_ACHOU
 
     def _rotina(self, metodo, partes, q=None):

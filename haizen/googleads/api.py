@@ -46,6 +46,23 @@ def _http(metodo: str, url: str, dados: bytes | None = None, cab: dict | None = 
         raise ErroGoogleAds(f"sem conexão com o Google: {e.reason}") from None
 
 
+def _minimo_orcamento(det: dict) -> str:
+    """Acha o valor mínimo nos detalhes do erro de orçamento (o nome exato do campo varia por versão)."""
+    b = det.get("budgetPerDayMinimumErrorDetails") or {}
+    if not b:
+        return ""
+    moeda = b.get("currencyCode") or ""
+    for k, v in b.items():
+        if "minimum" in k.lower() and "micros" in k.lower():
+            try:
+                valor = int(v) / 1_000_000
+            except (TypeError, ValueError):
+                continue
+            fmt = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"R$ {fmt}" if moeda in ("", "BRL") else f"{fmt} {moeda}"
+    return ""
+
+
 def _mensagem(codigo: int, corpo: dict) -> str:
     if isinstance(corpo, list):
         corpo = corpo[0] if corpo else {}
@@ -58,7 +75,11 @@ def _mensagem(codigo: int, corpo: dict) -> str:
     for d in err.get("details") or []:
         for e in d.get("errors") or []:
             codigo_ga = next(iter((e.get("errorCode") or {}).values()), "")
-            detalhes.append(f"{codigo_ga}: {e.get('message', '')}".strip(": "))
+            texto_e = f"{codigo_ga}: {e.get('message', '')}".strip(": ")
+            minimo = _minimo_orcamento(e.get("details") or {})
+            if minimo:
+                texto_e = f"orçamento abaixo do mínimo do Google para este tipo de campanha: mínimo {minimo} por dia"
+            detalhes.append(texto_e)
     texto = "; ".join(detalhes) or msg
     if "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION" in texto or "ACTION_NOT_PERMITTED" in texto:
         texto += (" — o projeto do Google Cloud ainda está em acesso de teste: no Console, abra Google Ads API → "

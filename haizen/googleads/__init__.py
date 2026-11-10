@@ -634,7 +634,13 @@ def _criar_demand_gen(c: dict, d: dict) -> dict:
         v = d["anuncio_video"]
         videos = []
         for x in v["videos"]:
-            vid = x.get("youtube") or midia.subir_youtube(x["arquivo"], d["nome"], f"Anúncio · {d['nome_empresa']}")
+            vid = x.get("youtube")
+            if not vid:
+                vid = midia.subir_youtube(x["arquivo"], d["nome"], f"Anúncio · {d['nome_empresa']}")
+                x.clear()
+                x["youtube"] = vid          # guardado na proposta: tentar de novo não sobe o vídeo outra vez
+                if d.get("_ao_mudar"):
+                    d["_ao_mudar"](f"Vídeo enviado ao YouTube (youtu.be/{vid}). Criando a campanha…")
             enviados.append(vid)
             rn = ids.novo("assets")
             ops.append({"assetOperation": {"create": {"resourceName": rn, "name": f"{d['nome']} vídeo {vid}",
@@ -665,10 +671,26 @@ def _criar_demand_gen(c: dict, d: dict) -> dict:
                         "callToActionText": im["cta_texto"]})
         ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED", "ad": {
             "name": f"{d['nome']} · imagem", "finalUrls": [d["url_final"]], "demandGenMultiAssetAd": anuncio}}}})
-    r = api.mutate_tudo(c, ops)
+    r = _mutate_esperando_youtube(c, ops, d)
     criada = next((x.get("campaignResult", {}).get("resourceName") for x in r.get("mutateOperationResponses") or []
                    if x.get("campaignResult")), "")
     return {"campanha": criada, "videos_youtube": enviados, "operacoes": len(ops)}
+
+
+def _mutate_esperando_youtube(c: dict, ops: list, d: dict, tentativas: int = 20, espera: float = 45) -> dict:
+    """Vídeo recém-enviado fica alguns minutos "sem duração" enquanto o YouTube processa: espera e tenta de novo."""
+    for i in range(tentativas):
+        try:
+            return api.mutate_tudo(c, ops)
+        except api.ErroGoogleAds as e:
+            msg = str(e)
+            outros = [p for p in msg.split("; ") if "YOUTUBE_VIDEO_DURATION_NOT_DEFINED" not in p]
+            if "YOUTUBE_VIDEO_DURATION_NOT_DEFINED" not in msg or outros or i == tentativas - 1:
+                raise
+            if d.get("_ao_mudar"):
+                d["_ao_mudar"](f"O YouTube ainda está processando o vídeo; tentando de novo ({i + 1}/{tentativas})…")
+            time.sleep(espera)
+    raise api.ErroGoogleAds("o YouTube não terminou de processar o vídeo")
 
 
 def _criar_display(c: dict, d: dict) -> dict:
@@ -844,6 +866,16 @@ def propor(cid: str, tipo: str, titulo: str, motivo: str = "", detalhes: dict | 
     return acao(aid)
 
 
+def editar(aid: int, detalhes: dict) -> dict:
+    """Ajusta uma proposta antes de aprovar (ex.: verba de campanha nova), validando de novo."""
+    a = acao(aid)
+    if a["status"] not in ("proposta", "erro"):
+        raise ValueError("esta proposta não pode mais ser ajustada")
+    det = {k: v for k, v in (detalhes or {}).items() if not k.startswith("_")}
+    det = validar(a["tipo"], det) if a["tipo"] != "alerta" else {}
+    return _mudar_acao(aid, detalhes=det, status="proposta" if a["status"] == "erro" else a["status"])
+
+
 def rejeitar(aid: int, nota: str = "") -> dict:
     if acao(aid)["status"] != "proposta":
         raise ValueError("esta proposta não está mais esperando aprovação (a tela foi atualizada)")
@@ -875,12 +907,17 @@ def aprovar(aid: int, detalhes: dict | None = None, ativar: bool | None = None, 
 
 
 def _aplicar_e_guardar(aid: int, c: dict, tipo: str, det: dict) -> dict:
+    if tipo in PESADAS:
+        det["_ao_mudar"] = lambda texto: _mudar_acao(aid, resultado=texto[:300],
+                                                     detalhes={k: v for k, v in det.items() if not k.startswith("_")})
     try:
         res = _aplicar(c, tipo, det)
     except Exception as e:  # noqa: BLE001
+        det.pop("_ao_mudar", None)
         r = _mudar_acao(aid, status="erro", detalhes=det, resultado=str(e)[:600])
         _avisar_fim(r)
         return r
+    det.pop("_ao_mudar", None)
     r = _mudar_acao(aid, status="aplicada", detalhes={**det, "_aplicado": res}, resultado=_descrever(tipo, det))
     if tipo in PESADAS:
         _avisar_fim(r)
@@ -1046,7 +1083,7 @@ def painel() -> dict:
                     "metricas": {k: m.get(k) for k in ("ontem", "ult7", "ult30", "var7", "var30", "por_dia", "campanhas",
                                                         "desperdicio_termos", "termos_sem_conversao",
                                                         "rastreamento_suspeito")} if m else None,
-                    "propostas": acoes(c["id"]), "historico": acoes(c["id"], ("aplicando", "aplicada", "erro"), 8)})
+                    "propostas": acoes(c["id"], ("proposta", "erro")), "historico": acoes(c["id"], ("aplicando", "aplicada"), 8)})
     return {"conectado": api.conectado(), "tem_cliente": api.tem_cliente(), "contas": out, "estado": ESTADO,
             "config": config(), "tipos": TIPOS}
 

@@ -314,6 +314,42 @@ class GoogleAdsTests(unittest.TestCase):
         self.assertEqual(ad["longHeadline"], {"text": "Sua camiseta favorita está esperando por você"})
         self.assertTrue(ad["marketingImages"] and ad["squareMarketingImages"] and ad["squareLogoImages"])
 
+    def test_video_processando_espera_e_orcamento_minimo(self):
+        from haizen.googleads import midia
+        c = self._conectar()
+        foto, logo, video = self._anexos()
+        a = self.ga.propor(c["id"], "criar_campanha_demand_gen", "YT", "", {
+            "nome": "YT Teste", "orcamento_diario": 15, "url_final": "https://loja.exemplo.com", "nome_empresa": "Loja",
+            "logo": logo, "anuncio_video": {"videos": [video], "titulos": ["a"], "titulos_longos": ["b"], "descricoes": ["c"]}})
+        processando = self.api.ErroGoogleAds("YOUTUBE_VIDEO_DURATION_NOT_DEFINED: unknown duration")
+        orig = self.api.mutate_tudo
+        chamadas = []
+
+        def mut(conta, ops):
+            chamadas.append(1)
+            if len(chamadas) == 1:
+                raise processando
+            return orig(conta, ops)
+        with patch.object(midia, "subir_youtube", return_value="abcdefghijk") as up, \
+                patch.object(self.api, "mutate_tudo", side_effect=mut), patch("haizen.googleads.time.sleep"):
+            r = self.ga.aprovar(a["id"], em_segundo_plano=False)
+        self.assertEqual(r["status"], "aplicada", r["resultado"])
+        self.assertEqual(len(chamadas), 2)
+        up.assert_called_once()
+        b = self.ga.propor(c["id"], "criar_campanha_demand_gen", "YT2", "", {**{k: v for k, v in self.ga.acao(a["id"])["detalhes"].items() if not k.startswith("_")}, "nome": "YT Teste 2"})
+        with patch.object(midia, "subir_youtube") as up2, patch.object(self.api, "mutate_tudo", side_effect=self.api.ErroGoogleAds(
+                self.api._mensagem(400, {"error": {"details": [{"errors": [{"errorCode": {"campaignBudgetError": "BUDGET_BELOW_PER_DAY_MINIMUM"},
+                  "message": "x", "details": {"budgetPerDayMinimumErrorDetails": {"currencyCode": "BRL",
+                  "minimumBudgetAmountMicros": "25000000"}}}]}]}}))):
+            r = self.ga.aprovar(b["id"], em_segundo_plano=False)
+        up2.assert_not_called()                                   # vídeo já estava no YouTube: não sobe de novo
+        self.assertEqual(r["status"], "erro")
+        self.assertIn("mínimo R$ 25,00 por dia", r["resultado"])
+        self.assertIn(r["id"], [x["id"] for x in self.ga.acoes(c["id"], ("proposta", "erro"))])
+        e = self.ga.editar(r["id"], {**r["detalhes"], "orcamento_diario": 30})
+        self.assertEqual((e["status"], e["detalhes"]["orcamento_diario"]), ("proposta", 30.0))
+        self.assertEqual(e["detalhes"]["anuncio_video"]["videos"], [{"youtube": "abcdefghijk"}])
+
     def test_mensagens_de_erro_claras(self):
         corpo = {"error": {"message": "x", "details": [{"errors": [{"errorCode": {"authorizationError":
                  "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"}, "message": "no"}]}]}}
