@@ -1,0 +1,41 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<!-- MODELO: reels/anúncio em vídeo com tipografia em movimento (1080x1920, ~9 s). Renderize com `animar` (segundos=9).
+     Quando usar: oferta, lançamento, gancho forte; dá para trocar a foto por um clipe (<video src muted> também é controlado).
+     Estrutura: 0–1,5 s gancho | 1,5–4 s prova/benefício (com foto) | 4–7 s número/oferta | 7–9 s CTA + logo.
+     Troque textos, foto, cores. Corte o que não usar; mantenha o ritmo (algo muda a cada 1,5–2 s). -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600&family=Inter+Tight:wght@800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="kit/haizen-kit.css">
+<style>
+  :root { --fundo: #0c0c0f; --tinta: #fff; --destaque: #d4ff3a; --marca: #4b3df5; --apoio: #ff3d7f; }
+  .cena { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 250px var(--margem) 350px; }
+  #c2 .foto { opacity: .95; }
+  .gancho { font: 900 150px/.92 var(--fonte-titulo); letter-spacing: -.055em; }
+  .num { font: 900 400px/.8 var(--fonte-titulo); letter-spacing: -.08em; color: var(--destaque); }
+</style></head>
+<body><div class="peca mesh grao">
+  <section class="cena" id="c1"><p class="sobre" id="c1-sobre" style="color:var(--destaque)">Atenção, viajante</p>
+    <h1 class="gancho" id="c1-t" style="margin-top:28px">Seu verão ainda não tem destino?</h1></section>
+  <section class="cena" id="c2" style="justify-content:flex-end"><img class="foto" id="c2-foto" src="foto.jpg" alt=""><div class="veu-baixo"></div>
+    <h2 class="display d-xl" id="c2-t" style="position:relative;z-index:2">Maragogi com <span id="c2-d">tudo incluso</span></h2></section>
+  <section class="cena" id="c3"><p class="num" id="c3-n">10x</p><p class="titulo t-l" id="c3-t" style="margin-top:24px;font-size:66px">sem juros, aéreo + hotel</p></section>
+  <section class="cena" id="c4" style="align-items:flex-start"><img class="logo" id="c4-logo" src="logo.png" alt="" style="height:70px">
+    <h2 class="display d-xl" id="c4-t" style="margin:40px 0 50px">Garanta sua vaga</h2><span class="cta" id="c4-cta" style="font-size:40px;padding:32px 50px">Chamar no WhatsApp <span class="seta">→</span></span></section>
+</div>
+<script src="kit/motion.js"></script>
+<script>
+  // Cena 1: gancho (0–1,8 s)
+  M.entrar("#c1-sobre", 0.1, { de: "esquerda" }); M.palavras("#c1-t", 0.25);
+  M.sair("#c1", 1.8);
+  // Cena 2: foto + benefício (1,9–4,3 s)
+  M.mascara("#c2", 1.9, { de: "baixo", dur: 0.6 }); M.kenburns("#c2-foto", 1.9, 2.6, 1.12, { y: -2 });
+  M.palavras("#c2-t", 2.3); M.destaque("#c2-d", 3.1);
+  M.sair("#c2", 4.3);
+  // Cena 3: número (4,4–6,8 s)
+  M.entrar("#c3", 4.4, { de: "zoom", dur: 0.5 }); M.contador("#c3-n", 4.5, 1.0, 1, 10, "", "x"); M.palavras("#c3-t", 5.0);
+  M.sair("#c3", 6.8);
+  // Cena 4: CTA (7,25–9 s)
+  M.entrar("#c4", 7.25, { de: "nada", dur: 0.2 }); M.entrar("#c4-logo", 7.3); M.palavras("#c4-t", 7.4); M.entrar("#c4-cta", 7.9, { de: "zoom" }); M.pulso("#c4-cta", 8.3, { vezes: 1 });
+  // Começam escondidas até a vez delas:
+  ["#c2", "#c3", "#c4"].forEach((s) => document.querySelector(s).animate([{ visibility: "hidden" }, { visibility: "hidden" }],
+    { duration: { "#c2": 1900, "#c3": 4400, "#c4": 7250 }[s], fill: "backwards" }));
+</script></body></html>

@@ -1,0 +1,95 @@
+/* HAIZEN kit de direção de arte: base para peças em HTML renderizadas em PNG/MP4.
+   Troque as variáveis do :root pelas cores e fontes da marca do cliente.
+   Use o que servir; nada aqui é obrigatório. */
+
+:root {
+  --fundo: #0f0f12;          /* cor de fundo dominante */
+  --tinta: #f5f3ee;          /* texto principal */
+  --suave: rgba(245, 243, 238, .68);
+  --marca: #2b59ff;          /* cor principal da marca */
+  --destaque: #d4ff3a;       /* UMA cor de ação (CTA, palavra-chave) */
+  --apoio: #ff6b3d;
+  --fonte-titulo: "Inter Tight", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --fonte-texto: "Inter", "Helvetica Neue", Arial, sans-serif;
+  --margem: 7.4%;            /* margem de segurança em relação à largura */
+  --raio: 28px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; }
+body {
+  background: var(--fundo); color: var(--tinta); font-family: var(--fonte-texto);
+  -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; overflow: hidden;
+}
+
+/* ── peça ───────────────────────────────────────────────── */
+.peca { position: relative; width: 100vw; height: 100vh; overflow: hidden; isolation: isolate; }
+.area { position: absolute; inset: var(--margem); display: flex; flex-direction: column; }
+.area.story { inset: 250px var(--margem) 350px; }     /* stories/reels: zonas seguras */
+
+/* ── tipografia (escala forte = cara de agência) ───────────── */
+.display { font-family: var(--fonte-titulo); font-weight: 800; letter-spacing: -.045em; line-height: .9; text-wrap: balance; }
+.d-xxl { font-size: 168px; } .d-xl { font-size: 128px; } .d-l { font-size: 96px; } .d-m { font-size: 72px; } .d-s { font-size: 54px; }
+.titulo { font-family: var(--fonte-titulo); font-weight: 700; letter-spacing: -.03em; line-height: 1.02; text-wrap: balance; }
+.t-l { font-size: 58px; } .t-m { font-size: 44px; } .t-s { font-size: 34px; }
+.texto { font-size: 30px; line-height: 1.32; color: var(--suave); text-wrap: pretty; }
+.sobre { font-size: 22px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; }
+.serif { font-family: "Fraunces", "Playfair Display", Georgia, serif; font-weight: 600; letter-spacing: -.02em; }
+.italico { font-style: italic; }
+.vazado { color: transparent; -webkit-text-stroke: 2.5px currentColor; }
+.marca-texto { color: var(--destaque); }
+.sublinhado { background: linear-gradient(transparent 62%, var(--destaque) 62%, var(--destaque) 92%, transparent 92%); padding: 0 .08em; }
+
+/* ── botões, selos, etiquetas ─────────────────────────────── */
+.cta {
+  display: inline-flex; align-items: center; gap: 16px; align-self: flex-start; white-space: nowrap;
+  background: var(--destaque); color: var(--fundo); font: 700 32px/1 var(--fonte-titulo); letter-spacing: -.01em;
+  padding: 26px 40px; border-radius: 999px; box-shadow: 0 18px 40px -16px color-mix(in srgb, var(--destaque) 70%, transparent);
+}
+.cta .seta { font-size: 34px; transform: translateY(-1px); }
+.selo {
+  position: absolute; width: 230px; height: 230px; border-radius: 50%; display: grid; place-items: center; text-align: center;
+  background: var(--destaque); color: var(--fundo); font: 800 46px/0.95 var(--fonte-titulo); letter-spacing: -.03em;
+  transform: rotate(-12deg); box-shadow: 0 20px 50px -20px rgba(0,0,0,.55);
+}
+.selo small { display: block; font-size: 22px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tag { display: inline-block; padding: 10px 18px; border-radius: 999px; font: 600 22px/1 var(--fonte-texto);
+  background: color-mix(in srgb, var(--tinta) 12%, transparent); border: 1px solid color-mix(in srgb, var(--tinta) 22%, transparent); }
+.logo { height: 54px; width: auto; object-fit: contain; align-self: flex-start; }
+
+/* ── fundos e texturas ───────────────────────────────────── */
+.mesh {
+  background:
+    radial-gradient(60% 50% at 18% 12%, color-mix(in srgb, var(--marca) 85%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 88% 30%, color-mix(in srgb, var(--apoio) 60%, transparent), transparent 70%),
+    radial-gradient(70% 60% at 60% 100%, color-mix(in srgb, var(--marca) 55%, #000), transparent 75%),
+    var(--fundo);
+}
+.grao::after {                       /* granulado fino: tira a cara "digital" do gradiente */
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 50; opacity: .14; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.veu-baixo { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 38%, rgba(0,0,0,.78) 100%); z-index: 1; }
+.veu-lado { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.72) 0%, rgba(0,0,0,.25) 55%, transparent 80%); z-index: 1; }
+.vidro { background: color-mix(in srgb, var(--tinta) 10%, transparent); backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--tinta) 18%, transparent); border-radius: var(--raio); }
+.cartao { background: color-mix(in srgb, var(--tinta) 6%, var(--fundo)); border-radius: var(--raio); padding: 36px; }
+
+/* ── fotos e produto ─────────────────────────────────────── */
+.foto { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.produto { position: absolute; object-fit: contain; z-index: 3;
+  filter: drop-shadow(0 40px 40px rgba(0,0,0,.35)) drop-shadow(0 8px 10px rgba(0,0,0,.25)); }
+.sombra-chao { position: absolute; height: 60px; border-radius: 50%; background: radial-gradient(closest-side, rgba(0,0,0,.45), transparent);
+  filter: blur(6px); z-index: 2; }
+.moldura { border-radius: var(--raio); overflow: hidden; position: relative; }
+.moldura img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.duotone { filter: grayscale(1) contrast(1.15); mix-blend-mode: luminosity; }
+
+/* ── apoio ────────────────────────────────────────────────── */
+.linha { height: 2px; background: color-mix(in srgb, var(--tinta) 22%, transparent); }
+.empurra { margin-top: auto; }
+.fila { display: flex; align-items: center; gap: 24px; }
+.entre { justify-content: space-between; }
+.guias::before { /* ligue a classe .guias no body para conferir as zonas seguras; tire antes de exportar */
+  content: ""; position: fixed; inset: 250px 0 350px; border-top: 3px dashed #f0f; border-bottom: 3px dashed #f0f; z-index: 99;
+}

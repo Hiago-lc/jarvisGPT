@@ -7,7 +7,10 @@
 - Fim: CTA claro por 2–3 s + logo discreto. Duração ideal 12–30 s para anúncio, até 45 s para conteúdo.
 - Pense em loop: o último quadro conversando com o primeiro aumenta replays.
 
-## Motion design
+## Motion design (kit HAIZEN)
+- `fontes/kit/motion.js` (Web Animations, funciona sem internet): M.palavras (revela por palavra com máscara),
+  M.letras, M.entrar/M.sair, M.mascara (wipe), M.kenburns, M.contador (número subindo), M.destaque (marca-texto),
+  M.pulso (CTA), M.trocar (corte com movimento). Todos com tempo em segundos.
 - Animações com GSAP (carregue de https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js) ou CSS @keyframes.
   Monte UMA timeline e exponha-a: `window.timeline = gsap.timeline()`; a ferramenta `animar` controla o tempo quadro a quadro.
 - Easing: entradas com `power3.out`/`expo.out`, saídas `power2.in`; nada linear em texto. Duração de entrada 0,4–0,7 s.

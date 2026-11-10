@@ -158,3 +158,12 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - **Conectar Shopify**: na loja do cliente, criar um app próprio (Configurações → Apps → Desenvolver apps, ou Dev Dashboard) com read/write_products, read_orders, read/write_discounts, read_reports, read_inventory; colar o token (shpat_…) ou Client ID + secret.
 - **Conectar Tray**: a HAIZEN precisa ser parceira Tray (partners.tray.com.br) e ter um aplicativo; cadastre consumer key/secret em E-commerce → Configurar. Cada cliente instala o app em Meus aplicativos; cole o endereço da API e o code.
 - Os acessos ficam criptografados (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`, fora do banco e do backup.
+
+## Direção de arte dos agentes (criativos, designer, vídeo)
+
+- **Pesquisa visual obrigatória**: `referencias` captura a Biblioteca de Anúncios da Meta, Behance, Dribbble e Pinterest com o tema; o agente vê as capturas, monta a `prancha` e escreve `fontes/direcao.md` (o que pegar de cada referência).
+- **Kit de design** (`haizen/producao/kit/`): CSS com escala tipográfica forte, texturas, selos, CTA e zonas seguras; `motion.js` para vídeo (revelar palavras, máscaras, Ken Burns, contador, marca-texto); 8 modelos de layout (produto herói, editorial, oferta, bento, prova, capa de carrossel, story, reels cinético).
+- **Foto**: `recortar` tira o fundo (rembg, instalado na primeira vez) e `tratar_foto` dá o mesmo tratamento de cor à série.
+- **Duas direções** da peça principal, comparadas lado a lado antes de escolher.
+- **Vídeo** conferido em folha de contato (12 quadros). O agente de vídeo passou a usar o Opus.
+- **Diretor de criação** revisa comparando com as referências; só passa com nota ≥ 8, senão o agente refaz.

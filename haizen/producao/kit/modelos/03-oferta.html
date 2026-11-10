@@ -1,0 +1,26 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<!-- MODELO: oferta com prazo (feed 1080x1350). Quando usar: promoção REAL do cliente, Black Friday, data comemorativa.
+     Troque: foto/produto, número do desconto, prazo verdadeiro, cores. Nunca invente desconto ou prazo.
+     Ideia: o número é o herói; selo girado; faixa de urgência embaixo. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700&family=Inter+Tight:wght@800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="kit/haizen-kit.css">
+<style>
+  :root { --fundo: #0d0d0f; --tinta: #fafafa; --marca: #5b3df5; --apoio: #ff3d7f; --destaque: #d4ff3a; }
+  .numero { font: 900 380px/.78 var(--fonte-titulo); letter-spacing: -.08em; color: var(--destaque); }
+  .numero sup { font-size: 140px; vertical-align: top; letter-spacing: -.04em; }
+  .produto { right: -4%; bottom: 13%; height: 58%; transform: rotate(8deg); }
+  .faixa { position: absolute; left: 0; right: 0; bottom: 0; height: 110px; background: var(--destaque); color: var(--fundo);
+    display: flex; align-items: center; gap: 48px; white-space: nowrap; font: 800 40px/1 var(--fonte-titulo); letter-spacing: -.02em; padding-left: 40px; z-index: 5; }
+  .selo { left: 52%; top: 9%; }
+</style></head>
+<body><div class="peca mesh grao">
+  <img class="produto" src="produto.png" alt="">
+  <div class="selo">SÓ<br>ATÉ<small>domingo</small></div>
+  <div class="area" style="z-index:4; bottom: 170px">
+    <img class="logo" src="logo.png" alt="">
+    <p class="sobre" style="margin-top:auto;color:var(--suave)">Black Friday</p>
+    <p class="numero">40<sup>%</sup></p>
+    <p class="titulo t-m" style="max-width:520px;margin-top:18px">em toda a linha de verão</p>
+  </div>
+  <div class="faixa"><span>CUPOM BLACK40</span><span>✦</span><span>FRETE GRÁTIS ACIMA DE R$ 199</span><span>✦</span><span>CUPOM BLACK40</span></div>
+</div></body></html>

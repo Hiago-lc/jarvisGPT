@@ -215,7 +215,8 @@ def render(a) -> None:
         page = ctx.new_page()
         _abrir(page, html, a.largura, a.altura)
         # A imagem final é o estado de chegada: animações de entrada terminadas.
-        page.evaluate("() => document.getAnimations().forEach(x => { try { x.finish(); } catch (e) {} })")
+        page.evaluate("""() => { document.getAnimations().forEach(x => { try { x.finish(); } catch (e) {} });
+            const tl = window.timeline || window.tl; if (tl && tl.progress) tl.progress(1); }""")
         if saida.suffix.lower() == ".pdf":
             page.emulate_media(media="print")
             page.pdf(path=str(saida), width=f"{a.largura}px", height=f"{a.altura}px",

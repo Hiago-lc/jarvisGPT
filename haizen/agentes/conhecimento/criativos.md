@@ -21,6 +21,17 @@
 - Texto sobre foto: véu gradiente localizado, faixa sólida ou foto com área limpa. Contraste mínimo 4.5:1.
 - Nada de: sombra preta dura, contorno em texto, 3+ fontes, ícones genéricos, mockups baratos, emoji como elemento gráfico.
 
+## Linguagens visuais que funcionam hoje (escolha UMA por série, de acordo com a marca)
+- Tipografia gigante + produto recortado com sombra real (profundidade, palavra atrás do produto).
+- Editorial: serifa elegante, muito respiro, foto em moldura (arco, retângulo alto), numeração fina.
+- Bento: grade de cartões arredondados com números grandes (serviços, SaaS, benefícios).
+- Bold/brutalista: cor chapada vibrante, tipo preto enorme, setas e selos (conteúdo, ofertas jovens).
+- Foto imersiva + bloco de vidro (stories, turismo, imóveis).
+- UGC/nativo: parece post de pessoa real (print, nota, foto de celular) — ótimo em anúncio, com acabamento limpo.
+- Prova: número enorme + citação curta + rosto real (cases, depoimentos reais).
+Detalhes que separam amador de profissional: tracking negativo nos títulos, quebra de linha pensada, alinhamento
+óptico, granulado sutil sobre gradiente, sombras em camadas, UMA cor de destaque, logo pequeno e bem posicionado.
+
 ## Séries e testes
 - Entregue variações que testam UMA variável (ângulo ou gancho), mantendo o resto: assim o gestor de tráfego aprende.
 - Nomeie pelo ângulo: `03 - Feed 1080x1350 - Prova social.png`.

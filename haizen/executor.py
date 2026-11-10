@@ -369,27 +369,53 @@ def pasta_haizen() -> Path | None:
 
 VISUAIS = ("criativos", "designer", "social", "video")
 
-_DIRECAO_DE_ARTE = """## Padrão de criação da HAIZEN (peças visuais)
-Faça como um diretor de arte de agência, não como um template.
+_DIRECAO_DE_ARTE = """## Padrão de criação da HAIZEN (peças visuais e vídeo) — OBRIGATÓRIO
+Você é diretor de arte sênior de agência premiada. A régua: a peça poderia estar num portfólio do Behance ou num
+anúncio de marca grande. "Correto" não basta; parecer template é reprovação.
 
-1. Repertório (rápido, no máximo 4 referências):
-   - Veja as peças antigas e aprovadas do cliente na pasta dele e o guia da marca.
-   - Veja trabalhos já aprovados pela HAIZEN, a régua de qualidade: `{aprovados}` (as pastas mais recentes primeiro).
-   - Busque na web 2 a 3 referências do nicho e do formato (WebSearch: "anúncio <nicho> instagram design", Behance, Pinterest,
-     Biblioteca de Anúncios da Meta). Para VER uma referência, baixe a imagem com python para `fontes/referencias/` e abra com Read.
-2. Conceito em 3 linhas no topo do HTML (comentário): a ideia, a hierarquia e o porquê. Nada de documento.
-3. Execução:
-   - Uma mensagem principal por peça; título com no máximo ~7 palavras, grande e legível no celular.
-   - Hierarquia clara: título > apoio > CTA. Máximo 2 famílias de fonte (Google Fonts) e 3 pesos.
-   - Grade e margens generosas (6% a 8% da largura); alinhamentos consistentes; respiro.
-   - A foto/produto real do cliente protagonista; recorte, sobreposição ou moldura com intenção. Tratamento de cor coerente.
-   - Contraste forte (texto sobre foto: sombra suave, véu ou faixa); nada de texto pequeno sobre área movimentada.
-   - Paleta da marca com uma cor de destaque para o CTA. Logo presente e discreto.
-   - Evite cara de template: gradientes genéricos, excesso de elementos, emojis, ícones de banco, tudo centralizado sem motivo.
-   - Stories/reels: nada importante nos 250 px de cima nem nos 350 px de baixo.
-   - Quando fizer sentido, 2 variações de abordagem (ex.: foto x tipografia) em vez de 2 cópias iguais.
-4. Autocrítica antes de entregar: abra cada PNG e dê nota de 1 a 5 em impacto em 1 segundo, legibilidade no celular,
-   hierarquia, acabamento e fidelidade à marca. Abaixo de 4 em qualquer item: corrija e exporte de novo (no máximo 2 rodadas)."""
+### 1. Pesquisa visual (sempre, antes de desenhar)
+- `referencias("<nicho> <formato> <estilo>")` — ex.: "anuncio clinica estetica premium", "carrossel branding minimalista",
+  "reels pacote viagem" com `video=true`. Faça 1 ou 2 buscas com termos diferentes (um do nicho, um de estilo).
+- Abra as capturas com Read. Escolha 3 a 5 referências fortes; se quiser ver uma em alta, `baixar_imagens`.
+- Veja também as peças aprovadas do cliente e da HAIZEN: `{aprovados}` (régua de qualidade).
+- `prancha(...)` com as escolhidas → `fontes/referencias/prancha.jpg` e, em `fontes/direcao.md` (curto, 6–10 linhas):
+  o conceito da peça e, para cada referência, O QUE pegar dela (grade, tipografia, tratamento de foto, cor, movimento).
+  Inspire-se na linguagem; NUNCA copie layout, texto ou marca de terceiros.
+
+### 2. Base técnica
+- `kit_de_design()`: use o CSS do kit (escala tipográfica forte, texturas, selos, CTA, zonas seguras) e parta do modelo
+  de layout mais próximo do conceito — e então transforme com a marca do cliente. Cada série com cara própria.
+- Fotos do cliente: `tratar_foto` com o MESMO estilo em toda a série; produto/pessoa em destaque → `recortar` e compor
+  com sombra real (classe .produto + .sombra-chao), tipografia atrás/na frente para profundidade.
+- Fontes: Google Fonts com personalidade e coerentes com a marca (ex.: Inter Tight, Space Grotesk, Sora, Manrope,
+  Fraunces, Instrument Serif, DM Serif Display). Máx. 2 famílias.
+
+### 3. Princípios de design moderno (aplique, não cite)
+- Hierarquia brutal: 1 elemento dominante (foto, número ou título gigante), o resto subordinado. Título 2,5–4x o texto.
+- Tipografia como imagem: tamanhos grandes, entrelinha apertada (0,9–1,0), tracking negativo em títulos, quebras de
+  linha intencionais, uma palavra-chave destacada (cor, itálico, marca-texto).
+- Grade e respiro: margens 7–8%, alinhamentos fortes à esquerda ou assimétricos com intenção; nada "tudo centralizado".
+- Profundidade e textura: camadas (foto/produto/tipo), sombras realistas, granulado leve, gradientes ricos e discretos.
+- Cor: paleta da marca em 60/30/10; uma única cor de ação; contraste AA no texto.
+- Sem clichês: nada de banco de imagem genérico, ícones de stock, emoji como elemento gráfico, sombra preta dura,
+  contorno em texto pequeno, 5 elementos competindo.
+- Stories/reels: nada importante nos 250 px de cima nem nos 350 px de baixo.
+
+### 4. Exploração e escolha
+- Peça principal: faça 2 direções diferentes de verdade (ex.: tipográfica x foto protagonista), exporte as duas,
+  `prancha` lado a lado junto da prancha de referências e escolha a mais forte (ou combine). Depois desdobre a série.
+
+### 5. Vídeo (motion design)
+- Pesquisa com `referencias(..., video=true)`; roteiro em cenas com tempo (gancho 0–1,5 s; algo muda a cada 1,5–2 s).
+- Use `fontes/kit/motion.js` (M.palavras, M.mascara, M.kenburns, M.contador, M.destaque, M.trocar) ou GSAP com
+  `window.timeline`; modelo `08-reels-kinetic.html`. Easing de entrada rápida e assentamento suave; nada linear em texto.
+- Foto/clipe real do cliente em tela cheia com Ken Burns; tipografia grande; legenda com `legendar` quando houver fala.
+- Confira SEMPRE com `folha_de_contato`: ritmo, legibilidade, cortes e zonas seguras.
+
+### 6. Autocrítica antes de entregar
+Abra as finais e compare com a prancha de referências. Nota 1–10 em: impacto em 1 s, hierarquia, tipografia,
+acabamento, fidelidade à marca, "parece anúncio de marca grande?". Qualquer item abaixo de 8: refaça (até 2 rodadas).
+Um diretor de arte vai revisar depois de você com essa mesma régua."""
 
 
 def pasta_aprovados() -> Path | None:
@@ -467,6 +493,10 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "- `legendar(video, saida, palavras_por_vez, cor_destaque)`: legenda queimada palavra a palavra a partir da fala.",
         "- `video(saida, entradas, largura, altura, zoom, musica, max_clipe)`: junta imagens e clipes num vídeo.",
         "- `quadros(video, segundos)`: extrai quadros para você abrir e conferir.",
+        "- Direção de arte: `referencias(tema, video)` (capturas da Biblioteca de Anúncios da Meta, Behance, Dribbble, "
+        "Pinterest), `ver_site(url)`, `baixar_imagens(urls)`, `prancha(imagens)` (moodboard/comparação), "
+        "`kit_de_design()` (CSS + motion.js + 8 modelos de layout), `recortar(imagem, saida)` (tira o fundo), "
+        "`tratar_foto(imagem, saida, estilo)`, `folha_de_contato(video)` (12 quadros numa imagem).",
         "- `ffmpeg(argumentos)`: o ffmpeg direto (último argumento = arquivo de saída nesta pasta).",
         "- `python(script, argumentos)`: roda um script .py que você gravou em `fontes/` (planilhas, ler .docx/.pdf).",
         "- Se algo falhar: `verificar()`. Caminhos relativos são desta pasta.",
@@ -486,7 +516,7 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "- Não existe gerador de imagens por IA aqui: não invente fotos. Se faltar uma foto ou um dado, use o que existe e liste em "
         "Pendências.",
         "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento.",
-        "- Economize: não repita leituras, não gere versões que ninguém pediu, não escreva textos longos de explicação.",
+        "- Economize: não repita leituras, não gere versões que ninguém pediu (as 2 direções do Padrão de criação fazem parte do processo e ficam em `fontes/`), não escreva textos longos de explicação.",
         f"- Scripts auxiliares que você escrever (python para gerar planilhas, ler .docx etc.) ficam em `fontes/` desta pasta. "
         f"NUNCA grave nada na pasta do Jarvis (`{Path(__file__).resolve().parents[1].as_posix()}`) nem em outro lugar fora "
         "desta pasta.",
@@ -548,13 +578,47 @@ def _quadros_para_qa(video: Path, destino: Path) -> list[Path]:
     return feitos
 
 
+VISUAL = Path(__file__).resolve().parent / "producao" / "visual.py"
+
+
+def _visual(*args: str) -> bool:
+    try:
+        r = subprocess.run([sys.executable, str(VISUAL), *args], capture_output=True, stdin=subprocess.DEVNULL,
+                           timeout=300)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def arquivos_para_qa(pasta: Path) -> list[Path]:
     if not pasta.is_dir():
         return []
     imgs = sorted(f for f in pasta.iterdir() if f.is_file() and f.suffix.lower() in _QA_EXT_IMG)[:8]
     for v in sorted(pasta.glob("*.mp4"))[:2]:
-        imgs += _quadros_para_qa(v, pasta / "fontes" / "quadros-qa")
+        folha = pasta / "fontes" / "quadros-qa" / f"{v.stem}-contato.jpg"
+        folha.parent.mkdir(parents=True, exist_ok=True)
+        if _visual("contato", str(v), str(folha), "--quadros", "12") and folha.is_file():
+            imgs.append(folha)                       # o vídeo inteiro numa imagem: ritmo e cortes
+        else:
+            imgs += _quadros_para_qa(v, pasta / "fontes" / "quadros-qa")
     return imgs
+
+
+def referencias_para_qa(pasta: Path) -> Path | None:
+    """A prancha de referências do agente (ou uma montada agora), para comparar o nível."""
+    refs = pasta / "fontes" / "referencias"
+    if not refs.is_dir():
+        return None
+    pronta = refs / "prancha.jpg"
+    if pronta.is_file():
+        return pronta
+    imgs = sorted((f for f in refs.iterdir() if f.suffix.lower() in _QA_EXT_IMG and f.is_file()),
+                  key=lambda f: f.stat().st_mtime)[-6:]
+    if not imgs:
+        return None
+    alvo = pasta / "fontes" / "quadros-qa" / "referencias.jpg"
+    alvo.parent.mkdir(parents=True, exist_ok=True)
+    return alvo if _visual("prancha", str(alvo), *map(str, imgs), "--colunas", "3") and alvo.is_file() else None
 
 
 def _json_do_texto(texto: str) -> dict:
@@ -577,15 +641,25 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
         return r
     checagem = conhecimento(t["agente"]).split("## Checagem final")[-1] if "## Checagem final" in \
         conhecimento(t["agente"]) else ""
+    refs = referencias_para_qa(pasta)
+    direcao = pasta / "fontes" / "direcao.md"
+    direcao_txt = direcao.read_text(encoding="utf-8", errors="replace")[:1500] if direcao.is_file() else ""
     prompt = (
-        "Você é o diretor de arte sênior da agência HAIZEN revisando peças ANTES de irem ao dono. Abra cada arquivo "
-        "abaixo com Read e avalie com rigor de agência premiada: impacto em 1 segundo, legibilidade no celular, "
-        "hierarquia, acabamento (alinhamento, respiro, contraste, cortes), fidelidade à marca, erros de português, "
-        "texto cortado, zonas seguras, promessas inventadas.\n"
-        f"{checagem.strip()}\n\nPedido original:\n{t['pedido'][:2500]}\n\nArquivos:\n"
+        "Você é o diretor de criação de uma agência premiada revisando peças ANTES de irem ao dono da HAIZEN. Abra cada "
+        "arquivo abaixo com Read e seja exigente como num portfólio: impacto em 1 segundo, hierarquia, tipografia "
+        "(escala, peso, entrelinha, quebras), grade e respiro, tratamento de foto, profundidade, acabamento, "
+        "fidelidade à marca, cara de template ou de banco de imagem, erros de português, texto cortado, zonas "
+        "seguras, promessas inventadas. Em vídeo (folha de contato): ritmo, gancho nos primeiros quadros, "
+        "legibilidade de cada quadro, transições.\n"
+        + (f"\nREFERÊNCIAS que o agente pesquisou (a peça precisa estar NO NÍVEL delas): {refs.as_posix()}\n" if refs
+           else "\nO agente NÃO deixou referências em fontes/referencias: aponte isso como problema (faltou pesquisa "
+                "visual com a ferramenta referencias).\n")
+        + (f"\nDireção escolhida pelo agente:\n{direcao_txt}\n" if direcao_txt else "")
+        + f"{checagem.strip()}\n\nPedido original:\n{t['pedido'][:2500]}\n\nArquivos:\n"
         + "\n".join(f"- {a.as_posix()}" for a in arquivos)
         + '\n\nResponda SÓ com JSON: {"nota": 1-10, "aprovado": true|false, "problemas": ["arquivo: problema → como '
-          'corrigir", ...]}. Aprove (nota ≥ 7) se estiver pronto para um cliente exigente; problemas só os que importam.')
+          'corrigir de forma concreta (tamanho, posição, fonte, cor, corte)", ...]}. Aprove só com nota ≥ 8: pronta '
+          'para um cliente exigente e no nível das referências. Problemas: só os que mudam o resultado, no máximo 8.')
     try:
         qa = rodar_claude(["-p", "Revise as peças descritas na entrada e responda só com o JSON pedido.",
                            "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools", "Read",
@@ -598,15 +672,16 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
     veredito = _json_do_texto(qa.get("result", ""))
     nota = veredito.get("nota")
     problemas = [str(p) for p in (veredito.get("problemas") or [])][:10]
-    aprovado = bool(veredito.get("aprovado")) or (isinstance(nota, (int, float)) and nota >= 7)
+    aprovado = (isinstance(nota, (int, float)) and nota >= 8) or (nota is None and bool(veredito.get("aprovado")))
     if not veredito or aprovado or not r.get("session_id"):
         r["result"] = (r.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10._" if nota else "")
         return r
     try:
         r2 = executar_producao(
-            "O diretor de arte da HAIZEN revisou suas peças e NÃO aprovou ainda (nota "
-            f"{nota}/10). Corrija tudo abaixo, exporte de novo por cima dos mesmos arquivos e responda só com o "
-            "relatório curto:\n" + "\n".join(f"- {p}" for p in problemas),
+            "O diretor de criação da HAIZEN revisou suas peças e NÃO aprovou ainda (nota "
+            f"{nota}/10; a régua é 8). Corrija tudo abaixo — se o problema for de conceito, refaça a peça, não remende —, "
+            "confira de novo (prancha com as referências / folha de contato), exporte por cima dos mesmos arquivos e "
+            "responda só com o relatório curto:\n" + "\n".join(f"- {p}" for p in problemas),
             pasta, [], modelo=modelo_agente, sessao=r["session_id"], referencia=f"{t['id']} correção da checagem")
         arrumar_entrega(pasta, t["agente"])
         r2["result"] = (r2.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10 na primeira versão; "
