@@ -79,6 +79,15 @@ PADRAO = {"ig_id": "", "page_id": "", "username": "", "dia": 0, "horario": "08:0
           "token_faltando": []}
 
 
+def _faltando(escopos: list) -> list:
+    """Permissões que faltam. pages_manage_posts só é preciso sem ads_management (as imagens podem
+    ser hospedadas pela biblioteca da conta de anúncios)."""
+    falta = [e for e in PERMISSOES if e not in escopos]
+    if "ads_management" in escopos and "pages_manage_posts" in falta:
+        falta.remove("pages_manage_posts")
+    return falta
+
+
 def _arq_config() -> Path:
     from core.data_paths import data_dir
     return Path(data_dir()) / "social.json"
@@ -142,7 +151,7 @@ def conectar(tk: str = "") -> dict:
             pass
     c["token_vence"] = info.get("vence_em", 0) if info else c.get("token_vence", 0)
     if info:
-        c["token_faltando"] = [e for e in PERMISSOES if e not in (info.get("escopos") or [])]
+        c["token_faltando"] = _faltando(info.get("escopos") or [])
     escolhida = next((x for x in contas if x["ig_id"] == c["ig_id"]), None) or \
         next((x for x in contas if "haizen" in (x["username"] + x["nome"]).lower()), None) or contas[0]
     c.update(ig_id=escolhida["ig_id"], page_id=escolhida["page_id"], username=escolhida["username"],
@@ -642,7 +651,7 @@ def conferir_token(forcar: bool = False) -> None:
     c["token_checado_em"] = time.time()
     if info:
         c["token_vence"] = info.get("vence_em", 0)
-        c["token_faltando"] = [e for e in PERMISSOES if e not in (info.get("escopos") or [])]
+        c["token_faltando"] = _faltando(info.get("escopos") or [])
     _gravar(c)
 
 

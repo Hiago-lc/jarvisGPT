@@ -279,6 +279,46 @@ def endereco_publico(page_id: str, arquivo: Path) -> str:
     return imagens[0]["source"]
 
 
+_CONTA_ANUNCIOS: dict = {}
+
+
+def _conta_de_anuncios() -> str:
+    """Uma conta de anúncios que o token enxerga (a da HAIZEN, se houver) para hospedar imagens."""
+    if "id" in _CONTA_ANUNCIOS:
+        return _CONTA_ANUNCIOS["id"]
+    from haizen.trafego import envio
+    r = _get("me/adaccounts", envio.token() or None, fields="id,name,account_status", limit=200)
+    contas = [c for c in r.get("data") or [] if int(c.get("account_status") or 0) == 1] or (r.get("data") or [])
+    escolhida = next((c for c in contas if "haizen" in (c.get("name") or "").lower()), None) or (contas[0] if contas else {})
+    _CONTA_ANUNCIOS["id"] = escolhida.get("id", "")
+    return _CONTA_ANUNCIOS["id"]
+
+
+def endereco_da_imagem(page_id: str, arquivo: Path) -> str:
+    """Endereço público da imagem para o Instagram baixar. Primeiro pela biblioteca de imagens da
+    conta de anúncios (só precisa de ads_management); se não der, por foto não publicada da Página
+    (precisa de pages_manage_posts)."""
+    jpg = _jpeg(arquivo)
+    erro = None
+    try:
+        conta = _conta_de_anuncios()
+        if conta:
+            from haizen.trafego import envio
+            url = envio.subir_imagem(conta, jpg).get("image_url")
+            if url:
+                return url
+    except Exception as e:  # noqa: BLE001
+        erro = e
+    try:
+        return endereco_publico(page_id, jpg)
+    except ErroInstagram as e:
+        if "pages_manage_posts" in str(e) or "not available" in str(e):
+            raise ErroInstagram("não consegui hospedar a imagem: o token precisa de ads_management (para usar a "
+                                "biblioteca da conta de anúncios) ou de pages_manage_posts"
+                                + (f" ({erro})" if erro else "")) from None
+        raise
+
+
 def _esperar(container: str, limite: int = 600) -> None:
     fim = time.time() + limite
     while time.time() < fim:
@@ -318,7 +358,7 @@ def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> di
         if video(f):
             cid = _video(ig_id, f, legenda)
         else:
-            cid = _post(f"{ig_id}/media", image_url=endereco_publico(page_id, f), caption=legenda)["id"]
+            cid = _post(f"{ig_id}/media", image_url=endereco_da_imagem(page_id, f), caption=legenda)["id"]
             _esperar(cid)
     else:
         filhos = []
@@ -326,7 +366,7 @@ def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> di
             if video(f):
                 filhos.append(_video(ig_id, f, "", carrossel=True))
             else:
-                filhos.append(_post(f"{ig_id}/media", image_url=endereco_publico(page_id, f),
+                filhos.append(_post(f"{ig_id}/media", image_url=endereco_da_imagem(page_id, f),
                                     is_carousel_item="true")["id"])
         for fid in filhos:
             _esperar(fid)
