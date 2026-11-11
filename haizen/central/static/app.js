@@ -1592,11 +1592,7 @@ function configTrafego(cfg, recarregar, envio) {
         ${campo({ nome: "meta_token", rotulo: "Token do Meta Ads para subir imagens e vídeos (vazio = manter)", tipo: "password", largo: true,
           ajuda: envio?.pronto ? "Envio de arquivos pronto." : (envio?.aviso || "") })}
       </div>
-      <details class="traf-detalhes"><summary>Como gerar o token (uma vez, não vence)</summary><ol>
-        <li>No <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Gerenciador de Negócios → Usuários do sistema</a>, crie um usuário do sistema (Administrador).</li>
-        <li>Em <strong>Atribuir ativos</strong>, dê a ele as contas de anúncios dos clientes (controle total) e as Páginas.</li>
-        <li>Clique em <strong>Gerar novo token</strong>, escolha o seu app, validade <strong>Nunca</strong> e marque <code>ads_management</code>, <code>ads_read</code>, <code>business_management</code> e <code>pages_read_engagement</code>.</li>
-        <li>Copie e cole acima. Fica criptografado só neste computador.</li></ol></details>
+      <details class="traf-detalhes"><summary>Como gerar o token (uma vez, não vence, serve também para a aba Social)</summary>${META_PASSOS_TOKEN}</details>
       <p class="sub">O resumo vai só para essa conversa. O Jarvis nunca manda nada para clientes sem você confirmar.</p>`,
     acoes: [{ texto: "Cancelar", acao: () => {} },
       { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
@@ -2252,13 +2248,14 @@ function configSocial(dados, recarregar) {
   });
 }
 
-const SOC_PASSOS_TOKEN = `<ol><li>O Instagram da HAIZEN precisa ser <strong>conta profissional</strong> ligada à <strong>Página do Facebook</strong> da HAIZEN.</li>
-  <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
-  <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
-  <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo (o de baixo).</li>
-  <li>Se alguma permissão (como <code>instagram_content_publish</code>) não aparece na lista: no <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">painel do app</a>, em <strong>Casos de uso</strong>, adicione/personalize o de Instagram ("Gerenciar mensagens e conteúdo no Instagram") e inclua a permissão. Com o app em modo de desenvolvimento ela já vale para você, que é administrador.</li>
-  <li>Antes de copiar, confira na caixa de permissões do Explorador que <code>instagram_content_publish</code> e <code>pages_manage_posts</code> estão lá.</li>
+const META_PERMS = `<code>ads_management</code>, <code>ads_read</code>, <code>business_management</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>`;
+const META_PASSOS_TOKEN = `<ol><li>Primeiro, no <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">painel do app</a> → <strong>Casos de uso</strong>, confira que estão adicionados "Gerenciar tudo na sua Página", "Gerenciar mensagens e conteúdo no Instagram" e "Criar e gerenciar anúncios". Em cada um, clique em <strong>Personalizar</strong> e adicione as permissões que faltarem (é isso que causa o erro "permission(s) … are not available").</li>
+  <li>No <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Gerenciador de Negócios → Usuários do sistema</a>, crie um usuário do sistema <strong>Administrador</strong> (ou use o que já existe).</li>
+  <li>Em <strong>Atribuir ativos</strong>, dê a ele a Página e o Instagram da HAIZEN e as contas de anúncios dos clientes, todos com <strong>controle total</strong>.</li>
+  <li>Clique em <strong>Gerar novo token</strong>, escolha o app do Jarvis, validade <strong>Nunca</strong> e marque: ${META_PERMS}.</li>
+  <li>Cole aqui. O mesmo token passa a valer para a aba Social e para o Tráfego, criptografado só neste computador. Ele não vence: só para de valer se você apagar o usuário do sistema ou tirar o acesso dele.</li>
   <li>O token certo começa com <code>EAA</code> e é bem comprido. Não use o "Token do cliente" nem a "Chave secreta" das configurações do app.</li></ol>`;
+const SOC_PASSOS_TOKEN = `<p class="sub">O Instagram da HAIZEN precisa ser conta profissional ligada à Página do Facebook da HAIZEN.</p>${META_PASSOS_TOKEN}`;
 
 function trocarTokenSocial(recarregar) {
   dialogo({
@@ -2283,7 +2280,7 @@ ROTAS.social = async () => {
     if (!document.body.contains(corpo)) { clearInterval(timer); return; }
     dados = await api("GET", "social");
     const { config: c, estado, analise: an, itens, raiox } = dados;
-    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}${c.token_vence ? ` · token vale até ${new Date(c.token_vence * 1000).toLocaleDateString("pt-BR")}` : ""}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
+    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}${c.token_vence ? ` · token vale até ${new Date(c.token_vence * 1000).toLocaleDateString("pt-BR")}` : " · token não vence"}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
     const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc(estado.fazendo[0].toUpperCase() + estado.fazendo.slice(1))}… leva alguns minutos.</div>` : "";
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
     const vence = c.token_vence ? new Date(c.token_vence * 1000) : null;

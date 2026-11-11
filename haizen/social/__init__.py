@@ -132,6 +132,14 @@ def conectar(tk: str = "") -> dict:
     ESTADO["erro"] = ""
     c = config()
     info = instagram.info_do_token()
+    if tk and info and "ads_management" in (info.get("escopos") or []):
+        try:                                 # token único: o mesmo token passa a servir para o Tráfego
+            from haizen.trafego import envio
+            envio.salvar_token(tk)
+            from haizen import trafego
+            trafego._ENVIO_CACHE.clear()
+        except Exception:  # noqa: BLE001
+            pass
     c["token_vence"] = info.get("vence_em", 0) if info else c.get("token_vence", 0)
     if info:
         c["token_faltando"] = [e for e in PERMISSOES if e not in (info.get("escopos") or [])]

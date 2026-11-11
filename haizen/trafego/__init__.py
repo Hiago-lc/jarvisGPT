@@ -70,11 +70,24 @@ def config() -> dict:
         return dict(PADRAO)
 
 
+def _compartilhar_com_social(tk: str) -> None:
+    """Token único: se o token do Meta Ads também publica no Instagram, a aba Social passa a usá-lo."""
+    try:
+        from haizen import social
+        from haizen.social import instagram
+        escopos = (instagram.info_do_token(tk) or {}).get("escopos") or []
+        if "instagram_content_publish" in escopos and "pages_manage_posts" in escopos:
+            social.conectar(tk)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def salvar_config(mudancas: dict) -> dict:
     if str(mudancas.get("meta_token") or "").strip():
         from haizen.trafego import envio
         envio.salvar_token(str(mudancas["meta_token"]))
         _ENVIO_CACHE.clear()
+        _compartilhar_com_social(str(mudancas["meta_token"]).strip())
     c = config()
     for k in ("horario", "whatsapp_ativo", "whatsapp_contato"):
         if k in mudancas:
