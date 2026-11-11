@@ -180,3 +180,9 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - Google Ads: o Jarvis cria **campanha de pesquisa completa** (orçamento, lance, cidades, grupos, palavras-chave, anúncios responsivos, negativas) como proposta, com prévia do anúncio. Ao aprovar você escolhe se ela nasce ativa ou pausada (padrão: pausada).
 - Google Ads também cria **YouTube / Demand Gen** (anúncio em vídeo e/ou imagem no YouTube, Discover, Gmail e Display) e **Display** (anúncio responsivo). Vídeo anexado no chat é enviado ao YouTube como **não listado**; as imagens são cortadas sozinhas em 1,91:1, 1:1 e 4:5 e o logo vira 1:1. Criar campanha de vídeo/imagem roda em segundo plano e avisa no fim. Campanhas do tipo "Vídeo" clássico não podem ser criadas pela API do Google: o caminho é o Demand Gen.
 - Para enviar vídeo ao YouTube: ative a **YouTube Data API v3** no projeto do Google Cloud e reconecte o Google Ads (Configurar → Desconectar → Conectar), para liberar a permissão do YouTube. A conta Google precisa ter um canal.
+
+## Tráfego: subir peças e editar propostas
+
+- O conector da Meta não envia arquivo do PC. O Jarvis agora **envia as imagens e vídeos** para a conta de anúncios (Marketing API: /adimages e /advideos) antes de o gestor criar os anúncios, e passa o image_hash / video_id prontos. Precisa de um **token do Meta Ads com ads_management** (Tráfego → Configurar; o ideal é o de um *usuário do sistema* do Gerenciador de Negócios, que não vence). Sem ele, para imagem, tenta o endereço público pela Página da HAIZEN.
+- O que já subiu fica guardado na proposta: tentar de novo não reenvia.
+- No chat, ajustes numa proposta existente (texto, conjunto, peça nova, orçamento) **editam a proposta** (`trafego_editar` / `googleads_editar`) em vez de criar outra. A conversa do Jarvis agora guarda mais contexto antes de recomeçar.

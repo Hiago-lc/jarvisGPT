@@ -1581,7 +1581,7 @@ function metasConta(c, recarregar) {
   });
 }
 
-function configTrafego(cfg, recarregar) {
+function configTrafego(cfg, recarregar, envio) {
   dialogo({
     titulo: "Tráfego: configurações",
     corpo: `<div class="campos">
@@ -1589,7 +1589,14 @@ function configTrafego(cfg, recarregar) {
         <div></div>
         ${campo({ nome: "whatsapp_ativo", rotulo: "Mandar o resumo no meu WhatsApp depois da análise", tipo: "checkbox", valor: cfg.whatsapp_ativo, largo: true })}
         ${campo({ nome: "whatsapp_contato", rotulo: "Para qual conversa (o seu número ou a conversa \"Você\", igual ao WhatsApp)", valor: cfg.whatsapp_contato, largo: true })}
+        ${campo({ nome: "meta_token", rotulo: "Token do Meta Ads para subir imagens e vídeos (vazio = manter)", tipo: "password", largo: true,
+          ajuda: envio?.pronto ? "Envio de arquivos pronto." : (envio?.aviso || "") })}
       </div>
+      <details class="traf-detalhes"><summary>Como gerar o token (uma vez, não vence)</summary><ol>
+        <li>No <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Gerenciador de Negócios → Usuários do sistema</a>, crie um usuário do sistema (Administrador).</li>
+        <li>Em <strong>Atribuir ativos</strong>, dê a ele as contas de anúncios dos clientes (controle total) e as Páginas.</li>
+        <li>Clique em <strong>Gerar novo token</strong>, escolha o seu app, validade <strong>Nunca</strong> e marque <code>ads_management</code>, <code>ads_read</code>, <code>business_management</code> e <code>pages_read_engagement</code>.</li>
+        <li>Copie e cole acima. Fica criptografado só neste computador.</li></ol></details>
       <p class="sub">O resumo vai só para essa conversa. O Jarvis nunca manda nada para clientes sem você confirmar.</p>`,
     acoes: [{ texto: "Cancelar", acao: () => {} },
       { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
@@ -1625,7 +1632,9 @@ ROTAS.trafego = async () => {
     } else {
       const ordem = { critico: 0, atencao: 1, erro: 2, bem: 3 };
       const lista = [...contas].sort((a, b) => (b.ativo - a.ativo) || ((ordem[analises[a.id]?.situacao] ?? 4) - (ordem[analises[b.id]?.situacao] ?? 4)));
-      corpo.innerHTML = `${fazendo}${erro}${aviso}
+      const precisaEnvio = !dados.envio?.pronto && acoes.some((a) => a.tipo === "subir_criativo" || (a.detalhes?.pecas || []).length);
+      const avisoEnvio = precisaEnvio ? `<div class="traf-faixa erro">Para o Jarvis subir as imagens e vídeos no Meta, cadastre o token do Meta Ads. ${esc(dados.envio?.aviso || "")} <button class="botao" data-traf-token>Configurar</button></div>` : "";
+      corpo.innerHTML = `${fazendo}${erro}${aviso}${avisoEnvio}
         <section class="traf-secao"><h2>Esperando sua aprovação ${acoes.length ? `<span class="selo">${acoes.length}</span>` : ""}</h2>
           ${acoes.length ? `<div class="traf-acoes">${acoes.map(cartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma otimização pendente.</p>'}</section>
         <section class="traf-secao"><div class="bloco-topo"><h2>Contas</h2><button class="botao" data-conectar ${estado.fazendo ? "disabled" : ""}>Atualizar lista de contas</button></div>
@@ -1664,7 +1673,8 @@ ROTAS.trafego = async () => {
   $("#traf-analisar").addEventListener("click", async () => {
     try { await api("POST", "trafego/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); }
   });
-  $("#traf-config").addEventListener("click", () => dados && configTrafego(dados.config, desenhar));
+  $("#traf-config").addEventListener("click", () => dados && configTrafego(dados.config, desenhar, dados.envio));
+  corpo.addEventListener("click", (e) => { if (e.target.closest("[data-traf-token]") && dados) configTrafego(dados.config, desenhar, dados.envio); });
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open) return;
@@ -1900,9 +1910,9 @@ ROTAS.ecommerce = async () => {
 // ── Pedir ao Jarvis em cada ferramenta ─────────────────────────────────────
 const CHAT_TELAS = {
   googleads: { nome: "Google Ads", dica: "Ex.: “Cria uma campanha de pesquisa para a Loja X em São Paulo, R$ 50/dia, para a página…”",
-    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Para criar campanha (pesquisa, YouTube/Demand Gen com vídeo ou imagem, Display) ou mudar algo, monte a proposta com googleads_propor; confira vídeos/imagens anexados com midia_info; pergunte o que faltar (conta, link da página, verba, cidades, oferta, logo). NÃO aprove: eu aprovo na tela Google Ads." },
+    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Ajuste em proposta existente: googleads_editar (não crie outra). Para criar campanha (pesquisa, YouTube/Demand Gen com vídeo ou imagem, Display) ou mudar algo, monte a proposta com googleads_propor; confira vídeos/imagens anexados com midia_info; pergunte o que faltar (conta, link da página, verba, cidades, oferta, logo). NÃO aprove: eu aprovo na tela Google Ads." },
   trafego: { nome: "Tráfego (Meta Ads)", dica: "Ex.: “Monta uma campanha de mensagens para a Clínica X com os criativos aprovados”",
-    contexto: "Meta Ads dos clientes. Use trafego_painel, trafego_relatorio, trafego_analisar, trafego_propor (inclusive estrutura de campanha nova) e trafego_subir_criativos. NÃO aprove: eu aprovo na tela Tráfego." },
+    contexto: "Meta Ads dos clientes. Use trafego_painel, trafego_relatorio, trafego_analisar, trafego_propor (inclusive estrutura de campanha nova) e trafego_subir_criativos. Se eu pedir ajuste numa proposta que já existe, use trafego_editar nela (não crie outra). Peças anexadas: passe o id do [anexo:ID]; o Jarvis envia as imagens/vídeos para a conta na hora de aplicar. NÃO aprove: eu aprovo na tela Tráfego." },
   ecommerce: { nome: "E-commerce", dica: "Ex.: “Cupom BLACK15 de 15% na loja X até domingo”",
     contexto: "Lojas Shopify/Tray dos clientes. Use ecommerce_painel, ecommerce_produtos e ecommerce_propor. NÃO aprove: eu aprovo na tela E-commerce." },
   social: { nome: "Social", dica: "Ex.: “Cria um carrossel sobre os 3 erros de marca para quinta”",

@@ -801,6 +801,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return trafego.aprovar(aid, ativar=bool(c.get("ativar")), nota=str(c.get("nota") or "")[:1500])
             if partes[2] == "rejeitar":
                 return trafego.rejeitar(aid, str(self._corpo().get("motivo") or ""))
+            if partes[2] == "editar" and metodo == "POST":
+                return trafego.editar(aid, self._corpo())
         if rota == "acoes" and len(partes) == 1 and metodo == "POST":
             c = self._corpo()
             return trafego.propor(str(c.get("conta_id") or ""), str(c.get("tipo") or "manual"),

@@ -350,6 +350,17 @@ def trafego_aprovar(acao_id: int, ativar: bool = False, nota: str = "") -> dict:
 
 
 @mcp.tool()
+def trafego_editar(acao_id: int, campos: dict) -> dict:
+    """MUDA uma proposta de tráfego que ainda não foi aplicada, em vez de criar outra. Use sempre que o
+    usuário pedir ajuste numa proposta existente ("troca o texto", "usa o conjunto X", "põe esta peça",
+    "muda o orçamento para R$ 80"). campos: alvo_id, alvo_nome, nivel, de, para, motivo, impacto, nota (o que
+    mudou) e detalhes (mesclado; em subir_criativo, "pecas" substitui a lista: [{arquivo (caminho ou id do
+    anexo [anexo:ID]), texto_principal, titulo, descricao, cta}], e também page_id, instagram_id, destino, cta).
+    A proposta continua esperando a aprovação do usuário."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/editar", dict(campos or {}))
+
+
+@mcp.tool()
 def trafego_rejeitar(acao_id: int, motivo: str = "") -> dict:
     """Rejeita uma otimização proposta."""
     return _api("POST", f"trafego/acoes/{int(acao_id)}/rejeitar", {"motivo": motivo})
@@ -475,6 +486,13 @@ def googleads_aprovar(acao_id: int) -> dict:
     """APLICA no Google Ads uma proposta. SÓ depois de mostrar o que muda (conta, campanha, valores) e o usuário
     confirmar explicitamente nesta conversa."""
     return _api("POST", f"googleads/acoes/{int(acao_id)}/aprovar", {})
+
+
+@mcp.tool()
+def googleads_editar(acao_id: int, detalhes: dict) -> dict:
+    """MUDA uma proposta do Google Ads ainda não aplicada (ex.: verba, títulos, vídeo, cidades), em vez de
+    criar outra. Mande os detalhes COMPLETOS já com a mudança (pegue os atuais em googleads_painel)."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/editar", {"detalhes": detalhes})
 
 
 @mcp.tool()
