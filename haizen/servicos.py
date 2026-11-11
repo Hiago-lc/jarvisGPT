@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from . import agentes, executor, store
 
@@ -363,3 +364,46 @@ def resumo() -> str:
     if erros:
         partes.append("Com erro: " + "; ".join(descrever(t) for t in erros))
     return " ".join(partes)
+
+
+ABERTAS = ("na_fila", "esperando", "aguardando_resposta", "erro")
+
+
+def complementar_projeto(pid: int, informacao: str = "", anexos: list | None = None, marca: str = "") -> dict:
+    """Acrescenta ao projeto já aberto o que o usuário lembrou depois (informação, arquivos, a pasta
+    do cliente). Vale para as etapas que ainda não foram feitas; as entregues não mudam (para elas,
+    pedir nova versão)."""
+    proj = store.projeto(pid)
+    if proj is None:
+        raise KeyError("projeto não encontrado")
+    informacao = (informacao or "").strip()
+    if not (informacao or anexos or marca):
+        raise ValueError("diga o que acrescentar ao projeto")
+    nota, ids = _com_material(f"## Complemento do usuário ({time.strftime('%d/%m %H:%M')})\n{informacao}".rstrip(),
+                              anexos)
+    pasta = ""
+    if marca:
+        pasta = store.pasta_da_marca(proj.get("cliente_id"), marca, marca)
+        if not pasta:
+            raise ValueError(f"não achei a pasta do cliente \"{marca}\"")
+        nota += f"\nPasta do cliente para usar: {pasta}"
+    etapas = store.trabalhos_do_projeto(pid)
+    mudadas, feitas = [], []
+    with store.conexao() as con:
+        todos = json.loads(proj.get("anexos") or "[]")
+        todos += [i for i in ids if i not in todos]
+        con.execute("UPDATE projetos SET pedido=?, anexos=?, atualizado_em=?" + (", marca_pasta=?" if pasta else "")
+                    + " WHERE id=?", (proj["pedido"] + "\n\n" + nota, json.dumps(todos), time.time(),
+                                      *([pasta] if pasta else []), int(pid)))
+        for t in etapas:
+            if t["status"] not in ABERTAS:
+                feitas.append(t["titulo"] or t["agente"])
+                continue
+            an = json.loads(t.get("anexos") or "[]")
+            an += [i for i in ids if i not in an]
+            con.execute("UPDATE trabalhos SET pedido=?, anexos=?, atualizado_em=? WHERE id=?",
+                        (t["pedido"] + "\n\n" + nota, json.dumps(an), time.time(), t["id"]))
+            mudadas.append(t["titulo"] or t["agente"])
+    return {"projeto": pid, "etapas_atualizadas": mudadas, "etapas_ja_feitas_ou_em_andamento": feitas,
+            "pasta": pasta, "anexos": len(ids),
+            "dica": "Para mudar uma etapa já entregue, peça nova versão com trabalho_refazer." if feitas else ""}

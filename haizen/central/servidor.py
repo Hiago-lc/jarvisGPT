@@ -449,6 +449,12 @@ class _Handler(BaseHTTPRequestHandler):
                 return _projeto(proj)
             if metodo == "DELETE":
                 return store.apagar_projeto(pid)
+        if len(partes) == 2 and partes[1] == "complementar" and metodo == "POST":
+            c = self._corpo()
+            r = servicos.complementar_projeto(int(partes[0]), c.get("informacao", ""), c.get("anexos") or [],
+                                              c.get("marca", ""))
+            worker.iniciar()
+            return r
         return _NAO_ACHOU
 
     def _whatsapp(self, metodo, partes, q):
@@ -898,6 +904,8 @@ class _Handler(BaseHTTPRequestHandler):
         rota = partes[0] if partes else ""
         if rota == "estado" and metodo == "GET":
             return {**cerebro.estado(), "confirmacao": cerebro.confirmacao_pendente()}
+        if rota == "buscar" and metodo == "GET":
+            return cerebro.buscar_mensagens(q.get("texto", ""), int(q.get("limite") or 6), int(q.get("dias") or 30))
         if rota == "historico" and metodo == "GET":
             return cerebro.historico(int(q.get("limite") or 40))
         if rota == "historico" and metodo == "DELETE":

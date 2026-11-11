@@ -477,6 +477,26 @@ def historico(limite: int = 40) -> list[dict]:
              "criado_em": r["criado_em"], "origem": r["origem"]} for r in reversed(rows)]
 
 
+def buscar_mensagens(texto: str = "", limite: int = 6, dias: int = 30) -> list[dict]:
+    """Mensagens antigas da conversa, inteiras. Sem texto: as últimas. Com texto: as que contêm
+    as palavras (todas), das mais novas para as mais antigas."""
+    import time as _t
+    desde = _t.time() - max(1, dias) * 86400
+    palavras = [p for p in re.split(r"\s+", (texto or "").strip()) if len(p) > 1][:6]
+    sql = "SELECT id, papel, texto, criado_em FROM jarvis_mensagens WHERE criado_em >= ?"
+    args: list = [desde]
+    for p in palavras:
+        sql += " AND texto LIKE ?"
+        args.append(f"%{p}%")
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(max(1, min(int(limite), 20)))
+    with store.conexao() as con:
+        rows = con.execute(sql, args).fetchall()
+    return [{"id": r["id"], "papel": "usuario" if r["papel"] == "usuario" else "jarvis",
+             "quando": _t.strftime("%d/%m %H:%M", _t.localtime(r["criado_em"])), "texto": r["texto"][:12000]}
+            for r in reversed(rows)]
+
+
 def limpar_historico() -> None:
     with store.conexao() as con:
         con.execute("DELETE FROM jarvis_mensagens")
