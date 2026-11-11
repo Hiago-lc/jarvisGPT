@@ -1945,7 +1945,37 @@ function chatDaTela(tela) {
     hidratarAnexos(lista);
     lista.scrollTop = lista.scrollHeight;
   };
-  const abrir = (sim) => { painel.hidden = !sim; $(".doca-botao", doca).setAttribute("aria-expanded", String(sim)); if (sim) { desenhar(); campoTexto.focus(); } };
+  // A conversa desta tela vem do servidor: sair da página (ou fechar a aba) não perde a resposta,
+  // o Jarvis continua trabalhando e a resposta aparece aqui quando você voltar.
+  const prefixo = `[Pedido feito na tela ${def.nome}.`;
+  let esperando = null;
+  const doServidor = async () => {
+    const hist = await api("GET", "jarvis/historico?limite=80").catch(() => null);
+    if (!Array.isArray(hist)) return false;
+    const daTela = [];
+    hist.forEach((m, i) => {
+      if (m.papel !== "usuario" || !String(m.texto || "").startsWith(prefixo)) return;
+      daTela.push({ papel: "usuario", texto: String(m.texto).split("\n").slice(1).join("\n") });
+      const prox = hist[i + 1];
+      if (prox && prox.papel !== "usuario") daTela.push({ papel: "jarvis", texto: prox.texto, acoes: prox.acoes });
+    });
+    if (!daTela.length) return false;
+    msgs = daTela.slice(-30); guardar();
+    return daTela[daTela.length - 1].papel === "usuario";
+  };
+  const acompanhar = async () => {
+    const semResposta = await doServidor();
+    const est = semResposta ? await api("GET", "jarvis/estado").catch(() => ({})) : {};
+    if (doca.isConnected && !JARVIS.ocupado) {
+      desenhar();
+      if (semResposta && est.pensando) {
+        lista.insertAdjacentHTML("beforeend", '<div class="msg ele pensando"><p>Ainda trabalhando no seu pedido…</p></div>');
+        lista.scrollTop = lista.scrollHeight;
+        clearTimeout(esperando); esperando = setTimeout(acompanhar, 5000);
+      }
+    }
+  };
+  const abrir = (sim) => { painel.hidden = !sim; $(".doca-botao", doca).setAttribute("aria-expanded", String(sim)); if (sim) { desenhar(); acompanhar(); campoTexto.focus(); } };
   $(".doca-botao", doca).addEventListener("click", () => abrir(painel.hidden));
   $(".doca-fechar", doca).addEventListener("click", () => abrir(false));
   $(".doca-clipe", doca).addEventListener("click", () => anexos.abrir());
@@ -1970,7 +2000,8 @@ function chatDaTela(tela) {
     } catch (err) {
       msgs.push({ papel: "jarvis", texto: `Não consegui: ${err.message}` });
     } finally {
-      JARVIS.ocupado = false; guardar(); desenhar();
+      JARVIS.ocupado = false; guardar();
+      if (doca.isConnected) desenhar();
     }
   });
 }

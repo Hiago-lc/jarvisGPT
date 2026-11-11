@@ -142,7 +142,8 @@ def estado() -> dict:
     from haizen.central import claude_cerebro
     if claude_cerebro.ativo():
         return {"modelo": "Claude", "onde": "Claude Code (sua assinatura)", "cerebro": "claude",
-                "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt"))}
+                "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt")),
+                "pensando": claude_cerebro._TRAVA.locked()}
     llm = get_provider_config(pipe.get("llm") or "openai_compat")
     base = llm.get("base_url", "")
     onde = ("modelo local" if "127.0.0.1" in base or "localhost" in base
