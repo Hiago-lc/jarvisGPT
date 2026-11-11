@@ -24,7 +24,7 @@ class UsoTests(unittest.TestCase):
         from haizen import executor
         cp = subprocess.CompletedProcess([], codigo, saida, "")
         with patch.object(executor, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             r = executor.rodar_claude(["-p"], "x", Path(self.dir.name) / "w", 10, **kw)
         return r, run
 
@@ -65,7 +65,7 @@ class UsoTests(unittest.TestCase):
         from haizen import executor as ex
         cp = subprocess.CompletedProcess([], 0, saida, "")
         with patch.object(ex, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             executor.executar_producao("p", Path(self.dir.name) / "w", [], modelo="opus", sessao="s1")
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
@@ -108,7 +108,7 @@ class ProducaoMcpTests(unittest.TestCase):
         from haizen import executor
         cp = subprocess.CompletedProcess([], 0, json.dumps({"result": "ok", "session_id": "s"}), "")
         with patch.object(executor, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             executor.executar_producao("p", self.pasta, [])
         cmd = run.call_args[0][0]
         cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
@@ -172,3 +172,37 @@ class RevisaoGeralTests(unittest.TestCase):
         with patch("haizen.worker.iniciar"), patch("haizen.executor.claude_disponivel", return_value="claude"):
             self.assertEqual(worker.retomar_apos_limite(), 1)
         self.assertEqual(store.trabalho(t["id"])["status"], "na_fila")
+
+
+class ContinuacaoTests(unittest.TestCase):
+    """Trabalho longo que passa do tempo continua a mesma conversa, sem começar do zero."""
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"JARVISGPT_DATA_DIR": self.dir.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_tempo_esgotado_guarda_a_conversa_e_continua(self):
+        from haizen import executor, store
+        t = store.criar_trabalho("video", "faz o vídeo", "claude", None)
+        chamadas = []
+
+        def falso(prompt, pasta, leitura, **kw):
+            chamadas.append(kw)
+            if len(chamadas) == 1:
+                raise executor.TempoEsgotado("passou")
+            return {"result": "pronto", "session_id": kw.get("sessao")}
+        with patch.object(executor, "executar_producao", side_effect=falso):
+            with self.assertRaises(executor.TempoEsgotado):
+                executor._producao_continuavel(store.trabalho(t["id"]), "p", Path(self.dir.name), [], "", "r", "")
+            sid = store.trabalho(t["id"])["retomar"]
+            self.assertEqual(chamadas[0]["nova_sessao"], sid)
+            store.atualizar(t["id"], interrupcoes=1)
+            r = executor._producao_continuavel(store.trabalho(t["id"]), "p", Path(self.dir.name), [], "", "r", "")
+        self.assertEqual(chamadas[1]["sessao"], sid)
+        self.assertEqual(r["result"], "pronto")
+        self.assertEqual(store.trabalho(t["id"])["retomar"], "")

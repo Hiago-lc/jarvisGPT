@@ -309,7 +309,7 @@ def tentar_de_novo(tid: int) -> dict:
     except KeyError:
         quem = t["executor"]
     executor._SEM_LOGIN["ate"] = 0.0                      # a pessoa pode ter acabado de fazer o /login
-    return store.atualizar(tid, status="na_fila", erro="", executor=quem)
+    return store.atualizar(tid, status="na_fila", erro="", executor=quem, interrupcoes=0)
 
 
 def aprovar(tid: int, observacao: str = "") -> dict:

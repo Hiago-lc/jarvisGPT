@@ -75,6 +75,21 @@ def _rodar() -> None:
                     with _lock:
                         _thread = None
                     return
+                if isinstance(e, executor.TempoEsgotado):
+                    atual = store.trabalho(t["id"]) or {}
+                    n = int(atual.get("interrupcoes") or 0) + 1
+                    if atual.get("retomar") and n <= executor.MAX_INTERRUPCOES:
+                        store.atualizar(t["id"], status="na_fila", interrupcoes=n,
+                                        observacao=f"Passou do tempo da rodada {n} vez(es); continua de onde parou.")
+                        _avisar(f"{t.get('titulo') or t['agente']} é longo: continua de onde parou (rodada {n + 1}).")
+                        continue
+                    store.atualizar(t["id"], status="erro", interrupcoes=n,
+                                    erro=(f"Passou do tempo {n} vezes seguidas. O que já foi feito está na pasta; "
+                                          f"'Tentar de novo' continua de onde parou. ({e})")[:500])
+                    _avisar(f"Trabalho {t['id']} ({t['agente']}) passou do tempo {n} vezes.")
+                    _notificar("Um trabalho travou", f"{t.get('titulo') or t['agente']}: passou do tempo {n} vezes",
+                               "erro", t)
+                    continue
                 store.atualizar(t["id"], status="erro", erro=f"{type(e).__name__}: {e}"[:500])
                 _avisar(f"Trabalho {t['id']} ({t['agente']}) falhou: {e}")
                 _notificar("Um trabalho travou", f"{t.get('titulo') or t['agente']}: {e}"[:200], "erro", t)

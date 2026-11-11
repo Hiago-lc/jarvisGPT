@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from . import agentes, store
@@ -174,6 +175,29 @@ def _ambiente_assinatura() -> dict:
 
 
 PRODUCAO_TIMEOUT = int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT", "2700"))     # 45 min
+# Vídeo baixa material, renderiza e mixa: precisa de mais tempo por rodada.
+TIMEOUT_POR_AGENTE = {"video": int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT_VIDEO", "7200")),   # 2 h
+                      "dev": int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT_DEV", "5400"))}       # 1h30
+MAX_INTERRUPCOES = int(os.environ.get("HAIZEN_MAX_INTERRUPCOES", "3"))
+
+
+class TempoEsgotado(RuntimeError):
+    """O Claude Code passou do tempo da rodada. O trabalho pode continuar da mesma conversa."""
+
+
+def _matar_arvore(proc: subprocess.Popen) -> None:
+    """Mata o Claude Code e o que ele abriu (ffmpeg, node, python): no Windows, matar só o
+    processo pai deixa os filhos segurando a saída e o Jarvis fica esperando para sempre."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            proc.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
 FERRAMENTAS = Path(__file__).resolve().parent / "producao" / "ferramentas.py"
 # O que o Claude Code pode usar ao produzir: ler/escrever arquivos (só nas
 # pastas liberadas com --add-dir e na pasta do trabalho) e rodar o Python do
@@ -203,6 +227,23 @@ def _config_mcp_producao(pasta: Path) -> Path:
     return arq
 
 
+def _processo(cmd: list[str], *, input: str, cwd: str, env: dict, timeout: int) -> subprocess.CompletedProcess:
+    """Como subprocess.run, mas no tempo esgotado mata a árvore inteira (ffmpeg, node, python que o
+    Claude Code abriu); senão os filhos seguram a saída e o Jarvis espera para sempre."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", cwd=cwd, env=env)
+    try:
+        out, err = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _matar_arvore(proc)
+        try:
+            proc.communicate(timeout=60)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def _python_console() -> str:
     """O Python do Jarvis em modo console (pythonw não mostra a saída)."""
     exe = Path(sys.executable)
@@ -226,20 +267,20 @@ def rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: d
                            "irm https://claude.ai/install.ps1 | iex")
     pasta.mkdir(parents=True, exist_ok=True)
     try:
-        proc = subprocess.run(
-            [exe, *args], input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            cwd=str(pasta), env=env or _ambiente_assinatura(), timeout=timeout)
+        proc = _processo([exe, *args], input=prompt, cwd=str(pasta), env=env or _ambiente_assinatura(),
+                         timeout=timeout)
     except subprocess.TimeoutExpired:
         uso.registrar({}, origem, referencia, erro=f"passou de {timeout // 60} min")
-        raise RuntimeError(f"o Claude Code passou de {timeout // 60} minutos e foi interrompido") from None
-    saida = (proc.stdout or "").strip()
+        raise TempoEsgotado(f"o Claude Code passou de {timeout // 60} minutos e foi interrompido") from None
+    stdout, stderr = proc.stdout, proc.stderr
+    saida = (stdout or "").strip()
     try:
         dados = json.loads(saida.splitlines()[-1]) if saida else {}
     except ValueError:
         dados = {}
     erro = ""
     if proc.returncode != 0 or dados.get("is_error"):
-        erro = (dados.get("result") or (proc.stderr or saida)[-400:] or str(proc.returncode)).strip()
+        erro = (dados.get("result") or (stderr or saida)[-400:] or str(proc.returncode)).strip()
     uso.registrar(dados, origem, referencia, erro=erro)
     if erro:
         raise RuntimeError(f"o Claude Code falhou: {erro}")
@@ -267,7 +308,7 @@ def executar_claude(prompt: str, pasta: Path, *, modelo: str = "", sessao: str =
 
 
 def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: str = "", sessao: str = "",
-                      referencia: str = "") -> dict:
+                      referencia: str = "", nova_sessao: str = "", timeout: int = 0) -> dict:
     """O agente produz os arquivos na `pasta` do trabalho, lendo o material das
     pastas em `leitura` (a do cliente, a do projeto). Devolve o resultado do
     Claude Code (relatório em "result", "session_id" para continuar)."""
@@ -277,11 +318,12 @@ def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: 
     args = ["-p", "Siga o CLAUDE.md desta pasta e faça a tarefa descrita na entrada. Grave os arquivos "
                   "nesta pasta. No fim, responda só com o relatório curto da entrega (ou com PERGUNTA:).",
             "--output-format", "json", "--permission-mode", "acceptEdits", *_modelo_args(modelo),
-            *_retomar_args(sessao), "--mcp-config", str(_config_mcp_producao(pasta))]
+            *_retomar_args(sessao), *(["--session-id", nova_sessao] if nova_sessao and not sessao else []),
+            "--mcp-config", str(_config_mcp_producao(pasta))]
     for d in [*leitura, RECEITAS]:
         args += ["--add-dir", str(d)]
     args += ["--allowedTools", ",".join(PERMISSOES)]
-    return rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
+    return rodar_claude(args, prompt, pasta, timeout or PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
 
 
 _PERGUNTA = re.compile(r"^\s*\**\s*PERGUNTA\s*:?\**\s*:?", re.I)
@@ -747,7 +789,7 @@ def executar(t: dict) -> Path:
                 leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados()) if p is not None]
                 leitura = list(dict.fromkeys(leitura))
                 modelo_ag = uso.modelo("agentes", agente.extras.get("modelo", ""))
-                r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo_ag)
+                r = _producao_continuavel(t, prompt, pasta, leitura, sessao, ref, modelo_ag)
                 arrumar_entrega(pasta, t["agente"])
                 if t["agente"] in VISUAIS and not pergunta_do_agente(r["result"]):
                     r = checar_qualidade(t, pasta, r, modelo_ag)
@@ -781,6 +823,56 @@ def executar(t: dict) -> Path:
     if t.get("resposta"):
         store.atualizar(t["id"], resposta="")
     return arq
+
+
+_CONTINUAR = ("Você foi interrompido no meio desta tarefa ({motivo}). Continue DE ONDE PAROU, na mesma pasta: "
+              "confira o que já está pronto (downloads, quadros, partes renderizadas, áudio) e NÃO refaça o que já "
+              "existe e está certo. Termine a entrega seguindo o CLAUDE.md. Se uma etapa pesada (render, download) "
+              "demorar, faça em partes e guarde cada parte pronta.")
+
+
+def _aviso_do_que_ja_existe(pasta: Path) -> str:
+    """Uma tentativa anterior deixou arquivos (downloads, partes renderizadas)? Avisa para reaproveitar."""
+    fontes = pasta / "fontes"
+    if not fontes.is_dir():
+        return ""
+    arqs = [f for f in fontes.rglob("*") if f.is_file()]
+    if len(arqs) < 3:
+        return ""
+    exemplos = ", ".join(str(f.relative_to(pasta)) for f in sorted(arqs, key=lambda f: -f.stat().st_mtime)[:12])
+    return (f"ATENÇÃO: uma tentativa anterior desta tarefa foi interrompida e deixou {len(arqs)} arquivos em fontes/ "
+            f"(os mais recentes: {exemplos}). Confira e REAPROVEITE o que estiver certo (material baixado, partes "
+            "renderizadas, áudio): não baixe nem renderize de novo o que já existe.\n\n")
+
+
+def _producao_continuavel(t: dict, prompt: str, pasta: Path, leitura: list[Path], sessao: str, ref: str,
+                          modelo: str) -> dict:
+    """Roda a produção numa conversa com id conhecido. Se for interrompida (tempo, limite do Claude,
+    Jarvis fechado), a próxima rodada continua essa conversa em vez de começar do zero."""
+    timeout = TIMEOUT_POR_AGENTE.get(t["agente"], PRODUCAO_TIMEOUT)
+    retomar = "" if sessao else (t.get("retomar") or "")
+    if retomar:
+        motivo = "passou do tempo da rodada" if int(t.get("interrupcoes") or 0) else "o Jarvis parou no meio"
+        try:
+            r = executar_producao(_CONTINUAR.format(motivo=motivo), pasta, leitura, sessao=retomar,
+                                  referencia=f"{ref} (continuação)", modelo=modelo, timeout=timeout)
+        except TempoEsgotado:
+            raise
+        except RuntimeError as e:
+            if "No conversation found" not in str(e):
+                raise
+            retomar = ""                         # a conversa sumiu: começa de novo
+        else:
+            store.atualizar(t["id"], retomar="", interrupcoes=0)
+            return r
+    nova = str(uuid.uuid4())
+    if not sessao:
+        store.atualizar(t["id"], retomar=nova)
+        prompt = _aviso_do_que_ja_existe(pasta) + prompt
+    r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo,
+                          nova_sessao=nova, timeout=timeout)
+    store.atualizar(t["id"], retomar="", interrupcoes=0)
+    return r
 
 
 def _local_com_retentativa(agente, cliente, t: dict, prompt: str | None = None) -> str:
