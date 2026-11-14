@@ -79,7 +79,7 @@ class InicioTests(unittest.TestCase):
              patch.object(start_local, "_pasta_inicializar", return_value=Path(d)):
             msg = start_local.iniciar_com_windows("local", True)
             cmd = (Path(d) / start_local.NOME_ATALHO).read_text(encoding="utf-8")
-            self.assertIn('start_local.py" --perfil local --aguardar', cmd)
+            self.assertIn('start_local.py"" --perfil local --aguardar', cmd)
             self.assertNotIn("jarvis_web.py", cmd)
             self.assertIn("central", msg)
             start_local.iniciar_com_windows("local", False)

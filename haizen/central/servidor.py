@@ -473,7 +473,24 @@ class _Handler(BaseHTTPRequestHandler):
                 return {"estado": "erro", "erro": r, "imagem": ""}
             return r
         if rota == "recentes" and metodo == "GET":
-            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "recent"}, timeout=90))}
+            conversas = _ou_erro(*whatsapp_web.run_op({"op": "recent", "limit": 50}, timeout=90))
+            for c in conversas:
+                try:
+                    cli = store.buscar_cliente(c["contato"])
+                except Exception:  # noqa: BLE001
+                    cli = None
+                c["cliente"] = {"id": cli["id"], "nome": cli["nome"]} if cli else None
+            return {"conversas": conversas}
+        if rota == "respostas" and metodo == "GET":
+            from haizen.central import whatsapp_ia
+            return {"respostas": whatsapp_ia.respostas()}
+        if rota == "respostas" and metodo == "POST":
+            from haizen.central import whatsapp_ia
+            return {"respostas": whatsapp_ia.salvar_respostas(self._corpo().get("respostas") or [])}
+        if rota == "resumir" and metodo == "POST":
+            from haizen.central import whatsapp_ia
+            c = self._corpo()
+            return {"texto": whatsapp_ia.resumir(str(c.get("contato") or ""), c.get("mensagens") or [])}
         if rota == "janela" and metodo == "POST":
             mostrar = bool(self._corpo().get("mostrar", True))
             return {"ok": bool(_ou_erro(*whatsapp_web.run_op({"op": "window", "show": mostrar}, timeout=30)))}
@@ -483,8 +500,8 @@ class _Handler(BaseHTTPRequestHandler):
             contato = (q.get("contato") or "").strip()
             if not contato:
                 raise ValueError("informe o contato")
-            n = max(1, min(40, int(q.get("n") or 15)))
-            msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=60))
+            n = max(1, min(80, int(q.get("n") or 15)))
+            msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=90))
             from core import transcrever
             msgs = transcrever.com_transcricoes(msgs)
             cli = store.buscar_cliente(contato)
@@ -518,7 +535,8 @@ class _Handler(BaseHTTPRequestHandler):
         if rota == "sugerir" and metodo == "POST":
             from haizen.central import whatsapp_ia
             c = self._corpo()
-            return {"texto": whatsapp_ia.sugerir_resposta(str(c.get("contato") or ""), c.get("mensagens") or [])}
+            return {"texto": whatsapp_ia.sugerir_resposta(str(c.get("contato") or ""), c.get("mensagens") or [],
+                                                          str(c.get("pedido") or ""))}
         return _NAO_ACHOU
 
     def _agenda(self, metodo, partes, q):
@@ -652,6 +670,16 @@ class _Handler(BaseHTTPRequestHandler):
             cid, acao = partes[1], (partes[2] if len(partes) > 2 else "")
             if acao == "" and metodo == "POST":
                 return ga.editar_conta(cid, self._corpo())
+            if acao == "indicadores" and metodo == "GET":
+                from haizen import indicadores
+                q = q or {}
+                if q.get("novo"):
+                    indicadores.limpar_cache()
+                c = ga.conta(cid)
+                an = ga.ultima_analise(c["id"])
+                return {**indicadores.google(c["id"], q.get("ini", ""), q.get("fim", "")), "conta_info": c,
+                        "analise": {k: an.get(k) for k in ("criado_em", "resumo", "saude", "alertas")} if an else None,
+                        "acoes": ga.acoes(c["id"], ("proposta", "erro"))}
             if acao == "analisar" and metodo == "POST":
                 return {"ok": ga.analisar_em_segundo_plano(cid)}
             if acao == "propor" and metodo == "POST":
@@ -780,6 +808,15 @@ class _Handler(BaseHTTPRequestHandler):
             return trafego.salvar_config(self._corpo())
         if rota == "resumo" and metodo == "GET":
             return {"texto": trafego.resumo_texto()}
+        if rota == "contas" and len(partes) == 3 and partes[2] == "indicadores" and metodo == "GET":
+            from haizen import indicadores
+            q = q or {}
+            if q.get("novo"):
+                indicadores.limpar_cache()
+            c = trafego.conta(unquote(partes[1]))
+            r = indicadores.meta(c["id"], q.get("ini", ""), q.get("fim", ""), c.get("objetivo") or "")
+            return {**r, "conta_info": c, "analise": trafego.ultimas_analises().get(c["id"]),
+                    "acoes": [a for a in trafego.acoes(("proposta", "aplicando", "falhou")) if a["conta_id"] == c["id"]]}
         if rota == "contas" and len(partes) == 2 and metodo == "PATCH":
             return trafego.atualizar_conta(unquote(partes[1]), self._corpo())
         if rota == "analises" and len(partes) == 2 and metodo == "GET":

@@ -34,6 +34,31 @@ def _modelo():
         return _proprio
 
 
+_INSTALANDO = {"thread": None, "erro": ""}
+
+
+def _instalar() -> str:
+    """Sem o faster-whisper neste Python: instala sozinho, uma vez, em segundo plano."""
+    import subprocess
+    import sys
+    t = _INSTALANDO["thread"]
+    if t is not None and t.is_alive():
+        return "Estou instalando o reconhecimento de voz neste PC (uma vez só, alguns minutos). Tente de novo daqui a pouco."
+    if _INSTALANDO["erro"]:
+        return f"Não consegui instalar o reconhecimento de voz: {_INSTALANDO['erro']}"
+
+    def _rodar():
+        exe = Path(sys.executable)
+        py = exe.with_name("python.exe") if exe.name.lower() == "pythonw.exe" else exe
+        r = subprocess.run([str(py if py.is_file() else exe), "-m", "pip", "install", "--quiet", "faster-whisper"],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0:
+            _INSTALANDO["erro"] = (r.stderr or r.stdout or "pip falhou").strip()[-300:]
+    _INSTALANDO["thread"] = threading.Thread(target=_rodar, daemon=True)
+    _INSTALANDO["thread"].start()
+    return "Comecei a instalar o reconhecimento de voz neste PC (uma vez só, alguns minutos). Tente de novo daqui a pouco."
+
+
 def transcrever(dados: bytes, sufixo: str = ".ogg") -> str:
     """O texto falado no áudio (vazio se não houver fala)."""
     if not dados:
@@ -41,7 +66,7 @@ def transcrever(dados: bytes, sufixo: str = ".ogg") -> str:
     try:
         modelo = _modelo()
     except ImportError:
-        raise RuntimeError("o reconhecimento de voz (faster-whisper) não está instalado") from None
+        raise RuntimeError(_instalar()) from None
     fd, caminho = tempfile.mkstemp(suffix=sufixo)
     try:
         with os.fdopen(fd, "wb") as f:

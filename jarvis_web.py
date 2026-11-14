@@ -28,6 +28,20 @@ import threading
 import time
 from pathlib import Path
 
+# Windows: nenhum programa que o Jarvis abre (Claude Code, PowerShell, ffmpeg, node) mostra a
+# janela preta do console. Aberto pelo pythonw não há console, e cada um criaria o seu.
+if sys.platform == "win32":
+    _PopenOriginal = subprocess.Popen
+
+    class _PopenSemJanela(_PopenOriginal):
+        def __init__(self, args, *a, **kw):
+            flags = kw.get("creationflags", 0) or 0
+            if not flags & getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10):
+                kw["creationflags"] = flags | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            super().__init__(args, *a, **kw)
+
+    subprocess.Popen = _PopenSemJanela
+
 RAIZ = Path(__file__).resolve().parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
@@ -42,7 +56,8 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stderr = open(_log, "a", encoding="utf-8", buffering=1)
 
 PORTA = int(os.environ.get("HAIZEN_CENTRAL_PORTA", "8765"))
-NOME_ATALHO = "Jarvis HAIZEN.cmd"
+NOME_ATALHO = "Jarvis HAIZEN.vbs"
+ATALHO_ANTIGO = "Jarvis HAIZEN.cmd"      # abria um console preto ao ligar o PC
 
 
 # ── Tailscale ───────────────────────────────────────────────────────────────
@@ -101,15 +116,20 @@ def iniciar_com_windows(perfil: str, ligar: bool, com_janela: bool = False) -> s
     if not ligar:
         atalho.unlink(missing_ok=True)
         return "O Jarvis não inicia mais sozinho com o Windows."
+    (_pasta_inicializar() / ATALHO_ANTIGO).unlink(missing_ok=True)
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.is_file() else Path(sys.executable)
-    linhas = ["@echo off", f'cd /d "{RAIZ}"',
-              f'start "" "{exe}" "{RAIZ / "jarvis_web.py"}" --perfil {perfil} --sem-navegador']
+
+    def _rodar(script: str) -> str:
+        cmd = f'"{exe}" "{RAIZ / script}" --perfil {perfil}' + (" --sem-navegador" if script == "jarvis_web.py" else " --aguardar")
+        return 'sh.Run "' + cmd.replace('"', '""') + '", 0, False'
+    # Script do Windows (wscript) em vez de .cmd: inicia escondido, sem o console preto.
+    linhas = ["' Inicia o Jarvis com o Windows, sem janela preta.", 'Set sh = CreateObject("WScript.Shell")',
+              f'sh.CurrentDirectory = "{RAIZ}"', _rodar("jarvis_web.py")]
     if com_janela:
         # A janela de voz sobe um pouco depois, para não disputar o Ollama.
-        linhas += ["timeout /t 20 /nobreak >nul",
-                   f'start "" "{exe}" "{RAIZ / "start_local.py"}" --perfil {perfil} --aguardar']
-    atalho.write_text("\r\n".join(linhas) + "\r\n", encoding="utf-8")
+        linhas += ["WScript.Sleep 20000", _rodar("start_local.py")]
+    atalho.write_text("\r\n".join(linhas) + "\r\n", encoding="cp1252", errors="replace")
     extra = " A janela de voz abre junto." if com_janela else ""
     return f"Pronto: o Jarvis vai iniciar sozinho quando você ligar o PC.{extra} ({atalho})"
 
@@ -162,6 +182,24 @@ def _claude_cerebro() -> bool:
 
 
 # ── principal ───────────────────────────────────────────────────────────────
+def _trocar_inicio_antigo(perfil: str) -> None:
+    """Quem já tinha o início automático pelo .cmd (que mostrava o console) passa para o .vbs."""
+    if sys.platform != "win32":
+        return
+    try:
+        antigo = _pasta_inicializar() / ATALHO_ANTIGO
+        if antigo.is_file():
+            texto = antigo.read_text(encoding="utf-8", errors="replace")
+            import re
+            m = re.search(r"--perfil\s+(\w+)", texto)
+            if "jarvis_web.py" in texto:
+                iniciar_com_windows(m.group(1) if m else perfil, True, "start_local.py" in texto)
+            elif "start_local.py" in texto:
+                start_local.iniciar_com_windows(m.group(1) if m else perfil, True)
+    except OSError:
+        pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Jarvis web: assistente e central da HAIZEN.")
     ap.add_argument("--perfil", choices=start_local.PERFIS, default="local")
@@ -182,6 +220,7 @@ def main(argv=None) -> int:
     except OSError:
         pass
 
+    _trocar_inicio_antigo(a.perfil)
     if a.iniciar_com_windows or a.nao_iniciar_com_windows:
         print(iniciar_com_windows(a.perfil, a.iniciar_com_windows, a.com_janela))
         return 0

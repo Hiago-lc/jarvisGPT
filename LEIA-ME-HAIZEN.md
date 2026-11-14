@@ -186,3 +186,27 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - O conector da Meta não envia arquivo do PC. O Jarvis agora **envia as imagens e vídeos** para a conta de anúncios (Marketing API: /adimages e /advideos) antes de o gestor criar os anúncios, e passa o image_hash / video_id prontos. Precisa de um **token do Meta Ads com ads_management** (Tráfego → Configurar; o ideal é o de um *usuário do sistema* do Gerenciador de Negócios, que não vence). Sem ele, para imagem, tenta o endereço público pela Página da HAIZEN.
 - O que já subiu fica guardado na proposta: tentar de novo não reenvia.
 - No chat, ajustes numa proposta existente (texto, conjunto, peça nova, orçamento) **editam a proposta** (`trafego_editar` / `googleads_editar`) em vez de criar outra. A conversa do Jarvis agora guarda mais contexto antes de recomeçar.
+
+## Indicadores por conta (Meta e Google)
+
+Em Tráfego e em Google Ads, clique no nome da conta (ou em **Indicadores**) para abrir a página dela:
+período (7, 14, 30 e 90 dias, este mês, mês passado, 6 e 12 meses ou datas escolhidas), comparação
+com o período anterior do mesmo tamanho, gráfico de investimento com a métrica escolhida, campanhas
+(ordenáveis), quebras (plataforma, idade e gênero no Meta; dispositivo no Google) e, no Google, os
+termos de pesquisa que mais gastaram. Os números vêm direto das APIs (Meta: o token do Meta Ads em
+Tráfego → Configurar), sem gastar Claude. As contas do Meta aparecem agrupadas por BM. O Jarvis
+também consulta esses números pelo chat (`indicadores_meta`, `indicadores_google`).
+
+## WhatsApp
+
+Busca e filtros (não lidas, clientes), lista que se atualiza sozinha a cada minuto, resumo da
+conversa, respostas rápidas editáveis, orientação para a sugestão de resposta, carregar mensagens
+anteriores e transcrição automática dos áudios (se o reconhecimento de voz não estiver instalado,
+o Jarvis instala sozinho na primeira vez). Se um áudio não baixar, a mensagem como o WhatsApp
+mostrou fica em `%LOCALAPPDATA%\JarvisGPT\whatsapp_audio_erro.html` para ajustar o Jarvis.
+
+## Sem janela preta
+
+O início automático com o Windows agora é um `Jarvis HAIZEN.vbs` (o `.cmd` antigo é trocado sozinho
+na próxima vez que o Jarvis abre), e nada que o Jarvis roda por trás (Claude Code, PowerShell,
+ffmpeg, node) abre console.

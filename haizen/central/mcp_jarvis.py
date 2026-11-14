@@ -448,6 +448,29 @@ def ecommerce_rejeitar(acao_id: int, nota: str = "") -> dict:
     return _api("POST", f"ecommerce/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
 
 
+# ── indicadores por período ────────────────────────────────────────────────
+def _enxuto(r: dict) -> dict:
+    return {k: r.get(k) for k in ("periodo", "anterior", "resultado_nome", "total", "total_anterior", "variacao")} | {
+        "campanhas": (r.get("campanhas") or [])[:15], "quebras": r.get("quebras"),
+        "serie": r.get("serie") if len(r.get("serie") or []) <= 40 else None, "termos": (r.get("termos") or [])[:15]}
+
+
+@mcp.tool()
+def indicadores_meta(conta_id: str, ini: str = "", fim: str = "") -> dict:
+    """Números de uma conta do Meta Ads (act_...) num período (AAAA-MM-DD; vazio = últimos 30 dias):
+    investimento, resultado principal, custo por resultado, CTR, CPC, CPM, ROAS, comparação com o período
+    anterior, campanhas e quebras por plataforma/idade/gênero. Direto da API, sem análise."""
+    return _enxuto(_api("GET", f"trafego/contas/{conta_id}/indicadores", ini=ini, fim=fim))
+
+
+@mcp.tool()
+def indicadores_google(conta_id: str, ini: str = "", fim: str = "") -> dict:
+    """Números de uma conta do Google Ads num período (AAAA-MM-DD; vazio = últimos 30 dias): custo,
+    conversões, CPA, ROAS, cliques, CTR, CPC, comparação com o período anterior, campanhas, dispositivos
+    e termos que mais gastaram. Direto da API, sem análise."""
+    return _enxuto(_api("GET", f"googleads/contas/{str(conta_id).replace('-', '')}/indicadores", ini=ini, fim=fim))
+
+
 # ── Google Ads dos clientes ────────────────────────────────────────────────
 @mcp.tool()
 def googleads_painel() -> list:

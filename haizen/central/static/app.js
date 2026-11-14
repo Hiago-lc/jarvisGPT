@@ -1499,13 +1499,20 @@ function cartaoAcao(a) {
     ${estado}${botoes}</article>`;
 }
 
+// Contas do Meta agrupadas pelo Gerenciador de Negócios (BM) a que pertencem.
+function porBM(lista) {
+  const grupos = new Map();
+  lista.forEach((c) => { const k = c.negocio || "Sem gerenciador de negócios"; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(c); });
+  return [...grupos.entries()].sort((a, b) => (b[1].some((c) => c.ativo) - a[1].some((c) => c.ativo)) || a[0].localeCompare(b[0]));
+}
+
 function cartaoConta(c, an) {
   const m = an?.metricas || {};
   const sit = an ? an.situacao : "";
   const kpi = (rot, val) => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong></div>`;
   return `<article class="traf-conta${c.ativo ? "" : " inativa"}">
     <div class="traf-conta-topo">
-      <div><h3>${sit ? `<span class="traf-sit sit-${esc(sit)}" title="${esc(TRAF_SIT[sit] || sit)}"></span>` : ""}${esc(c.cliente_nome || c.nome)}</h3>
+      <div><h3>${sit ? `<span class="traf-sit sit-${esc(sit)}" title="${esc(TRAF_SIT[sit] || sit)}"></span>` : ""}<a class="ind-link" href="#/trafego/${encodeURIComponent(c.id)}">${esc(c.cliente_nome || c.nome)}</a></h3>
         <p class="sub">${esc(c.nome)} · ${esc(c.id)}${an ? ` · análise de ${esc(an.dia.split("-").reverse().join("/"))}` : ""}</p></div>
       <label class="caixa traf-ativo"><input type="checkbox" data-ativo="${esc(c.id)}"${c.ativo ? " checked" : ""}> Análise diária</label>
     </div>
@@ -1520,6 +1527,7 @@ function cartaoConta(c, an) {
     <p class="traf-resumo">${esc(an.resumo)}</p>
     ${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}` : an?.erro ? `<p class="erro">${esc(an.erro)}</p>` : `<p class="sub">${c.ativo ? "Ainda sem análise." : "Fora da análise diária."}</p>`}
     <div class="traf-botoes">
+      <a class="botao primario" href="#/trafego/${encodeURIComponent(c.id)}">Indicadores</a>
       <button class="botao" data-metas="${esc(c.id)}">Metas e cliente</button>
       ${an && !an.erro && an.tem_diagnostico ? `<button class="botao" data-diagnostico="${an.id}">Diagnóstico</button>` : ""}
       ${an && !an.erro ? `<button class="botao" data-relatorio="${an.id}">Relatório</button>` : ""}
@@ -1602,7 +1610,8 @@ function configTrafego(cfg, recarregar, envio) {
   });
 }
 
-ROTAS.trafego = async () => {
+ROTAS.trafego = async (param) => {
+  if (param) return paginaIndicadores("meta", decodeURIComponent(param));
   main.innerHTML = `
     <div class="topo"><div><h1>Tráfego</h1><p class="sub" id="traf-sub">Meta Ads: análise diária e otimizações com a sua aprovação.</p></div>
       <div class="traf-topo-botoes"><button class="botao" id="traf-config">Configurar</button><button class="botao primario" id="traf-analisar">Analisar agora</button></div></div>
@@ -1634,7 +1643,7 @@ ROTAS.trafego = async () => {
         <section class="traf-secao"><h2>Esperando sua aprovação ${acoes.length ? `<span class="selo">${acoes.length}</span>` : ""}</h2>
           ${acoes.length ? `<div class="traf-acoes">${acoes.map(cartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma otimização pendente.</p>'}</section>
         <section class="traf-secao"><div class="bloco-topo"><h2>Contas</h2><button class="botao" data-conectar ${estado.fazendo ? "disabled" : ""}>Atualizar lista de contas</button></div>
-          ${lista.length ? `<div class="traf-contas">${lista.map((c) => cartaoConta(c, analises[c.id])).join("")}</div>` : '<p class="vazio">Nenhuma conta encontrada. Confira se marcou as contas no login do Facebook.</p>'}</section>
+          ${lista.length ? porBM(lista).map(([bm, cs], _, todos) => `${todos.length > 1 ? `<h3 class="ind-bm">${esc(bm)} <span class="sub">${cs.length} ${cs.length === 1 ? "conta" : "contas"}</span></h3>` : ""}<div class="traf-contas">${cs.map((c) => cartaoConta(c, analises[c.id])).join("")}</div>`).join("") : '<p class="vazio">Nenhuma conta encontrada. Confira se marcou as contas no login do Facebook.</p>'}</section>
         ${historico.length ? `<section class="traf-secao"><h2>Decidido recentemente</h2><ul class="lista bloco">${historico.map((a) => `<li><span>${esc(TRAF_TIPOS[a.tipo] || a.tipo)}: ${esc(a.alvo_nome || "—")} <span class="sub">(${esc(a.conta_nome || a.conta_id)})</span></span><span class="meta">${esc({ aplicada: "aplicada", rejeitada: "rejeitada", anotada: "anotada" }[a.status] || a.status)}</span></li>`).join("")}</ul></section>` : ""}`;
     }
     $$("[data-conectar]", corpo).forEach((b) => b.addEventListener("click", async () => {
@@ -2006,6 +2015,276 @@ function chatDaTela(tela) {
   });
 }
 
+// ── Indicadores por conta (Meta e Google): período, gráfico, campanhas e quebras ─
+const PERIODOS = [["7", "7 dias"], ["14", "14 dias"], ["30", "30 dias"], ["90", "90 dias"], ["mes", "Este mês"],
+  ["mes_passado", "Mês passado"], ["180", "6 meses"], ["365", "12 meses"], ["livre", "Escolher datas"]];
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function periodoAtual() {
+  let p = { id: "30" };
+  try { p = JSON.parse(localStorage.getItem("central.periodo") || "null") || p; } catch (_) { /* sem armazenamento */ }
+  return p;
+}
+
+function datasDoPeriodo(p) {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const ontem = new Date(hoje); ontem.setDate(hoje.getDate() - 1);
+  if (p.id === "livre" && p.ini && p.fim) return { ini: p.ini, fim: p.fim };
+  if (p.id === "mes") {
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    return hoje.getDate() === 1 ? datasDoPeriodo({ id: "mes_passado" }) : { ini: isoLocal(ini), fim: isoLocal(ontem) };
+  }
+  if (p.id === "mes_passado") {
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    const fim = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+    return { ini: isoLocal(ini), fim: isoLocal(fim) };
+  }
+  const n = +p.id || 30;
+  const ini = new Date(ontem); ini.setDate(ontem.getDate() - n + 1);
+  return { ini: isoLocal(ini), fim: isoLocal(ontem) };
+}
+
+function seletorPeriodo(alvo, aoMudar) {
+  const p = periodoAtual();
+  const d = datasDoPeriodo(p);
+  alvo.innerHTML = `<div class="ind-periodos" role="group" aria-label="Período">
+      ${PERIODOS.map(([id, rot]) => `<button type="button" class="ind-chip" data-periodo="${id}" aria-pressed="${p.id === id}">${rot}</button>`).join("")}</div>
+    <form class="ind-livre"${p.id === "livre" ? "" : " hidden"}>
+      <label>De <input type="date" id="ind-ini" name="ini" value="${d.ini}" max="${isoLocal(new Date())}"></label>
+      <label>Até <input type="date" id="ind-fim" name="fim" value="${d.fim}" max="${isoLocal(new Date())}"></label>
+      <button class="botao pequeno primario" type="submit">Ver</button></form>`;
+  const guardar = (x) => { try { localStorage.setItem("central.periodo", JSON.stringify(x)); } catch (_) { /* sem armazenamento */ } };
+  $$("[data-periodo]", alvo).forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.periodo;
+    $$("[data-periodo]", alvo).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (id === "livre") { $(".ind-livre", alvo).hidden = false; $("#ind-ini", alvo).focus(); return; }
+    $(".ind-livre", alvo).hidden = true;
+    guardar({ id }); aoMudar(datasDoPeriodo({ id }));
+  }));
+  $(".ind-livre", alvo).addEventListener("submit", (e) => {
+    e.preventDefault();
+    const ini = $("#ind-ini", alvo).value, fim = $("#ind-fim", alvo).value;
+    if (!ini || !fim) { avisar("Escolha as duas datas"); return; }
+    const x = ini <= fim ? { id: "livre", ini, fim } : { id: "livre", ini: fim, fim: ini };
+    guardar(x); aoMudar(datasDoPeriodo(x));
+  });
+  return d;
+}
+
+const tetoBonito = (v) => {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)); const n = v / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+};
+const rotuloData = (iso, grupo) => {
+  const [a, m, d] = iso.split("-");
+  return grupo === "mes" ? `${MESES[+m - 1]}/${a.slice(2)}` : `${d}/${m}`;
+};
+
+// Barras (investimento) + linha (a métrica escolhida), com dica ao passar o mouse.
+function grafico(serie, o) {
+  const W = 760, H = 250, L = 64, R = 64, T = 14, B = 30;
+  const n = serie.length || 1, larg = (W - L - R) / n;
+  const vb = serie.map((x) => +x[o.barra] || 0), vl = serie.map((x) => (x[o.linha] == null ? null : +x[o.linha]));
+  const mb = tetoBonito(Math.max(...vb, 0)), ml = tetoBonito(Math.max(...vl.filter((v) => v != null), 0));
+  const yb = (v) => T + (H - T - B) * (1 - v / mb), yl = (v) => T + (H - T - B) * (1 - v / ml);
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const passo = Math.max(1, Math.ceil(n / 8));
+  const pts = vl.map((v, i) => (v == null ? null : [L + larg * (i + 0.5), yl(v)]));
+  let caminho = "", area = "";
+  let aberto = false;
+  pts.forEach((p) => {
+    if (!p) { aberto = false; return; }
+    caminho += `${aberto ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`; aberto = true;
+  });
+  const validos = pts.filter(Boolean);
+  if (validos.length > 1) area = `M${validos[0][0].toFixed(1)},${H - B}` + validos.map((p) => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("") + `L${validos[validos.length - 1][0].toFixed(1)},${H - B}Z`;
+  const ultimo = validos[validos.length - 1];
+  return `<div class="ind-grafico-caixa"><svg class="ind-grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.rotBarra)} e ${esc(o.rotLinha)} no período">
+    ${ticks.map((t) => `<line class="g-grade" x1="${L}" x2="${W - R}" y1="${yb(mb * t)}" y2="${yb(mb * t)}"/>
+      <text class="g-eixo" x="${L - 8}" y="${yb(mb * t) + 4}" text-anchor="end">${esc(o.fmtBarraCurto(mb * t))}</text>
+      <text class="g-eixo g-eixo-linha" x="${W - R + 8}" y="${yl(ml * t) + 4}">${esc(o.fmtLinhaCurto(ml * t))}</text>`).join("")}
+    ${vb.map((v, i) => `<rect class="g-barra" x="${(L + larg * i + larg * 0.14).toFixed(1)}" y="${yb(v).toFixed(1)}" width="${Math.max(1, larg * 0.72).toFixed(1)}" height="${Math.max(0, H - B - yb(v)).toFixed(1)}" rx="2"/>`).join("")}
+    ${area ? `<path class="g-area" d="${area}"/>` : ""}
+    <path class="g-linha" d="${caminho}"/>
+    ${ultimo ? `<circle class="g-ponto" cx="${ultimo[0].toFixed(1)}" cy="${ultimo[1].toFixed(1)}" r="4"/>` : ""}
+    ${serie.map((x, i) => (i % passo === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < passo / 2) ? `<text class="g-eixo" x="${(L + larg * (i + 0.5)).toFixed(1)}" y="${H - 9}" text-anchor="middle">${rotuloData(x.dia, o.grupo)}</text>` : "").join("")}
+    <line class="g-mira" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
+    <rect class="g-captura" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/>
+  </svg><div class="g-dica" hidden></div>
+  <div class="g-legenda"><span><i class="g-leg-barra"></i>${esc(o.rotBarra)}</span><span><i class="g-leg-linha"></i>${esc(o.rotLinha)}</span></div></div>`;
+}
+
+function ligarGrafico(caixa, serie, o) {
+  const svg = $("svg", caixa), dica = $(".g-dica", caixa), mira = $(".g-mira", caixa), cap = $(".g-captura", caixa);
+  if (!svg || !serie.length) return;
+  const W = 760, L = 64, R = 64, larg = (W - L - R) / serie.length;
+  const mostrar = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width * W;
+    const i = Math.min(serie.length - 1, Math.max(0, Math.floor((x - L) / larg)));
+    const s = serie[i], cx = L + larg * (i + 0.5);
+    mira.setAttribute("x1", cx); mira.setAttribute("x2", cx); mira.setAttribute("visibility", "visible");
+    const fim = o.grupo === "semana" ? " (semana)" : "";
+    dica.innerHTML = `<strong>${o.grupo === "mes" ? rotuloData(s.dia, "mes") : dataBr(s.dia)}${fim}</strong>
+      <span>${esc(o.rotBarra)}: ${esc(o.fmtBarra(s[o.barra]))}</span><span>${esc(o.rotLinha)}: ${esc(o.fmtLinha(s[o.linha]))}</span>`;
+    dica.hidden = false;
+    const px = cx / W * r.width;
+    dica.style.left = `${Math.min(Math.max(px, 70), r.width - 70)}px`;
+  };
+  cap.addEventListener("pointermove", mostrar);
+  cap.addEventListener("pointerleave", () => { dica.hidden = true; mira.setAttribute("visibility", "hidden"); });
+}
+
+const fmtPct = (v) => (v == null ? "—" : `${numBR(v, 2)}%`);
+const fmtX = (v) => (v == null ? "—" : `${numBR(v, 2)}x`);
+const fmtNum = (v) => (v == null ? "—" : numBR(v, +v % 1 ? 1 : 0));
+const fmtCurto = (v) => (v >= 1e6 ? `${numBR(v / 1e6, 1)} mi` : v >= 1e3 ? `${numBR(v / 1e3, v >= 1e4 ? 0 : 1)} mil` : numBR(v, v % 1 ? 1 : 0));
+const fmtMoedaCurta = (v) => `R$ ${fmtCurto(v)}`;
+
+const IND_DEF = {
+  meta: {
+    tela: "trafego", nome: "Tráfego",
+    barra: ["gasto", "Investimento", moeda, fmtMoedaCurta],
+    kpis: (t) => [["gasto", "Investimento", moeda, 0], ["resultados", t.resultado_nome || "Resultados", fmtNum, 1],
+      ["custo_resultado", "Custo por resultado", (v) => (v == null ? "—" : moeda(v)), -1],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, 1], ["valor", "Valor das compras", moeda, 1]] : []),
+      ["ctr", "CTR (link)", fmtPct, 1], ["cpc", "CPC (link)", (v) => (v == null ? "—" : moeda(v)), -1],
+      ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v)), -1], ["impressoes", "Impressões", fmtNum, 0],
+      ["alcance", "Alcance", fmtNum, 0], ["frequencia", "Frequência", (v) => (v == null ? "—" : numBR(v, 2)), 0]],
+    linhas: (t) => [["resultados", t.resultado_nome || "Resultados", fmtNum, fmtCurto], ["custo_resultado", "Custo por resultado", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["ctr", "CTR", fmtPct, (v) => `${numBR(v, 1)}%`], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta], ...(t.total.valor ? [["roas", "ROAS", fmtX, (v) => `${numBR(v, 1)}x`]] : [])],
+    colunas: (t) => [["gasto", "Investimento", moeda], ["resultados", t.resultado_nome || "Resultados", fmtNum], ["custo_resultado", "Custo/result.", (v) => (v == null ? "—" : moeda(v))],
+      ["var_custo_resultado", "vs. antes", null], ["ctr", "CTR", fmtPct], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v))], ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v))],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX]] : [])],
+    custo: "gasto", resultado: "resultados", cpr: "custo_resultado",
+    ativa: (s) => s === "ACTIVE",
+  },
+  google: {
+    tela: "googleads", nome: "Google Ads",
+    barra: ["custo", "Investimento", moeda, fmtMoedaCurta],
+    kpis: (t) => [["custo", "Investimento", moeda, 0], ["conversoes", "Conversões", fmtNum, 1], ["cpa", "Custo por conversão", (v) => (v == null ? "—" : moeda(v)), -1],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, 1], ["valor", "Valor das conversões", moeda, 1]] : []),
+      ["cliques", "Cliques", fmtNum, 1], ["ctr", "CTR", fmtPct, 1], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), -1], ["impressoes", "Impressões", fmtNum, 0]],
+    linhas: (t) => [["conversoes", "Conversões", fmtNum, fmtCurto], ["cpa", "Custo por conversão", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["cliques", "Cliques", fmtNum, fmtCurto], ["ctr", "CTR", fmtPct, (v) => `${numBR(v, 1)}%`], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, (v) => `${numBR(v, 1)}x`]] : [])],
+    colunas: () => [["tipo", "Tipo", (v) => esc(v || "")], ["custo", "Investimento", moeda], ["conversoes", "Conversões", fmtNum], ["cpa", "CPA", (v) => (v == null ? "—" : moeda(v))],
+      ["var_cpa", "vs. antes", null], ["cliques", "Cliques", fmtNum], ["ctr", "CTR", fmtPct], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v))],
+      ["orcamento_diario", "Orç./dia", moeda], ["parcela_impressoes", "Parcela impr.", fmtPct]],
+    custo: "custo", resultado: "conversoes", cpr: "cpa",
+    ativa: (s) => s === "ENABLED",
+  },
+};
+
+// Variação colorida: verde quando é bom (sobe o que é bom subir, cai o que é bom cair).
+function chipVar(v, sentido) {
+  if (v == null || !Number.isFinite(+v)) return '<em class="ind-var neutro">—</em>';
+  const bom = sentido === 0 ? null : (v > 0) === (sentido > 0);
+  return `<em class="ind-var ${bom == null || v === 0 ? "neutro" : bom ? "bom" : "ruim"}">${v > 0 ? "▲" : v < 0 ? "▼" : ""} ${numBR(Math.abs(v), 1)}%</em>`;
+}
+
+function barrasQuebra(titulo, linhas, def, plataforma) {
+  if (!linhas?.length) return "";
+  const custo = plataforma === "meta" ? "gasto" : "custo";
+  const res = plataforma === "meta" ? "resultados" : "conversoes";
+  const cpr = plataforma === "meta" ? "custo_resultado" : "cpa";
+  const total = linhas.reduce((s, x) => s + (x[custo] || 0), 0) || 1;
+  return `<section class="bloco ind-quebra"><h2>${esc(titulo)}</h2><ul>
+    ${linhas.map((x) => `<li><div class="ind-quebra-topo"><span>${esc(x.nome)}</span><span class="sub">${moeda(x[custo])} · ${fmtNum(x[res])} · ${x[cpr] ? moeda(x[cpr]) : "—"}/result.</span></div>
+      <div class="ind-quebra-barra"><span style="width:${Math.max(1, Math.round((x[custo] || 0) / total * 100))}%"></span></div></li>`).join("")}
+  </ul><p class="sub">Investimento · resultados · custo por resultado</p></section>`;
+}
+
+async function paginaIndicadores(plataforma, contaId) {
+  const def = IND_DEF[plataforma];
+  const base = plataforma === "meta" ? `trafego/contas/${encodeURIComponent(contaId)}/indicadores` : `googleads/contas/${encodeURIComponent(contaId)}/indicadores`;
+  main.innerHTML = `
+    <div class="topo"><div><a class="voltar" href="#/${def.tela}">← ${esc(def.nome)}</a><h1 id="ind-titulo">Carregando…</h1><p class="sub" id="ind-sub"></p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ind-atualizar">Atualizar dados</button><button class="botao primario" id="ind-analisar">Pedir análise do gestor</button></div></div>
+    <div id="ind-periodo" class="ind-periodo"></div>
+    <div id="ind-corpo"><p class="vazio">Buscando os números…</p></div>`;
+  const corpo = $("#ind-corpo");
+  let linhaAtual = null, ordem = { col: def.custo, desc: true };
+  const carregar = async (datas, novo = false) => {
+    corpo.innerHTML = '<p class="vazio">Buscando os números…</p>';
+    let r;
+    try { r = await api("GET", `${base}?ini=${datas.ini}&fim=${datas.fim}${novo ? "&novo=1" : ""}`); } catch (e) {
+      corpo.innerHTML = `<div class="traf-faixa erro">${esc(e.message)}</div>`; return;
+    }
+    if (!document.body.contains(corpo)) return;
+    const c = r.conta_info || {};
+    $("#ind-titulo").textContent = c.cliente_nome || c.nome || contaId;
+    $("#ind-sub").textContent = [c.nome, plataforma === "meta" ? c.id : c.id_formatado, c.negocio ? (/^bm\b/i.test(c.negocio) ? c.negocio : `BM ${c.negocio}`) : ""].filter(Boolean).join(" · ");
+    const t = r;
+    const kpis = def.kpis(t);
+    const linhas = def.linhas(t);
+    if (!linhaAtual || !linhas.some((l) => l[0] === linhaAtual)) linhaAtual = linhas[0][0];
+    const P = r.periodo, A = r.anterior;
+    const semGasto = !(t.total[def.custo] > 0);
+    const desenharGrafico = () => {
+      const l = linhas.find((x) => x[0] === linhaAtual);
+      const o = { barra: def.barra[0], rotBarra: def.barra[1], fmtBarra: def.barra[2], fmtBarraCurto: def.barra[3],
+        linha: l[0], rotLinha: l[1], fmtLinha: l[2], fmtLinhaCurto: l[3], grupo: P.agrupamento };
+      const caixa = $("#ind-grafico", corpo);
+      caixa.innerHTML = grafico(r.serie, o);
+      ligarGrafico(caixa, r.serie, o);
+      $$("[data-linha]", corpo).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.linha === linhaAtual)));
+    };
+    const colunas = def.colunas(t);
+    const desenharTabela = () => {
+      const lista = [...r.campanhas].sort((a, b) => {
+        const va = a[ordem.col], vb = b[ordem.col];
+        if (va == null) return 1; if (vb == null) return -1;
+        return (typeof va === "string" ? va.localeCompare(vb) : va - vb) * (ordem.desc ? -1 : 1);
+      });
+      const sentidoVar = { var_custo_resultado: -1, var_cpa: -1 };
+      $("#ind-campanhas", corpo).innerHTML = lista.length ? `<div class="ind-tabela-caixa"><table class="ind-tabela">
+        <thead><tr><th>Campanha</th>${colunas.map(([k, rot]) => `<th><button type="button" data-ordem="${k}" class="${ordem.col === k ? (ordem.desc ? "desc" : "asc") : ""}">${esc(rot)}</button></th>`).join("")}</tr></thead>
+        <tbody>${lista.map((x) => `<tr class="${def.ativa(x.status) ? "" : "pausada"}"><td><span class="ind-status ${def.ativa(x.status) ? "on" : ""}" title="${esc(x.status || "")}"></span>${esc(x.nome || "—")}</td>
+          ${colunas.map(([k, , f]) => `<td>${f ? f(x[k]) : chipVar(x[k], sentidoVar[k] ?? 1)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+        : '<p class="vazio">Nenhuma campanha com entrega neste período.</p>';
+      $$("[data-ordem]", corpo).forEach((b) => b.addEventListener("click", () => {
+        ordem = { col: b.dataset.ordem, desc: ordem.col === b.dataset.ordem ? !ordem.desc : true }; desenharTabela();
+      }));
+    };
+    const an = r.analise;
+    const acoes = r.acoes || [];
+    const quebras = plataforma === "meta"
+      ? barrasQuebra("Por plataforma", r.quebras.plataforma, def, plataforma) + barrasQuebra("Por gênero", r.quebras.genero, def, plataforma) + barrasQuebra("Por idade", r.quebras.idade, def, plataforma)
+      : barrasQuebra("Por dispositivo", r.quebras.dispositivo, def, plataforma);
+    corpo.innerHTML = `
+      <p class="sub ind-comparando">${dataBr(P.ini)} a ${dataBr(P.fim)} (${P.dias} ${P.dias === 1 ? "dia" : "dias"}) · comparado com ${dataBr(A.ini)} a ${dataBr(A.fim)}${plataforma === "meta" ? ` · resultado principal: ${esc(t.resultado_nome)}` : ""}</p>
+      ${acoes.length ? `<div class="traf-faixa">${acoes.length} ${acoes.length === 1 ? "proposta espera" : "propostas esperam"} a sua aprovação nesta conta. <a href="#/${def.tela}">Ver propostas</a></div>` : ""}
+      ${semGasto ? '<div class="traf-faixa">Sem investimento neste período.</div>' : ""}
+      <section class="ind-kpis">${kpis.map(([k, rot, f, sentido]) => `<div class="ind-kpi"><span>${esc(rot)}</span><strong>${f(t.total[k])}</strong>
+        <small>${chipVar(t.variacao[k], sentido)} <span>antes ${f(t.total_anterior[k])}</span></small></div>`).join("")}</section>
+      <section class="bloco ind-bloco-grafico"><div class="bloco-topo"><h2>Evolução ${P.agrupamento === "dia" ? "por dia" : P.agrupamento === "semana" ? "por semana" : "por mês"}</h2>
+        <div class="ind-periodos" role="group" aria-label="Métrica da linha">${linhas.map(([k, rot]) => `<button type="button" class="ind-chip" data-linha="${k}">${esc(rot)}</button>`).join("")}</div></div>
+        <div id="ind-grafico"></div></section>
+      ${an ? `<section class="bloco ind-analise"><h2>Última análise do gestor</h2><p>${esc(an.resumo || "")}</p>${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</section>` : ""}
+      <section class="traf-secao"><h2>Campanhas</h2><div id="ind-campanhas"></div></section>
+      ${quebras ? `<div class="ind-quebras">${quebras}</div>` : ""}
+      ${plataforma === "google" && r.termos?.length ? `<section class="traf-secao"><h2>Termos de pesquisa que mais gastaram</h2><div class="ind-tabela-caixa"><table class="ind-tabela"><thead><tr><th>Termo</th><th>Investimento</th><th>Cliques</th><th>Conversões</th><th>CPA</th></tr></thead>
+        <tbody>${r.termos.slice(0, 25).map((x) => `<tr class="${x.conversoes ? "" : "sem-conv"}"><td>${esc(x.termo)}</td><td>${moeda(x.custo)}</td><td>${fmtNum(x.cliques)}</td><td>${fmtNum(x.conversoes)}</td><td>${x.cpa ? moeda(x.cpa) : "—"}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+      <p class="sub">Números direto da API ${plataforma === "meta" ? "da Meta" : "do Google Ads"}, atualizados ${new Date(r.gerado_em * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}. Os dos últimos 2 a 3 dias ainda podem mudar um pouco.</p>`;
+    $$("[data-linha]", corpo).forEach((b) => b.addEventListener("click", () => { linhaAtual = b.dataset.linha; desenharGrafico(); }));
+    desenharGrafico();
+    desenharTabela();
+  };
+  let datas = seletorPeriodo($("#ind-periodo"), (d) => { datas = d; carregar(d); });
+  $("#ind-atualizar").addEventListener("click", () => carregar(datas, true));
+  $("#ind-analisar").addEventListener("click", async () => {
+    try {
+      if (plataforma === "meta") await api("POST", "trafego/analisar", { contas: [contaId] });
+      else { const r = await api("POST", `googleads/contas/${encodeURIComponent(contaId)}/analisar`, {}); if (!r.ok) throw new Error("Já tem uma análise rodando: espere terminar"); }
+      avisar("O gestor começou a análise desta conta. As propostas aparecem na tela principal.");
+    } catch (e) { avisar(e.message); }
+  });
+  await carregar(datas);
+}
+
 // ── Google Ads dos clientes ─────────────────────────────────────────────────
 function gaDetalhes(a) {
   const d = a.detalhes || {};
@@ -2063,7 +2342,7 @@ function gaCartaoConta(c) {
   const maxDia = m ? Math.max(1, ...m.por_dia.map((d) => d.custo)) : 1;
   const an = c.analise;
   return `<article class="traf-conta">
-    <div class="traf-conta-topo"><div><h3>${esc(c.nome)}</h3>
+    <div class="traf-conta-topo"><div><h3><a class="ind-link" href="#/googleads/${c.id}">${esc(c.nome)}</a></h3>
       <p class="sub">${esc(c.id_formatado)} · ${esc(c.cliente_nome || "sem cliente")}${an ? ` · análise de ${new Date(an.criado_em * 1000).toLocaleDateString("pt-BR")}` : " · ainda sem análise"}${an && an.saude != null ? ` · saúde ${an.saude}/100` : ""}</p></div>
       <label class="caixa traf-ativo"><input type="checkbox" data-ga-ativo="${esc(c.id)}" checked> Análise diária</label></div>
     ${c.erro ? `<p class="traf-estado erro">${esc(c.erro)}</p>` : ""}
@@ -2085,10 +2364,11 @@ function gaCartaoConta(c) {
     ${m?.termos_sem_conversao?.length ? `<details class="traf-detalhes"><summary>Termos que gastaram sem converter</summary><table class="ec-tabela"><tr><th>Termo</th><th>Campanha</th><th>Gasto</th><th>Cliques</th></tr>
       ${m.termos_sem_conversao.slice(0, 15).map((t) => `<tr><td>${esc(t.termo)}</td><td>${esc(t.campanha)}</td><td>${moeda(t.custo)}</td><td>${t.cliques}</td></tr>`).join("")}</table></details>` : ""}
     ${c.historico?.length ? `<details class="traf-detalhes"><summary>Aplicado recentemente</summary><ul class="ec-hist">${c.historico.map((a) => `<li><span class="traf-tipo">${esc(a.tipo_nome)}</span> ${esc(a.titulo)} <span class="sub">${esc(a.resultado)}</span></li>`).join("")}</ul></details>` : ""}
-    <div class="traf-botoes"><button class="botao" data-ga-editar="${esc(c.id)}">Cliente e objetivo</button><button class="botao primario" data-ga-analisar="${esc(c.id)}">Analisar agora</button></div></article>`;
+    <div class="traf-botoes"><a class="botao primario" href="#/googleads/${c.id}">Indicadores</a><button class="botao" data-ga-editar="${esc(c.id)}">Cliente e objetivo</button><button class="botao" data-ga-analisar="${esc(c.id)}">Analisar agora</button></div></article>`;
 }
 
-ROTAS.googleads = async () => {
+ROTAS.googleads = async (param) => {
+  if (param) return paginaIndicadores("google", decodeURIComponent(param));
   main.innerHTML = `
     <div class="topo"><div><h1>Google Ads</h1><p class="sub" id="ga-sub">Contas dos clientes: análise diária e mudanças com a sua aprovação.</p></div>
       <div class="traf-topo-botoes"><button class="botao" id="ga-config">Configurar</button><button class="botao" id="ga-sync">Atualizar contas</button><button class="botao primario" id="ga-analisar">Analisar ativas</button></div></div>
@@ -2810,35 +3090,46 @@ if ("serviceWorker" in navigator) {
 }
 
 // ── WhatsApp ──────────────────────────────────────────────────────────────
-const WA = { conversa: null, timer: null };   // conversa: {contato, mensagens, cliente}
+const WA = { conversa: null, timer: null, auto: null, filtro: "todas", ocupado: false, n: 20, respostas: null };   // conversa: {contato, mensagens, cliente}
 
 ROTAS.whatsapp = async () => {
-  clearTimeout(WA.timer);
+  clearTimeout(WA.timer); clearInterval(WA.auto);
   main.innerHTML = `
-    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida.</p></div>
-      <div class="wa-topo-acoes"><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
+    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida. Nada é enviado sem o seu OK.</p></div>
+      <div class="wa-topo-acoes"><button class="botao" id="wa-janela">Mostrar o WhatsApp Web</button><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
     <div class="wa">
       <section class="bloco wa-lista">
-        <h2>Conversas</h2>
+        <div class="wa-lista-topo"><h2>Conversas</h2><span class="sub" id="wa-hora"></span></div>
+        <input class="wa-busca" id="wa-busca" type="search" placeholder="Buscar conversa" aria-label="Buscar conversa">
+        <div class="ind-periodos wa-filtros" role="group" aria-label="Filtro">
+          ${[["todas", "Todas"], ["nao_lidas", "Não lidas"], ["clientes", "Clientes"]].map(([id, rot]) => `<button type="button" class="ind-chip" data-filtro="${id}" aria-pressed="${WA.filtro === id}">${rot}</button>`).join("")}</div>
         <div id="wa-lista"><p class="carregando">Abrindo o WhatsApp Web…</p></div>
         <form id="wa-abrir" class="wa-abrir"><input name="contato" placeholder="Abrir conversa pelo nome exato" aria-label="Nome do contato"><button class="botao" type="submit">Abrir</button></form>
       </section>
-      <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder ou transformar em tarefa e evento.</p></section>
+      <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder, resumir ou transformar em tarefa e evento.</p></section>
     </div>`;
   const caixa = $("#wa-lista");
   const viva = () => document.body.contains(caixa);
-  const carregarLista = async () => {
-    caixa.innerHTML = '<p class="carregando">Lendo as conversas…</p>';
+  let conversas = [];
+  const desenharLista = () => {
+    const busca = ($("#wa-busca").value || "").trim().toLowerCase();
+    const lista = conversas.filter((c) => (WA.filtro === "nao_lidas" ? c.nao_lidas : WA.filtro === "clientes" ? c.cliente : true)
+      && (!busca || `${c.contato} ${c.previa} ${c.cliente?.nome || ""}`.toLowerCase().includes(busca)));
+    caixa.innerHTML = lista.length ? `<ul class="wa-itens">${lista.map((c) => `
+        <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}${WA.conversa?.contato === c.contato ? " atual" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
+          <span class="wa-previa">${c.cliente ? `<span class="wa-tag">Cliente</span>` : ""}${esc(c.previa)}</span></button></li>`).join("")}</ul>`
+      : `<p class="vazio">${conversas.length ? "Nenhuma conversa com esse filtro." : "Nenhuma conversa apareceu ainda. Clique em Atualizar em alguns segundos."}</p>`;
+    $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
+  };
+  const carregarLista = async (silencioso = false) => {
+    if (!silencioso) caixa.innerHTML = '<p class="carregando">Lendo as conversas…</p>';
     try {
-      const { conversas } = await api("GET", "whatsapp/recentes");
+      const r = await api("GET", "whatsapp/recentes");
       if (!viva()) return;
-      conversas.sort((a, b) => (b.nao_lidas > 0) - (a.nao_lidas > 0));
-      caixa.innerHTML = conversas.length ? `<ul class="wa-itens">${conversas.map((c) => `
-        <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
-          <span class="wa-previa">${esc(c.previa)}</span></button></li>`).join("")}</ul>`
-        : '<p class="vazio">Nenhuma conversa apareceu ainda. Clique em Atualizar em alguns segundos.</p>';
-      $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
-    } catch (e) { if (viva()) erroWa(e.message); }
+      conversas = r.conversas.sort((a, b) => (b.nao_lidas > 0) - (a.nao_lidas > 0));
+      $("#wa-hora").textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+      desenharLista();
+    } catch (e) { if (viva() && !silencioso) erroWa(e.message); }
   };
   const erroWa = (msg) => {
     caixa.innerHTML = `<p class="erro">${esc(msg)}</p><button class="botao" type="button" id="wa-tentar">Tentar de novo</button>`;
@@ -2850,7 +3141,13 @@ ROTAS.whatsapp = async () => {
     let e;
     try { e = await api("GET", "whatsapp/estado"); } catch (err) { e = { estado: "erro", erro: err.message }; }
     if (!viva()) return;
-    if (e.estado === "ok") { await carregarLista(); return; }
+    if (e.estado === "ok") {
+      await carregarLista();
+      // A lista se atualiza sozinha enquanto a tela está aberta (sem abrir conversas: nada é marcado como lido).
+      clearInterval(WA.auto);
+      WA.auto = setInterval(() => { if (!viva()) { clearInterval(WA.auto); return; } if (!document.hidden && !WA.ocupado) carregarLista(true); }, 60000);
+      return;
+    }
     if (e.estado === "qr") {
       caixa.innerHTML = `<div class="wa-qr"><img alt="QR Code para conectar o WhatsApp" src="data:image/png;base64,${e.imagem}">
         <ol><li>No celular, abra o WhatsApp.</li><li>Toque em Configurações (ou ⋮) e depois em <strong>Aparelhos conectados</strong>.</li><li>Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para este código.</li></ol>
@@ -2861,6 +3158,11 @@ ROTAS.whatsapp = async () => {
     WA.timer = setTimeout(() => { if (viva()) conferir(); }, e.estado === "qr" ? 4000 : 3000);
   };
   $("#wa-atualizar").addEventListener("click", conferir);
+  $("#wa-janela").addEventListener("click", async () => { try { await api("POST", "whatsapp/janela", { mostrar: true }); } catch (e) { avisar(e.message); } });
+  $("#wa-busca").addEventListener("input", desenharLista);
+  $$("[data-filtro]").forEach((b) => b.addEventListener("click", () => {
+    WA.filtro = b.dataset.filtro; $$("[data-filtro]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); desenharLista();
+  }));
   $("#wa-abrir").addEventListener("submit", (e) => { e.preventDefault(); const n = e.target.contato.value.trim(); if (n) abrirConversaWa(n); });
   if (WA.conversa) desenharConversaWa();
   await conferir();
@@ -2869,7 +3171,7 @@ ROTAS.whatsapp = async () => {
 function msgWa(m) {
   if (m.tipo === "audio") {
     return `<div class="msg ${m.de === "eu" ? "eu" : "ele"} audio"><p><span class="msg-voz" aria-hidden="true">🎤</span> Mensagem de voz${m.duracao ? ` · ${esc(m.duracao)}` : ""}</p>
-      ${m.transcricao ? `<p class="msg-transcricao">${esc(m.transcricao)}</p>` : `<button class="botao mini" type="button" data-ouvir="${esc(m.id)}">Transcrever</button>`}
+      ${m.transcricao ? `<p class="msg-transcricao">${esc(m.transcricao)}</p>` : `${m.erro_audio ? `<p class="msg-erro-audio">${esc(m.erro_audio)}</p>` : ""}<button class="botao mini" type="button" data-ouvir="${esc(m.id)}">${m.erro_audio ? "Tentar de novo" : "Transcrever"}</button>`}
       <span class="msg-acoes">${esc(m.hora)}</span></div>`;
   }
   return `<div class="msg ${m.de === "eu" ? "eu" : "ele"}${m.tipo === "midia" ? " midia" : ""}"><p>${esc(m.texto)}</p><span class="msg-acoes">${esc(m.hora)}</span></div>`;
@@ -2879,9 +3181,30 @@ async function abrirConversaWa(contato) {
   const caixa = $("#wa-conversa");
   caixa.innerHTML = `<p class="carregando">Abrindo a conversa com ${esc(contato)}…</p>`;
   try {
-    WA.conversa = await api("GET", `whatsapp/conversa?contato=${encodeURIComponent(contato)}&n=20`);
+    if (WA.conversa?.contato !== contato) WA.n = 20;
+    WA.ocupado = true;
+    WA.conversa = await api("GET", `whatsapp/conversa?contato=${encodeURIComponent(contato)}&n=${WA.n}`);
+    $$(".wa-itens [data-contato]").forEach((b) => { b.classList.toggle("atual", b.dataset.contato === contato); if (b.dataset.contato === contato) { b.classList.remove("tem-nao-lidas"); b.querySelector(".selo")?.remove(); } });
     desenharConversaWa();
   } catch (e) { caixa.innerHTML = `<p class="erro">${esc(e.message)}</p>`; }
+  finally { WA.ocupado = false; }
+}
+
+function respostasRapidasWa() {
+  const lista = WA.respostas || [];
+  dialogo({
+    titulo: "Respostas rápidas",
+    corpo: `<p class="sub" style="margin-top:0">Textos que você usa sempre. Clicar num deles na conversa só preenche a resposta: você revisa antes de enviar.</p>
+      <div class="wa-rr-edicao" id="wa-rr">${[...lista, { titulo: "", texto: "" }].map((r, i) => `<div class="campos wa-rr-linha">
+        ${campo({ nome: `t${i}`, rotulo: "Nome", valor: r.titulo })}${campo({ nome: `x${i}`, rotulo: "Texto", tipo: "textarea", valor: r.texto, largo: true })}</div>`).join("")}</div>
+      <p class="sub">Para apagar uma, deixe o nome vazio. Para criar, preencha a última linha.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+      const novas = [];
+      for (let i = 0; i <= lista.length; i++) if ((v[`t${i}`] || "").trim() && (v[`x${i}`] || "").trim()) novas.push({ titulo: v[`t${i}`], texto: v[`x${i}`] });
+      WA.respostas = (await api("POST", "whatsapp/respostas", { respostas: novas })).respostas;
+      avisar("Respostas salvas"); desenharConversaWa();
+    } }],
+  });
 }
 
 function desenharConversaWa() {
@@ -2889,8 +3212,10 @@ function desenharConversaWa() {
   const caixa = $("#wa-conversa");
   if (!c || !caixa) return;
   caixa.innerHTML = `
-    <header class="wa-topo"><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</header>
-    <div class="wa-msgs" id="wa-msgs">${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
+    <header class="wa-topo"><div><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</div>
+      <div class="wa-topo-acoes"><button class="botao pequeno" type="button" id="wa-resumir">Resumir conversa</button><button class="botao pequeno" type="button" id="wa-recarregar">Atualizar</button></div></header>
+    <div class="wa-resumo" id="wa-resumo" hidden></div>
+    <div class="wa-msgs" id="wa-msgs">${c.mensagens.length >= WA.n && WA.n < 80 ? '<button class="botao pequeno wa-mais" type="button" id="wa-mais">Carregar mensagens anteriores</button>' : ""}${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
     ${c.mensagens.some((m) => m.tipo === "audio" && !m.transcricao) ? '<p class="wa-audios-aviso" id="wa-audios-aviso"><span class="traf-girando" aria-hidden="true"></span> <span class="sub">Transcrevendo os áudios aqui no PC para você (e o Jarvis) responder certo…</span></p>' : ""}
     <div class="wa-acoes">
       <button class="botao" type="button" id="wa-sugerir">Sugerir resposta</button>
@@ -2898,6 +3223,8 @@ function desenharConversaWa() {
       <button class="botao" type="button" id="wa-evento">Criar evento</button>
       <button class="botao" type="button" id="wa-livre">Ver disponibilidade</button>
     </div>
+    <div class="wa-rapidas" id="wa-rapidas">${(WA.respostas || []).map((r, i) => `<button type="button" class="ind-chip" data-rapida="${i}" title="${esc(r.texto)}">${esc(r.titulo)}</button>`).join("")}<button type="button" class="ind-chip wa-rr-editar" id="wa-rr-editar">Editar respostas rápidas</button></div>
+    <input class="wa-orientacao" id="wa-orientacao" placeholder="Orientação para a sugestão (opcional). Ex.: confirmar para quinta às 14h, tom mais formal" aria-label="Orientação para a sugestão">
     <form class="compositor" id="wa-compositor">
       <textarea id="wa-texto" rows="2" placeholder="Escreva a resposta para ${esc(c.contato)}" aria-label="Resposta"></textarea>
       <button class="botao primario" type="submit">Enviar</button>
@@ -2910,10 +3237,11 @@ function desenharConversaWa() {
     b.disabled = true; b.textContent = "Ouvindo…";
     try {
       const r = await api("POST", "whatsapp/transcrever", { contato: c.contato, id: m.id });
-      Object.assign(m, { transcricao: r.texto, texto: `[áudio] ${r.texto}` });
-      b.closest(".msg").outerHTML = msgWa(m);
-      ligarOuvir();
-    } catch (e) { avisar(e.message); b.disabled = false; b.textContent = "Transcrever"; }
+      Object.assign(m, { transcricao: r.texto, texto: `[áudio] ${r.texto}`, erro_audio: "" });
+    } catch (e) { m.erro_audio = e.message; }
+    const el = b.closest(".msg");
+    if (el) el.outerHTML = msgWa(m);
+    ligarOuvir();
   };
   const ligarOuvir = () => $$("[data-ouvir]", msgs).forEach((b) => { if (!b.dataset.ligado) { b.dataset.ligado = "1"; b.addEventListener("click", () => transcrever(b)); } });
   ligarOuvir();
@@ -2931,11 +3259,38 @@ function desenharConversaWa() {
     try {
       await transcrevendo;
       b.textContent = "Pensando…";
-      $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens })).texto;
+      $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens, pedido: $("#wa-orientacao").value })).texto;
     }
     catch (e) { avisar(e.message); }
     finally { b.disabled = false; b.textContent = "Sugerir resposta"; }
   });
+  $("#wa-resumir").addEventListener("click", async (ev) => {
+    const b = ev.currentTarget, caixaR = $("#wa-resumo");
+    b.disabled = true; b.textContent = pendentes.length ? "Ouvindo os áudios…" : "Resumindo…";
+    try {
+      await transcrevendo; b.textContent = "Resumindo…";
+      const r = await api("POST", "whatsapp/resumir", { contato: c.contato, mensagens: c.mensagens });
+      caixaR.innerHTML = `<div class="bloco-topo"><strong>Resumo</strong><button class="botao-icone" type="button" aria-label="Fechar resumo" id="wa-resumo-fechar">×</button></div><div class="md">${mdSimples(r.texto)}</div>`;
+      caixaR.hidden = false;
+      $("#wa-resumo-fechar").addEventListener("click", () => { caixaR.hidden = true; });
+    } catch (e) { avisar(e.message); }
+    finally { b.disabled = false; b.textContent = "Resumir conversa"; }
+  });
+  $("#wa-recarregar").addEventListener("click", () => abrirConversaWa(c.contato));
+  $("#wa-mais")?.addEventListener("click", () => { WA.n = Math.min(80, WA.n + 20); abrirConversaWa(c.contato); });
+  const desenharRapidas = () => {
+    const alvo = $("#wa-rapidas");
+    if (!alvo || WA.conversa !== c) return;
+    alvo.innerHTML = (WA.respostas || []).map((x, i) => `<button type="button" class="ind-chip" data-rapida="${i}" title="${esc(x.texto)}">${esc(x.titulo)}</button>`).join("")
+      + '<button type="button" class="ind-chip wa-rr-editar" id="wa-rr-editar">Editar respostas rápidas</button>';
+    $$("[data-rapida]", alvo).forEach((b) => b.addEventListener("click", () => {
+      const t = $("#wa-texto"); const r = WA.respostas[+b.dataset.rapida];
+      t.value = t.value.trim() ? `${t.value.trim()}\n${r.texto}` : r.texto; t.focus();
+    }));
+    $("#wa-rr-editar", alvo).addEventListener("click", respostasRapidasWa);
+  };
+  desenharRapidas();
+  if (!WA.respostas) api("GET", "whatsapp/respostas").then((r) => { WA.respostas = r.respostas; desenharRapidas(); }).catch(() => {});
   $("#wa-tarefa").addEventListener("click", () => editarTarefa({
     titulo: `${c.contato}: ${(dele()[dele().length - 1] || "").slice(0, 70)}`, cliente_id: c.cliente?.id ?? "",
     descricao: `Pedido pelo WhatsApp:\n${resumo()}`,

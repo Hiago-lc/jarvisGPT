@@ -289,7 +289,10 @@ def show_window(page, show=True):
 
 
 _AUDIO_BOTAO = ('[data-icon="audio-play"], [data-icon="ptt-play"], [data-icon="audio-download"], '
-                'button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i]')
+                '[data-icon="ptt-download"], [data-icon*="ptt" i], [data-icon*="audio" i], '
+                'button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i], '
+                '[role="button"][aria-label*="voz" i], [role="button"][aria-label*="voice" i], '
+                'span[aria-label*="mensagem de voz" i], span[aria-label*="voice message" i]')
 _HORA_RE = re.compile(r'\b(\d{1,2}:\d{2})\b')
 
 
@@ -325,7 +328,8 @@ def read_chat(page, recipient, stop, count=15):
         horas = linha.evaluate(
             "el => [...el.querySelectorAll('*')].filter(e => !e.childElementCount)"
             ".map(e => (e.textContent || '').trim()).filter(t => /^\\d{1,2}:\\d{2}$/.test(t))") or _HORA_RE.findall(bruto)
-        if linha.locator(_AUDIO_BOTAO).count():
+        # Voz: ícone/botão de play ou um controle deslizante de progresso com a duração.
+        if linha.locator(_AUDIO_BOTAO).count() or (linha.locator('[role="slider"]').count() and len(horas) > 1):
             duracao = horas[0] if len(horas) > 1 else ''
             out.append({'hora': horas[-1] if horas else '', 'data': '', 'autor': '', 'de': de, 'tipo': 'audio',
                         'id': mid, 'duracao': duracao, 'texto': '[mensagem de voz]'})
@@ -336,36 +340,61 @@ def read_chat(page, recipient, stop, count=15):
 
 
 _CAPTURAR_AUDIO = """async (id) => {
-  if (!window.__jarvisPlay) {
-    window.__jarvisPlay = HTMLMediaElement.prototype.play;
+  // Duas formas de pegar o áudio já decifrado pelo WhatsApp Web: o arquivo (Blob) que ele cria
+  // para o player e o endereço que o player recebe ao apertar o play (sem tocar o som).
+  if (!window.__jarvisAudio) {
+    window.__jarvisAudio = { blobs: [], captura: null };
+    const criar = URL.createObjectURL;
+    URL.createObjectURL = function (obj) {
+      const url = criar.apply(this, arguments);
+      try { if (obj && /audio|ogg|opus|mpeg|mp4|octet/i.test(obj.type || "")) window.__jarvisAudio.blobs.push({ url, blob: obj, t: Date.now() }); } catch (_) {}
+      if (window.__jarvisAudio.blobs.length > 30) window.__jarvisAudio.blobs.shift();
+      return url;
+    };
+    const tocar = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
-      if (window.__jarvisCaptura) { const f = window.__jarvisCaptura; window.__jarvisCaptura = null; f(this); return Promise.resolve(); }
-      return window.__jarvisPlay.apply(this, arguments);
+      const f = window.__jarvisAudio.captura;
+      if (f) { window.__jarvisAudio.captura = null; f(this); try { this.pause(); } catch (_) {} return Promise.resolve(); }
+      return tocar.apply(this, arguments);
     };
   }
+  const A = window.__jarvisAudio;
   const linha = [...document.querySelectorAll('#main [data-id]')].find((e) => e.getAttribute('data-id') === id);
   if (!linha) return { erro: 'nao_achou' };
   linha.scrollIntoView({ block: 'center' });
-  const icone = linha.querySelector('[data-icon="audio-play"], [data-icon="ptt-play"], [data-icon="audio-download"]');
-  const botao = (icone && icone.closest('button, [role="button"]')) ||
-    linha.querySelector('button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i]');
-  if (!botao) return { erro: 'sem_botao' };
+  const achar = (sel) => { const el = linha.querySelector(sel); return el ? (el.closest('button, [role="button"]') || el) : null; };
+  const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Áudio ainda não baixado: o primeiro clique baixa; espera o botão de play aparecer.
+  const baixar = achar('[data-icon="audio-download"], [data-icon="ptt-download"], [data-icon*="download" i]');
+  if (baixar) {
+    baixar.click();
+    for (let i = 0; i < 60 && !linha.querySelector('[data-icon*="play" i]'); i++) await espera(250);
+  }
+  const botao = achar('[data-icon="audio-play"], [data-icon="ptt-play"], [data-icon*="play" i]') ||
+    achar('button[aria-label*="voz" i], button[aria-label*="voice" i], button[aria-label*="áudio" i], [role="button"][aria-label*="voz" i], [role="button"][aria-label*="voice" i]');
+  if (!botao) return { erro: 'sem_botao', html: linha.outerHTML.slice(0, 20000) };
+  const antes = Date.now();
   const src = await new Promise((ok) => {
-    const limite = setTimeout(() => { window.__jarvisCaptura = null; ok(''); }, 20000);
-    window.__jarvisCaptura = (el) => {
+    const limite = setTimeout(() => { A.captura = null; ok(''); }, 25000);
+    A.captura = (el) => {
       const ver = (n) => { const s = el.currentSrc || el.src; if (s) { clearTimeout(limite); ok(s); } else if (n > 0) setTimeout(() => ver(n - 1), 100); };
-      ver(100);
+      ver(150);
     };
     botao.click();
   });
-  const pausa = linha.querySelector('[data-icon="audio-pause"], [data-icon="ptt-pause"]');
-  if (pausa) (pausa.closest('button, [role="button"]') || pausa).click();
-  if (!src) return { erro: 'sem_audio' };
-  const resp = await fetch(src);
-  const buf = new Uint8Array(await resp.arrayBuffer());
+  const pausa = achar('[data-icon="audio-pause"], [data-icon="ptt-pause"], [data-icon*="pause" i]');
+  if (pausa) pausa.click();
+  let blob = null;
+  const doBlob = A.blobs.find((b) => b.url === src) || A.blobs.filter((b) => b.t >= antes - 500).pop();
+  if (doBlob) blob = doBlob.blob;
+  if (!blob && src) {
+    try { const r = await fetch(src); blob = await r.blob(); } catch (e) { return { erro: 'fetch: ' + e.message }; }
+  }
+  if (!blob) return { erro: 'sem_audio', html: linha.outerHTML.slice(0, 20000) };
+  const buf = new Uint8Array(await blob.arrayBuffer());
   let bin = '';
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-  return { b64: btoa(bin), tipo: resp.headers.get('content-type') || '' };
+  return { b64: btoa(bin), tipo: blob.type || '' };
 }"""
 
 
@@ -379,6 +408,13 @@ def baixar_audio(page, recipient, msg_id, stop):
     if r.get('erro') == 'nao_achou':
         raise DraftError('audio_missing', 'Essa mensagem de voz não está mais entre as últimas da conversa.')
     if r.get('erro'):
+        if r.get('html'):          # guarda a mensagem como o WhatsApp mostrou, para ajustar o Jarvis
+            try:
+                from core.data_paths import data_dir
+                (data_dir() / 'whatsapp_audio_erro.html').write_text(r['html'], encoding='utf-8')
+            except Exception:
+                pass
+        print(f"[WhatsApp] áudio {msg_id} não baixou: {r['erro']}")
         raise DraftError('audio_failed', 'Não consegui baixar a mensagem de voz pelo WhatsApp Web '
                          f'({r["erro"]}). Ouça pelo celular.')
     return {'audio': base64.b64decode(r['b64']), 'tipo': r.get('tipo', '')}

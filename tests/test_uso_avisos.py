@@ -179,7 +179,7 @@ class ContinuacaoTests(unittest.TestCase):
     def setUp(self):
         import tempfile
         self.dir = tempfile.TemporaryDirectory()
-        self.env = patch.dict(os.environ, {"JARVISGPT_DATA_DIR": self.dir.name})
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": self.dir.name})
         self.env.start()
 
     def tearDown(self):
