@@ -283,7 +283,8 @@ function barras(itens, chave, max) {
 }
 
 ROTAS.painel = async () => {
-  const p = lembrar("central.periodo", periodoPadrao("mes"));
+  let p = lembrar("central.periodo", periodoPadrao("mes"));
+  if (!p || !p.de || !p.ate) p = periodoPadrao("mes");      // valor de outra tela ou corrompido
   const [d, rot] = await Promise.all([api("GET", `painel?de=${p.de}&ate=${p.ate}`), api("GET", "rotina").catch(() => null)]);
   const sel = seletorPeriodo(p, (novo) => { guardar("central.periodo", novo); ROTAS.painel(); });
   const hoje = hojeIso();
@@ -2022,7 +2023,7 @@ const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 
 function periodoAtual() {
   let p = { id: "30" };
-  try { p = JSON.parse(localStorage.getItem("central.periodo") || "null") || p; } catch (_) { /* sem armazenamento */ }
+  try { p = JSON.parse(localStorage.getItem("central.periodo.anuncios") || "null") || p; } catch (_) { /* sem armazenamento */ }
   return p;
 }
 
@@ -2044,7 +2045,7 @@ function datasDoPeriodo(p) {
   return { ini: isoLocal(ini), fim: isoLocal(ontem) };
 }
 
-function seletorPeriodo(alvo, aoMudar) {
+function seletorPeriodoInd(alvo, aoMudar) {
   const p = periodoAtual();
   const d = datasDoPeriodo(p);
   alvo.innerHTML = `<div class="ind-periodos" role="group" aria-label="Período">
@@ -2053,7 +2054,7 @@ function seletorPeriodo(alvo, aoMudar) {
       <label>De <input type="date" id="ind-ini" name="ini" value="${d.ini}" max="${isoLocal(new Date())}"></label>
       <label>Até <input type="date" id="ind-fim" name="fim" value="${d.fim}" max="${isoLocal(new Date())}"></label>
       <button class="botao pequeno primario" type="submit">Ver</button></form>`;
-  const guardar = (x) => { try { localStorage.setItem("central.periodo", JSON.stringify(x)); } catch (_) { /* sem armazenamento */ } };
+  const guardar = (x) => { try { localStorage.setItem("central.periodo.anuncios", JSON.stringify(x)); } catch (_) { /* sem armazenamento */ } };
   $$("[data-periodo]", alvo).forEach((b) => b.addEventListener("click", () => {
     const id = b.dataset.periodo;
     $$("[data-periodo]", alvo).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
@@ -2273,7 +2274,7 @@ async function paginaIndicadores(plataforma, contaId) {
     desenharGrafico();
     desenharTabela();
   };
-  let datas = seletorPeriodo($("#ind-periodo"), (d) => { datas = d; carregar(d); });
+  let datas = seletorPeriodoInd($("#ind-periodo"), (d) => { datas = d; carregar(d); });
   $("#ind-atualizar").addEventListener("click", () => carregar(datas, true));
   $("#ind-analisar").addEventListener("click", async () => {
     try {
