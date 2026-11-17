@@ -213,6 +213,9 @@ CREATE INDEX IF NOT EXISTS tarefas_status ON tarefas(status);
 # Colunas acrescentadas a tabelas que já existiam em bancos de versões
 # anteriores. CREATE TABLE IF NOT EXISTS não altera uma tabela existente.
 _COLUNAS_NOVAS = {
+    "trafego_contas": {
+        "resultado": "TEXT NOT NULL DEFAULT ''",   # resultado principal escolhido (vazio = automático)
+    },
     "clientes": {
         "status": "TEXT NOT NULL DEFAULT 'Ativo'",
         "contato": "TEXT NOT NULL DEFAULT ''",

@@ -891,3 +891,10 @@ html.exportando .ind-tabela-caixa { overflow: visible; }
   html.exportando .bloco, html.exportando .ind-kpi, html.exportando .ind-quebra, html.exportando .ind-tabela tr { break-inside: avoid; }
   html.exportando .traf-secao > h2 { break-after: avoid; }
 }
+.ind-comparando { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin: 0 0 12px; }
+.ind-comparando p { margin: 0; }
+.ind-so-exportar { display: none; }
+html.exportando .ind-so-exportar { display: inline; }
+html.exportando .ind-resultado { display: none; }
+.ind-resultado { font-size: 13.5px; color: var(--cinza); display: inline-flex; gap: 8px; align-items: center; }
+.ind-resultado select { border: 1px solid var(--linha); border-radius: var(--raio); padding: 5px 8px; background: var(--superficie); color: var(--tinta); max-width: 100%; }

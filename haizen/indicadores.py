@@ -97,9 +97,16 @@ def _serie(linhas: dict[str, dict], ini: dt.date, fim: dt.date, somar, finalizar
 _COMPRAS = ("omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase")
 _LEADS = ("lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead")
 _CONVERSAS = ("onsite_conversion.messaging_conversation_started_7d",)
+_CADASTROS = ("omni_complete_registration", "complete_registration", "offsite_conversion.fb_pixel_complete_registration")
+_CARRINHO = ("omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart")
+_CHECKOUT = ("omni_initiated_checkout", "initiate_checkout", "offsite_conversion.fb_pixel_initiate_checkout")
 _CAMPOS_META = "spend,impressions,reach,clicks,inline_link_clicks,frequency,actions,action_values"
+# Resultado principal de cada conta: o automático escolhe pelo objetivo e pelo que a conta gera;
+# na página da conta dá para fixar outro.
 RESULTADOS_META = {"compras": "Compras", "conversas": "Conversas iniciadas", "leads": "Leads",
-                   "cliques_link": "Cliques no link"}
+                   "cadastros": "Cadastros", "checkout": "Finalizações de compra", "carrinho": "Adições ao carrinho",
+                   "visitas": "Visualizações da página", "cliques_link": "Cliques no link",
+                   "engajamento": "Engajamento com o post", "videos": "Visualizações do vídeo (3 s)"}
 
 
 def _acao(lista, tipos) -> float:
@@ -126,11 +133,15 @@ def meta_linha(l: dict) -> dict:
             "cliques": _f(l.get("clicks")), "cliques_link": _f(l.get("inline_link_clicks")),
             "compras": _acao(l.get("actions"), _COMPRAS), "valor": _acao(l.get("action_values"), _COMPRAS),
             "leads": _acao(l.get("actions"), _LEADS), "conversas": _acao(l.get("actions"), _CONVERSAS),
+            "cadastros": _acao(l.get("actions"), _CADASTROS), "carrinho": _acao(l.get("actions"), _CARRINHO),
+            "checkout": _acao(l.get("actions"), _CHECKOUT), "visitas": _acao(l.get("actions"), ("landing_page_view",)),
+            "engajamento": _acao(l.get("actions"), ("post_engagement",)), "videos": _acao(l.get("actions"), ("video_view",)),
             "frequencia": _f(l.get("frequency"))}
 
 
 def _meta_somar(acc: dict, x: dict) -> None:
-    for k in ("gasto", "impressoes", "cliques", "cliques_link", "compras", "valor", "leads", "conversas", "alcance"):
+    for k in ("gasto", "impressoes", "cliques", "cliques_link", "compras", "valor", "leads", "conversas", "alcance",
+              "cadastros", "carrinho", "checkout", "visitas", "engajamento", "videos"):
         acc[k] = acc.get(k, 0) + x.get(k, 0)
 
 
@@ -180,12 +191,12 @@ def _faixa(i: dt.date, f: dt.date) -> str:
     return json.dumps({"since": i.isoformat(), "until": f.isoformat()})
 
 
-def meta(conta_id: str, ini: str = "", fim: str = "", objetivo: str = "") -> dict:
+def meta(conta_id: str, ini: str = "", fim: str = "", objetivo: str = "", resultado: str = "") -> dict:
     i, f, ia, fa = periodo(ini, fim)
-    return _cache(("meta", conta_id, i, f, objetivo), lambda: _meta(conta_id, i, f, ia, fa, objetivo))
+    return _cache(("meta", conta_id, i, f, objetivo, resultado), lambda: _meta(conta_id, i, f, ia, fa, objetivo, resultado))
 
 
-def _meta(conta_id: str, i, f, ia, fa, objetivo: str) -> dict:
+def _meta(conta_id: str, i, f, ia, fa, objetivo: str, resultado: str = "") -> dict:
     from haizen.trafego import envio
     act = envio._act(conta_id)
     tot = (_meta_get(f"{act}/insights", fields=_CAMPOS_META, time_range=_faixa(i, f)) or [{}])[0]
@@ -208,7 +219,7 @@ def _meta(conta_id: str, i, f, ia, fa, objetivo: str) -> dict:
     except Exception:  # noqa: BLE001
         status = {}
     bruto, bruto_a = meta_linha(tot), meta_linha(tot_a)
-    principal = escolher_resultado(bruto, objetivo)
+    principal = resultado if resultado in RESULTADOS_META else escolher_resultado(bruto, objetivo)
     total, anterior = meta_resumo(bruto, principal), meta_resumo(bruto_a, principal)
     por_dia = {l.get("date_start"): meta_linha(l) for l in dias}
 
@@ -244,7 +255,8 @@ def _meta(conta_id: str, i, f, ia, fa, objetivo: str) -> dict:
         "plataforma": "meta", "conta": conta_id, "moeda": "BRL",
         "periodo": {"ini": i.isoformat(), "fim": f.isoformat(), "dias": (f - i).days + 1, "agrupamento": agrupamento(i, f)},
         "anterior": {"ini": ia.isoformat(), "fim": fa.isoformat()},
-        "resultado": principal, "resultado_nome": RESULTADOS_META[principal],
+        "resultado": principal, "resultado_nome": RESULTADOS_META[principal], "resultado_fixo": resultado in RESULTADOS_META,
+        "resultados_opcoes": [{"id": k, "nome": v, "total": round(bruto.get(k, 0), 2)} for k, v in RESULTADOS_META.items()],
         "total": total, "total_anterior": anterior,
         "variacao": {k: _var(total[k], anterior[k]) for k in total if isinstance(total[k], (int, float))},
         "serie": serie, "campanhas": campanhas[:60],

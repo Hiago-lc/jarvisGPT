@@ -231,7 +231,11 @@ def conta(cid: str) -> dict:
 def atualizar_conta(cid: str, campos: dict) -> dict:
     conta(cid)
     sets, args = [], []
-    for k in ("ativo", "cliente_id", "objetivo", "meta_cpa", "meta_roas", "verba_mensal", "notas"):
+    if "resultado" in campos:
+        from haizen import indicadores
+        if campos["resultado"] and campos["resultado"] not in indicadores.RESULTADOS_META:
+            raise ValueError("resultado desconhecido")
+    for k in ("ativo", "cliente_id", "objetivo", "meta_cpa", "meta_roas", "verba_mensal", "notas", "resultado"):
         if k not in campos:
             continue
         v = campos[k]
@@ -297,6 +301,10 @@ def prompt_analise(c: dict, hoje: dt.date | None = None) -> str:
     metas = []
     if c.get("objetivo"):
         metas.append(f"objetivo: {c['objetivo']}")
+    if c.get("resultado"):
+        from haizen import indicadores
+        metas.append(f"resultado principal desta conta (use para custo por resultado): "
+                     f"{indicadores.RESULTADOS_META.get(c['resultado'], c['resultado'])}")
     if c.get("meta_cpa"):
         metas.append(f"custo por resultado alvo: {reais(c['meta_cpa'])}")
     if c.get("meta_roas"):

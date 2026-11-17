@@ -35,7 +35,7 @@ def prompt(c: dict, mes: str) -> str:
     pini, pfim = _periodo(ant.strftime("%Y-%m"))
     return f"""Você é o gestor de tráfego sênior da agência HAIZEN preparando o relatório MENSAL para o cliente.
 Conta de anúncio: {c['id']} ({c.get('nome')}), cliente: {c.get('cliente_nome') or '—'}.
-Objetivo combinado: {c.get('objetivo') or 'não informado'}. Meta de custo por resultado: {c.get('meta_cpa') or '—'}.
+Objetivo combinado: {c.get('objetivo') or 'não informado'}.{(' Resultado principal: ' + __import__('haizen.indicadores', fromlist=['x']).RESULTADOS_META.get(c['resultado'], c['resultado']) + '.') if c.get('resultado') else ''} Meta de custo por resultado: {c.get('meta_cpa') or '—'}.
 
 Use SÓ ferramentas de leitura do meta-ads. Busque os insights da conta e das campanhas de {ini} a {fim} e, para
 comparar, de {pini} a {pfim}. Também os 3 anúncios com melhor resultado no mês.

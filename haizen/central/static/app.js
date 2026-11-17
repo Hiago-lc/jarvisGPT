@@ -2263,7 +2263,10 @@ async function paginaIndicadores(plataforma, contaId) {
       ? barrasQuebra("Por plataforma", r.quebras.plataforma, def, plataforma) + barrasQuebra("Por gênero", r.quebras.genero, def, plataforma) + barrasQuebra("Por idade", r.quebras.idade, def, plataforma)
       : barrasQuebra("Por dispositivo", r.quebras.dispositivo, def, plataforma);
     corpo.innerHTML = `
-      <p class="sub ind-comparando">${dataBr(P.ini)} a ${dataBr(P.fim)} (${P.dias} ${P.dias === 1 ? "dia" : "dias"}) · comparado com ${dataBr(A.ini)} a ${dataBr(A.fim)}${plataforma === "meta" ? ` · resultado principal: ${esc(t.resultado_nome)}` : ""}</p>
+      <div class="ind-comparando"><p class="sub">${dataBr(P.ini)} a ${dataBr(P.fim)} (${P.dias} ${P.dias === 1 ? "dia" : "dias"}) · comparado com ${dataBr(A.ini)} a ${dataBr(A.fim)}${plataforma === "meta" ? `<span class="ind-so-exportar"> · resultado principal: ${esc(t.resultado_nome)}</span>` : ""}</p>
+        ${plataforma === "meta" ? `<label class="ind-resultado">Resultado principal
+          <select id="ind-resultado"><option value=""${t.resultado_fixo ? "" : " selected"}>Automático (${esc(t.resultado_fixo ? "pelo objetivo" : t.resultado_nome)})</option>
+            ${t.resultados_opcoes.map((o) => `<option value="${o.id}"${t.resultado_fixo && o.id === t.resultado ? " selected" : ""}>${esc(o.nome)}${o.total ? ` · ${fmtNum(o.total)} no período` : ""}</option>`).join("")}</select></label>` : ""}</div>
       ${acoes.length ? `<div class="traf-faixa">${acoes.length} ${acoes.length === 1 ? "proposta espera" : "propostas esperam"} a sua aprovação nesta conta. <a href="#/${def.tela}">Ver propostas</a></div>` : ""}
       ${semGasto ? '<div class="traf-faixa">Sem investimento neste período.</div>' : ""}
       <section class="ind-kpis">${kpis.map(([k, rot, f, sentido]) => `<div class="ind-kpi"><span>${esc(rot)}</span><strong>${f(t.total[k])}</strong>
@@ -2278,6 +2281,13 @@ async function paginaIndicadores(plataforma, contaId) {
         <tbody>${r.termos.slice(0, 25).map((x) => `<tr class="${x.conversoes ? "" : "sem-conv"}"><td>${esc(x.termo)}</td><td>${moeda(x.custo)}</td><td>${fmtNum(x.cliques)}</td><td>${fmtNum(x.conversoes)}</td><td>${x.cpa ? moeda(x.cpa) : "—"}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
       <p class="sub">Números direto da API ${plataforma === "meta" ? "da Meta" : "do Google Ads"}, atualizados ${new Date(r.gerado_em * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}. Os dos últimos 2 a 3 dias ainda podem mudar um pouco.</p>`;
     $$("[data-linha]", corpo).forEach((b) => b.addEventListener("click", () => { linhaAtual = b.dataset.linha; desenharGrafico(); }));
+    $("#ind-resultado", corpo)?.addEventListener("change", async (ev) => {
+      try {
+        await api("PATCH", `trafego/contas/${encodeURIComponent(contaId)}`, { resultado: ev.target.value });
+        avisar(ev.target.value ? "Resultado principal salvo para esta conta" : "Resultado volta a ser automático");
+        linhaAtual = null; carregar(datas);
+      } catch (e) { avisar(e.message); }
+    });
     desenharGrafico();
     desenharTabela();
     window.__indicadoresProntos = true;

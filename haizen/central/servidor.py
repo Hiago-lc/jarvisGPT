@@ -819,7 +819,7 @@ class _Handler(BaseHTTPRequestHandler):
             if q.get("novo"):
                 indicadores.limpar_cache()
             c = trafego.conta(unquote(partes[1]))
-            r = indicadores.meta(c["id"], q.get("ini", ""), q.get("fim", ""), c.get("objetivo") or "")
+            r = indicadores.meta(c["id"], q.get("ini", ""), q.get("fim", ""), c.get("objetivo") or "", c.get("resultado") or "")
             return {**r, "conta_info": c, "analise": trafego.ultimas_analises().get(c["id"]),
                     "acoes": [a for a in trafego.acoes(("proposta", "aplicando", "falhou")) if a["conta_id"] == c["id"]]}
         if rota == "contas" and len(partes) == 4 and partes[2:] == ["indicadores", "exportar"] and metodo == "GET":
