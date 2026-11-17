@@ -362,3 +362,26 @@ class GoogleAdsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CortesTests(unittest.TestCase):
+    def test_pecas_ja_no_formato_nao_sao_recortadas_e_respeitam_o_limite(self):
+        import tempfile
+        from pathlib import Path
+        from PIL import Image
+        from haizen.googleads import midia
+        d = Path(tempfile.mkdtemp()); refs = []
+        for n in range(10):
+            for w, h in ((1200, 1200), (1200, 628), (960, 1200)):
+                f = d / f"p{n}_{w}x{h}.png"; Image.new("RGB", (w, h), (n * 20, w % 255, h % 255)).save(f); refs.append(str(f))
+        with patch.object(midia, "arquivo", side_effect=lambda r: Path(r)):
+            dg = midia.selecionar_cortes(refs, ("paisagem", "quadrada", "retrato"), 20, ("paisagem", "quadrada"))
+            disp = midia.selecionar_cortes(refs, ("paisagem", "quadrada"), 15, ("paisagem", "quadrada"))
+        self.assertEqual(sum(len(v) for v in dg.values()), 20)
+        self.assertTrue(all(dg[f] for f in dg))
+        self.assertEqual(sum(len(v) for v in disp.values()), 15)
+
+    def test_botao_curto(self):
+        from haizen import googleads
+        self.assertEqual(googleads._cta_curto("Comprar agora"), "Comprar")
+        self.assertEqual(googleads._cta_curto(""), "Saiba mais")

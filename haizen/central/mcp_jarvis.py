@@ -508,7 +508,7 @@ def googleads_propor(conta_id: str, tipo: str, titulo: str, detalhes: dict, moti
     anuncio_video: {videos: [link do YouTube OU o anexo do vídeo, que é enviado ao YouTube como não listado],
     titulos [1–5, até 40], titulos_longos [1–5, até 90], descricoes [1–5, até 90], cta: LEARN_MORE|SHOP_NOW|BUY_NOW|
     ORDER_NOW|SIGN_UP|CONTACT_US|GET_QUOTE|BOOK_NOW|...}, anuncio_imagem: {imagens [anexos; cortadas em 1,91:1, 1:1 e
-    4:5], titulos [1–5, até 40], descricoes [1–5, até 90], cta_texto}} — um dos dois anúncios ou os dois.
+    4:5], titulos [1–5, até 40], descricoes [1–5, até 90], cta_texto (até 10 letras, ex.: "Comprar")}}; até 20 imagens no total (peça já no formato do Google entra só nele) — um dos dois anúncios ou os dois.
     criar_campanha_display: {nome, orcamento_diario, lance, locais, url_final, nome_empresa, logo, imagens [anexos],
     titulos [1–5, até 30], titulo_longo (até 90), descricoes [1–5, até 90]}. Campanhas novas nascem pausadas.
     Arquivos: passe o id do anexo (o que vem em [anexo:ID]) ou o caminho do arquivo."""

@@ -109,6 +109,46 @@ def cortes(ref: str) -> dict[str, bytes]:
         return out
 
 
+def selecionar_cortes(refs: list[str], formatos: tuple[str, ...], maximo: int,
+                      obrigatorios: tuple[str, ...] = ()) -> dict[str, list[bytes]]:
+    """Imagens prontas para o Google sem passar do limite do anúncio.
+
+    Uma peça que já está num formato do Google (ex.: 1200x628) entra só nesse formato, sem ser
+    recortada nos outros; uma peça em outra proporção vira todos os cortes possíveis. Repetidas
+    saem, e o total fica em `maximo`, alternando os formatos para não sobrar só um tipo."""
+    from PIL import Image
+    por_formato: dict[str, list[bytes]] = {f: [] for f in formatos}
+    vistos: set[bytes] = set()
+    reserva: dict[str, bytes] = {}
+    for ref in refs:
+        with Image.open(arquivo(ref)) as im:
+            proporcao = im.width / im.height
+        cs = {f: b for f, b in cortes(ref).items() if f in formatos}
+        for f, b in cs.items():
+            reserva.setdefault(f, b)
+        casa_todos = [f for f in FORMATOS if abs(proporcao - FORMATOS[f][0] / FORMATOS[f][1]) <= 0.06 * FORMATOS[f][0] / FORMATOS[f][1]]
+        casa = [f for f in casa_todos if f in formatos]
+        if casa_todos and not casa:
+            continue                 # peça feita para outro formato (ex.: retrato no Display): não recorta
+        escolhidos = {f: cs[f] for f in casa if f in cs} or cs
+        for f, b in escolhidos.items():
+            if b not in vistos:
+                vistos.add(b)
+                por_formato[f].append(b)
+    for f in obrigatorios:                      # formato exigido que nenhuma peça tinha: corta da primeira
+        if not por_formato.get(f) and f in reserva:
+            por_formato[f].append(reserva[f])
+    final: dict[str, list[bytes]] = {f: [] for f in formatos}
+    total, i = 0, 0
+    while total < maximo and any(len(por_formato[f]) > i for f in formatos):
+        for f in formatos:
+            if total < maximo and len(por_formato[f]) > i:
+                final[f].append(por_formato[f][i])
+                total += 1
+        i += 1
+    return final
+
+
 def logo_quadrado(ref: str) -> bytes:
     """Logo em 1:1 sem cortar: centraliza num quadrado com fundo branco (mín. 128 px)."""
     from PIL import Image

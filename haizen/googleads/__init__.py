@@ -554,10 +554,23 @@ def _validar_demand_gen(det: dict) -> dict:
         d["anuncio_imagem"] = {"imagens": _validar_imagens(im.get("imagens"), erros),
                                "titulos": _textos(im.get("titulos"), 1, 5, 40, "títulos da imagem", erros),
                                "descricoes": _textos(im.get("descricoes"), 1, 5, 90, "descrições da imagem", erros),
-                               "cta_texto": str(im.get("cta_texto") or "Saiba mais")[:30]}
+                               "cta_texto": _cta_curto(im.get("cta_texto"))}
     if erros:
         raise ValueError("a campanha não passaria no Google: " + "; ".join(erros))
     return d
+
+
+def _cta_curto(t) -> str:
+    """O botão do anúncio de imagem do Demand Gen aceita até 10 caracteres."""
+    t = " ".join(str(t or "").split()) or "Saiba mais"
+    if len(t) <= 10:
+        return t
+    curto = ""
+    for palavra in t.split():
+        if len(f"{curto} {palavra}".strip()) > 10:
+            break
+        curto = f"{curto} {palavra}".strip()
+    return curto or t[:10]
 
 
 def _validar_display(det: dict) -> dict:
@@ -662,8 +675,10 @@ def _criar_demand_gen(c: dict, d: dict) -> dict:
         im = d["anuncio_imagem"]
         campos = {"paisagem": "marketingImages", "quadrada": "squareMarketingImages", "retrato": "portraitMarketingImages"}
         imagens: dict = {v: [] for v in campos.values()}
-        for i, ref in enumerate(im["imagens"]):
-            for formato, dados in midia.cortes(ref).items():
+        # Demand Gen aceita até 20 imagens somando os três formatos.
+        sel = midia.selecionar_cortes(im["imagens"], ("paisagem", "quadrada", "retrato"), 20, ("paisagem", "quadrada"))
+        for formato, lista in sel.items():
+            for i, dados in enumerate(lista):
                 imagens[campos[formato]].append({"asset": _asset_imagem(ids, ops, f"{d['nome']} {formato} {i + 1}", dados)})
         anuncio = {k: v for k, v in imagens.items() if v}
         anuncio.update({"logoImages": [{"asset": logo}], "headlines": [{"text": t} for t in im["titulos"]],
@@ -704,13 +719,10 @@ def _criar_display(c: dict, d: dict) -> dict:
     ops.append({"adGroupOperation": {"create": {"resourceName": grupo, "name": f"{d['nome']} · grupo", "campaign": camp,
                                                 "status": "ENABLED", "type": "DISPLAY_STANDARD"}}})
     logo = _asset_imagem(ids, ops, f"{d['nome_empresa']} logo", midia.logo_quadrado(d["logo"]))
-    paisagem, quadrada = [], []
-    for i, ref in enumerate(d["imagens"]):
-        cs = midia.cortes(ref)
-        if "paisagem" in cs:
-            paisagem.append({"asset": _asset_imagem(ids, ops, f"{d['nome']} paisagem {i + 1}", cs["paisagem"])})
-        if "quadrada" in cs:
-            quadrada.append({"asset": _asset_imagem(ids, ops, f"{d['nome']} quadrada {i + 1}", cs["quadrada"])})
+    # Display responsivo aceita até 15 imagens somando paisagem e quadrada.
+    sel = midia.selecionar_cortes(d["imagens"], ("paisagem", "quadrada"), 15, ("paisagem", "quadrada"))
+    paisagem = [{"asset": _asset_imagem(ids, ops, f"{d['nome']} paisagem {i + 1}", b)} for i, b in enumerate(sel["paisagem"])]
+    quadrada = [{"asset": _asset_imagem(ids, ops, f"{d['nome']} quadrada {i + 1}", b)} for i, b in enumerate(sel["quadrada"])]
     if not paisagem or not quadrada:
         raise ValueError("as imagens precisam render pelo menos um corte 1,91:1 (600x314) e um 1:1 (300x300)")
     ops.append({"adGroupAdOperation": {"create": {"adGroup": grupo, "status": "ENABLED", "ad": {
