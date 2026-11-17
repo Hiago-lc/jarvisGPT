@@ -210,3 +210,7 @@ mostrou fica em `%LOCALAPPDATA%\JarvisGPT\whatsapp_audio_erro.html` para ajustar
 O início automático com o Windows agora é um `Jarvis HAIZEN.vbs` (o `.cmd` antigo é trocado sozinho
 na próxima vez que o Jarvis abre), e nada que o Jarvis roda por trás (Claude Code, PowerShell,
 ffmpeg, node) abre console.
+
+Na página de indicadores, **Exportar PDF** (páginas A4) e **Exportar JPG** (imagem da página inteira)
+salvam o relatório do período escolhido na pasta Downloads, sem menu, botões e chat, com o cabeçalho
+"HAIZEN · Relatório de indicadores".

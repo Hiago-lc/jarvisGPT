@@ -153,6 +153,9 @@ if (APP) document.body.classList.add("app");
 let PONTE = false;          // a janela do Jarvis está aberta e respondendo
 let NATIVO = null;          // quem, na tela atual, quer saber do estado da janela
 
+// Modo exportação (PDF/JPG dos indicadores): a página sai sem menu, botões e chat.
+if (new URLSearchParams(location.search).has("exportar")) document.documentElement.classList.add("exportando");
+
 async function navegar() {
   const [rota, param] = (location.hash.replace(/^#\/?/, "") || (PONTE ? "jarvis" : "painel")).split("/");
   const padrao = PONTE ? "jarvis" : "painel";
@@ -2202,8 +2205,12 @@ async function paginaIndicadores(plataforma, contaId) {
   const def = IND_DEF[plataforma];
   const base = plataforma === "meta" ? `trafego/contas/${encodeURIComponent(contaId)}/indicadores` : `googleads/contas/${encodeURIComponent(contaId)}/indicadores`;
   main.innerHTML = `
-    <div class="topo"><div><a class="voltar" href="#/${def.tela}">← ${esc(def.nome)}</a><h1 id="ind-titulo">Carregando…</h1><p class="sub" id="ind-sub"></p></div>
-      <div class="traf-topo-botoes"><button class="botao" id="ind-atualizar">Atualizar dados</button><button class="botao primario" id="ind-analisar">Pedir análise do gestor</button></div></div>
+    <div class="topo"><div><a class="voltar" href="#/${def.tela}">← ${esc(def.nome)}</a>
+        <p class="ind-relatorio-marca">HAIZEN · Relatório de indicadores ${plataforma === "meta" ? "Meta Ads" : "Google Ads"}</p>
+        <h1 id="ind-titulo">Carregando…</h1><p class="sub" id="ind-sub"></p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ind-atualizar">Atualizar dados</button>
+        <button class="botao" data-exportar="pdf">Exportar PDF</button><button class="botao" data-exportar="jpg">Exportar JPG</button>
+        <button class="botao primario" id="ind-analisar">Pedir análise do gestor</button></div></div>
     <div id="ind-periodo" class="ind-periodo"></div>
     <div id="ind-corpo"><p class="vazio">Buscando os números…</p></div>`;
   const corpo = $("#ind-corpo");
@@ -2212,7 +2219,7 @@ async function paginaIndicadores(plataforma, contaId) {
     corpo.innerHTML = '<p class="vazio">Buscando os números…</p>';
     let r;
     try { r = await api("GET", `${base}?ini=${datas.ini}&fim=${datas.fim}${novo ? "&novo=1" : ""}`); } catch (e) {
-      corpo.innerHTML = `<div class="traf-faixa erro">${esc(e.message)}</div>`; return;
+      corpo.innerHTML = `<div class="traf-faixa erro">${esc(e.message)}</div>`; window.__indicadoresErro = e.message; return;
     }
     if (!document.body.contains(corpo)) return;
     const c = r.conta_info || {};
@@ -2273,9 +2280,25 @@ async function paginaIndicadores(plataforma, contaId) {
     $$("[data-linha]", corpo).forEach((b) => b.addEventListener("click", () => { linhaAtual = b.dataset.linha; desenharGrafico(); }));
     desenharGrafico();
     desenharTabela();
+    window.__indicadoresProntos = true;
   };
   let datas = seletorPeriodoInd($("#ind-periodo"), (d) => { datas = d; carregar(d); });
   $("#ind-atualizar").addEventListener("click", () => carregar(datas, true));
+  $$("[data-exportar]").forEach((b) => b.addEventListener("click", async () => {
+    const formato = b.dataset.exportar, rotulo = b.textContent;
+    b.disabled = true; b.textContent = "Gerando…";
+    try {
+      const resp = await fetch(`/api/${base}/exportar?formato=${formato}&ini=${datas.ini}&fim=${datas.fim}`, { headers: { "X-Central": "1" } });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.erro || `erro ${resp.status}`); }
+      const nome = decodeURIComponent((resp.headers.get("Content-Disposition") || "").split("''")[1] || `indicadores.${formato}`);
+      const url = URL.createObjectURL(await resp.blob());
+      const a = Object.assign(document.createElement("a"), { href: url, download: nome });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      avisar(`${formato.toUpperCase()} salvo em Downloads: ${nome}`);
+    } catch (e) { avisar(`Não consegui exportar: ${e.message}`); }
+    finally { b.disabled = false; b.textContent = rotulo; }
+  }));
   $("#ind-analisar").addEventListener("click", async () => {
     try {
       if (plataforma === "meta") await api("POST", "trafego/analisar", { contas: [contaId] });

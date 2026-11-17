@@ -205,9 +205,12 @@ class _Handler(BaseHTTPRequestHandler):
         bruto = self._bruto(2_000_000)
         return json.loads(bruto.decode("utf-8") or "{}") if bruto else {}
 
-    def _binario(self, corpo: bytes, tipo: str):
+    def _binario(self, corpo: bytes, tipo: str, nome: str = ""):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", tipo)
+        if nome:
+            from urllib.parse import quote
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(nome)}")
         self.send_header("Content-Length", str(len(corpo)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -257,7 +260,7 @@ class _Handler(BaseHTTPRequestHandler):
         if isinstance(resultado, _Audio):
             return self._binario(resultado.dados, "audio/wav")
         if isinstance(resultado, _Arquivo):
-            return self._binario(resultado.dados, resultado.tipo)
+            return self._binario(resultado.dados, resultado.tipo, getattr(resultado, "nome", ""))
         self._json(resultado)
 
     def _api(self, metodo, partes, q):
@@ -670,6 +673,8 @@ class _Handler(BaseHTTPRequestHandler):
             cid, acao = partes[1], (partes[2] if len(partes) > 2 else "")
             if acao == "" and metodo == "POST":
                 return ga.editar_conta(cid, self._corpo())
+            if acao == "indicadores" and len(partes) == 4 and partes[3] == "exportar" and metodo == "GET":
+                return _exportar_indicadores("google", ga.conta(cid), q or {})
             if acao == "indicadores" and metodo == "GET":
                 from haizen import indicadores
                 q = q or {}
@@ -817,6 +822,8 @@ class _Handler(BaseHTTPRequestHandler):
             r = indicadores.meta(c["id"], q.get("ini", ""), q.get("fim", ""), c.get("objetivo") or "")
             return {**r, "conta_info": c, "analise": trafego.ultimas_analises().get(c["id"]),
                     "acoes": [a for a in trafego.acoes(("proposta", "aplicando", "falhou")) if a["conta_id"] == c["id"]]}
+        if rota == "contas" and len(partes) == 4 and partes[2:] == ["indicadores", "exportar"] and metodo == "GET":
+            return _exportar_indicadores("meta", trafego.conta(unquote(partes[1])), q or {})
         if rota == "contas" and len(partes) == 2 and metodo == "PATCH":
             return trafego.atualizar_conta(unquote(partes[1]), self._corpo())
         if rota == "analises" and len(partes) == 2 and metodo == "GET":
@@ -992,10 +999,20 @@ class _Audio:
         self.dados = dados
 
 
+def _exportar_indicadores(plataforma: str, conta: dict, q: dict) -> "_Arquivo":
+    from haizen import exportar, indicadores
+    i, f, _, _ = indicadores.periodo(q.get("ini", ""), q.get("fim", ""))
+    formato = (q.get("formato") or "pdf").lower().replace("jpeg", "jpg")
+    dados = exportar.indicadores(plataforma, conta["id"], i.isoformat(), f.isoformat(), formato, PORTA)
+    nome = exportar.nome_arquivo(conta.get("cliente_nome") or conta.get("nome") or "", plataforma, i.isoformat(),
+                                 f.isoformat(), formato)
+    return _Arquivo(dados, exportar.TIPOS[formato], nome)
+
+
 class _Arquivo:
     """Um arquivo produzido por um agente, para a página mostrar."""
-    def __init__(self, dados: bytes, tipo: str):
-        self.dados, self.tipo = dados, tipo
+    def __init__(self, dados: bytes, tipo: str, nome: str = ""):
+        self.dados, self.tipo, self.nome = dados, tipo, nome
 
 
 _TIPOS_ENTREGA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
