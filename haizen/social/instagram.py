@@ -338,7 +338,38 @@ def _esperar(container: str, limite: int = 600) -> None:
     raise ErroInstagram("a Meta demorou demais para processar a mídia")
 
 
+def video_para_instagram(arquivo: Path) -> Path:
+    """Cópia do vídeo no padrão que o Instagram aceita sem recusar (erro 2207076 e parecidos):
+    H.264 yuv420p até 1080x1920 e 30 fps, áudio AAC 48 kHz estéreo (silêncio se não tiver) e o
+    índice no começo do arquivo. A cópia fica numa pasta temporária; o original não muda."""
+    import subprocess
+    import tempfile
+    from haizen.producao.ferramentas import ffmpeg
+    exe = ffmpeg()
+    destino = Path(tempfile.mkdtemp(prefix="jarvis-ig-")) / (arquivo.stem[:60] + ".mp4")
+    sonda = subprocess.run([exe, "-hide_banner", "-i", str(arquivo)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    tem_audio = "Audio:" in (sonda.stderr or "")
+    escala = ("scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease,"
+              "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30,format=yuv420p")
+    cmd = [exe, "-y", "-hide_banner", "-loglevel", "error", "-i", str(arquivo)]
+    if not tem_audio:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    cmd += ["-map", "0:v:0", "-map", "0:a:0" if tem_audio else "1:a:0", "-vf", escala,
+            "-c:v", "libx264", "-profile:v", "high", "-level", "4.1", "-preset", "veryfast", "-crf", "20",
+            "-maxrate", "20M", "-bufsize", "40M", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            "-movflags", "+faststart", "-shortest", str(destino)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+    if r.returncode != 0 or not destino.is_file():
+        raise ErroInstagram(f"não consegui preparar o vídeo para o Instagram: {(r.stderr or '').strip()[-300:]}")
+    return destino
+
+
 def _video(ig_id: str, arquivo: Path, legenda: str, reels: bool = True, carrossel: bool = False) -> str:
+    try:
+        arquivo = video_para_instagram(arquivo)
+    except Exception as e:  # noqa: BLE001 - sem ffmpeg, tenta o original
+        print(f"[Instagram] enviando o vídeo original: {e}")
     params = {"upload_type": "resumable", "media_type": "REELS" if reels and not carrossel else "VIDEO"}
     if carrossel:
         params["is_carousel_item"] = "true"
