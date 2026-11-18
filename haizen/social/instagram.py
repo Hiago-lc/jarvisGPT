@@ -326,10 +326,10 @@ def endereco_da_imagem(page_id: str, arquivo: Path) -> str:
         raise
 
 
-def _esperar(container: str, limite: int = 600) -> None:
+def _esperar(container: str, limite: int = 600, tk: str | None = None) -> None:
     fim = time.time() + limite
     while time.time() < fim:
-        r = _get(container, fields="status_code,status")
+        r = _get(container, tk, fields="status_code,status")
         if r.get("status_code") == "FINISHED":
             return
         if r.get("status_code") in ("ERROR", "EXPIRED"):
@@ -375,17 +375,32 @@ def _video(ig_id: str, arquivo: Path, legenda: str, reels: bool = True, carrosse
         params["is_carousel_item"] = "true"
     elif legenda:
         params["caption"] = legenda
-    try:
-        c = _post(f"{ig_id}/media", **params)
-        dados = arquivo.read_bytes()
+    dados = arquivo.read_bytes()
+
+    def enviar(tk: str) -> str:
+        c = _post(f"{ig_id}/media", tk, **params)
         _http("POST", c.get("uri") or f"{RUPLOAD}/{c['id']}", dados,
-              {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados)),
-               # sem isto o urllib manda "x-www-form-urlencoded" e a Meta responde "Request processing failed"
+              {"Authorization": f"OAuth {tk}", "offset": "0", "file_size": str(len(dados)),
                "Content-Type": "application/octet-stream"}, timeout=900)
-        _esperar(c["id"])
+        _esperar(c["id"], tk=tk)
         return c["id"]
-    except ErroInstagram as e:
-        erro = e
+    erro = None
+    # Primeiro com o token da Página ligada ao Instagram (o envio de vídeo recusa alguns tokens de
+    # usuário do sistema com "Request processing failed"); depois com o token cadastrado.
+    candidatos = []
+    try:
+        from haizen import social
+        page = social.config().get("page_id") or ""
+        if page:
+            candidatos.append(_token_da_pagina(page))
+    except Exception as e:  # noqa: BLE001
+        print(f"[Instagram] sem token da Página: {e}")
+    candidatos.append(token())
+    for tk in dict.fromkeys(candidatos):
+        try:
+            return enviar(tk)
+        except ErroInstagram as e:
+            erro = e
     # Plano B: o vídeo vai para a biblioteca da conta de anúncios (ads_management) e o Instagram
     # baixa de lá, pelo endereço do arquivo.
     try:
