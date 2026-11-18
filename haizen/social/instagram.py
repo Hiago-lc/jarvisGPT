@@ -379,7 +379,9 @@ def _video(ig_id: str, arquivo: Path, legenda: str, reels: bool = True, carrosse
         c = _post(f"{ig_id}/media", **params)
         dados = arquivo.read_bytes()
         _http("POST", c.get("uri") or f"{RUPLOAD}/{c['id']}", dados,
-              {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados))}, timeout=900)
+              {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados)),
+               # sem isto o urllib manda "x-www-form-urlencoded" e a Meta responde "Request processing failed"
+               "Content-Type": "application/octet-stream"}, timeout=900)
         _esperar(c["id"])
         return c["id"]
     except ErroInstagram as e:
