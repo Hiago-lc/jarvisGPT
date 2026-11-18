@@ -106,11 +106,18 @@ def _http(metodo: str, url: str, dados: bytes | None = None, cabecalhos: dict | 
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
+        corpo = b""
         try:
-            erro = json.loads(e.read()).get("error") or {}
+            corpo = e.read() or b""
+            j = json.loads(corpo)
+            # O envio de vídeo (rupload) responde o erro em "debug_info", não em "error".
+            erro = j.get("error") or j.get("debug_info") or {}
         except Exception:  # noqa: BLE001
             erro = {}
         msg = erro.get("error_user_msg") or erro.get("message") or f"HTTP {e.code}"
+        if msg == f"HTTP {e.code}" and corpo:
+            msg += f": {corpo.decode('utf-8', 'replace')[:300]}"
+        print(f"[Instagram] {metodo} {url.split('?')[0]} → {e.code}: {corpo[:600]!r}")
         m = re.search(r"Requires (\w+) permission", str(erro.get("message") or ""))
         if m or erro.get("code") == 10:
             perm = m.group(1) if m else "a permissão necessária"
@@ -337,12 +344,40 @@ def _video(ig_id: str, arquivo: Path, legenda: str, reels: bool = True, carrosse
         params["is_carousel_item"] = "true"
     elif legenda:
         params["caption"] = legenda
-    c = _post(f"{ig_id}/media", **params)
-    dados = arquivo.read_bytes()
-    _http("POST", f"{RUPLOAD}/{c['id']}", dados,
-          {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados))}, timeout=900)
+    try:
+        c = _post(f"{ig_id}/media", **params)
+        dados = arquivo.read_bytes()
+        _http("POST", c.get("uri") or f"{RUPLOAD}/{c['id']}", dados,
+              {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados))}, timeout=900)
+        _esperar(c["id"])
+        return c["id"]
+    except ErroInstagram as e:
+        erro = e
+    # Plano B: o vídeo vai para a biblioteca da conta de anúncios (ads_management) e o Instagram
+    # baixa de lá, pelo endereço do arquivo.
+    try:
+        url = endereco_do_video(arquivo)
+    except Exception as e2:  # noqa: BLE001
+        raise ErroInstagram(f"não consegui enviar o vídeo ao Instagram ({erro}); plano B também falhou: {e2}") from None
+    params.pop("upload_type", None)
+    c = _post(f"{ig_id}/media", video_url=url, **params)
     _esperar(c["id"])
     return c["id"]
+
+
+def endereco_do_video(arquivo: Path) -> str:
+    """Endereço público do vídeo pela biblioteca da conta de anúncios."""
+    from haizen.trafego import envio
+    conta = _conta_de_anuncios()
+    if not conta:
+        raise ErroInstagram("nenhuma conta de anúncios para hospedar o vídeo")
+    vid = envio.subir_video(conta, arquivo, arquivo.stem)["video_id"]
+    for _ in range(30):
+        src = (_get(vid, envio.token() or None, fields="source") or {}).get("source")
+        if src:
+            return src
+        time.sleep(10)
+    raise ErroInstagram("a Meta não liberou o endereço do vídeo")
 
 
 def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> dict:
