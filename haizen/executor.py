@@ -483,7 +483,60 @@ def guardar_aprovado(t: dict) -> Path | None:
     return destino
 
 
-def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "") -> str:
+_MODO_REVISAO = """## MODO REVISÃO — esta é uma nova versão, não um trabalho novo (OBRIGATÓRIO)
+O dono da HAIZEN aprovou tudo da versão anterior, MENOS o que está no ajuste. Por isso:
+- Esta pasta já começa com uma cópia da versão anterior (finais e fontes/). Parta DELA: abra os arquivos-fonte
+  (HTML, roteiro, projeto, legendas) e edite só o trecho que o ajuste pede.
+- Mude SOMENTE o que o ajuste pede. Todo o resto fica IDÊNTICO: textos, cores, fontes, tamanhos, posições,
+  imagens, cortes, ordem, duração, trilha, narração, transições, nomes de arquivo.
+- NÃO refaça do zero, NÃO pesquise novas referências, NÃO crie novas direções, NÃO "aproveite para melhorar"
+  outras coisas, mesmo que você ache que ficaria melhor. Se achar que outra coisa precisa mudar, escreva
+  isso em Pendências no relatório, sem mudar.
+- Re-exporte só as peças afetadas pelo ajuste, por cima dos mesmos nomes de arquivo. As outras já estão
+  certas na pasta (copiadas da versão anterior): não toque nelas.
+- Se o ajuste for ambíguo (não dá para saber qual peça ou trecho), pergunte antes de mexer.
+- No relatório, diga exatamente o que mudou e em quais arquivos."""
+
+
+def _copiar_versao_anterior(origem: Path, destino: Path, limite: int = 60_000_000) -> list[Path]:
+    """Copia a versão anterior para a pasta da nova, para o agente editar em vez de recriar.
+    Arquivos muito grandes (vídeos brutos baixados) não são copiados: o agente lê da pasta anterior."""
+    import shutil
+    grandes: list[Path] = []
+    if not origem.is_dir():
+        return grandes
+    for f in origem.rglob("*"):
+        rel = f.relative_to(origem)
+        if not f.is_file() or rel.name in (".trabalho", "CLAUDE.md") or rel.parts[0].startswith(".claude"):
+            continue
+        alvo = destino / ("fontes/RELATORIO-versao-anterior.md" if rel.as_posix() == "RELATORIO.md" else rel)
+        if alvo.exists():
+            continue
+        if f.stat().st_size > limite:
+            grandes.append(f)
+            continue
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(f, alvo)
+        except OSError as e:
+            print(f"[HAIZEN] não copiei {f.name} da versão anterior: {e}")
+    return grandes
+
+
+def prompt_de_revisao(t: dict, anterior: dict, grandes: list[Path]) -> str:
+    original = t["pedido"].split("\n\nAjuste pedido na revisão:")[0]
+    return (
+        "NOVA VERSÃO de uma entrega já feita (siga o MODO REVISÃO do CLAUDE.md).\n\n"
+        f"AJUSTE PEDIDO (a ÚNICA mudança a fazer):\n{t['ajuste'].strip()}\n\n"
+        f"A versão anterior está copiada nesta pasta (original em `{Path(anterior['pasta']).as_posix()}`; "
+        "o relatório dela está em fontes/RELATORIO-versao-anterior.md).\n"
+        + (("Arquivos grandes que NÃO foram copiados (use direto da pasta anterior, se precisar):\n"
+            + "\n".join(f"- {g.as_posix()}" for g in grandes[:30]) + "\n") if grandes else "")
+        + "\nPedido original, só para contexto (já foi atendido; NÃO refaça):\n" + original[:3000])
+
+
+def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "",
+                        revisao: bool = False) -> str:
     """O CLAUDE.md que o agente lê ao começar: onde está o material, onde gravar,
     as ferramentas e o padrão de qualidade da HAIZEN."""
     linhas = [
@@ -573,7 +626,9 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "Curto, no máximo 10 linhas em Markdown: os arquivos entregues (nome e tamanho) e, se houver, Pendências/perguntas para o "
         "cliente. Sem contar o processo.",
     ]
-    if agente in VISUAIS:
+    if revisao:
+        linhas += ["", _MODO_REVISAO]
+    elif agente in VISUAIS:
         linhas += ["", _DIRECAO_DE_ARTE.format(aprovados=(pasta_aprovados() or Path("—")).as_posix())]
     saber = conhecimento(agente)
     if saber:
@@ -671,7 +726,7 @@ def _json_do_texto(texto: str) -> dict:
         return {}
 
 
-def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> dict:
+def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "", anterior: Path | None = None) -> dict:
     """Um diretor de arte (outra chamada, que não fez a peça) olha as finais. Se
     reprovar, o agente corrige uma vez na mesma conversa. Devolve o resultado
     final do agente e anota a nota no relatório."""
@@ -683,6 +738,8 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
         return r
     checagem = conhecimento(t["agente"]).split("## Checagem final")[-1] if "## Checagem final" in \
         conhecimento(t["agente"]) else ""
+    if anterior is not None:
+        return _checar_revisao(t, pasta, r, modelo_agente, anterior, arquivos)
     refs = referencias_para_qa(pasta)
     direcao = pasta / "fontes" / "direcao.md"
     direcao_txt = direcao.read_text(encoding="utf-8", errors="replace")[:1500] if direcao.is_file() else ""
@@ -735,6 +792,51 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
         return r
 
 
+def _checar_revisao(t: dict, pasta: Path, r: dict, modelo_agente: str, anterior: Path, arquivos: list[Path]) -> dict:
+    """Numa nova versão, a checagem não julga a peça de novo: confere se o ajuste foi feito e se
+    NADA além dele mudou em relação à versão anterior."""
+    from haizen import uso
+    prompt = (
+        "Você confere uma NOVA VERSÃO de peças da HAIZEN. O dono pediu SÓ este ajuste:\n"
+        f"{(t.get('ajuste') or '').strip()}\n\n"
+        f"Versão anterior (aprovada em todo o resto): {anterior.as_posix()}\nNova versão: {pasta.as_posix()}\n"
+        "Abra com Read os arquivos finais das duas pastas (mesmo nome) e compare. Verifique: 1) o ajuste foi "
+        "aplicado direito; 2) nada além dele mudou (textos, cores, fontes, posições, imagens, cortes, ordem, "
+        "duração). Não opine sobre estética nem sugira melhorias.\n\nArquivos da nova versão:\n"
+        + "\n".join(f"- {a.as_posix()}" for a in arquivos)
+        + '\n\nResponda SÓ com JSON: {"ajuste_feito": true|false, "mudou_sem_pedir": ["arquivo: o que mudou"], '
+          '"problemas": ["arquivo: o que falta no ajuste"]}')
+    try:
+        qa = rodar_claude(["-p", "Compare as versões descritas na entrada e responda só com o JSON pedido.",
+                           "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools", "Read",
+                           "--add-dir", str(pasta), "--add-dir", str(anterior), *_modelo_args(uso.modelo("qualidade"))],
+                          prompt, pasta / "fontes" if (pasta / "fontes").is_dir() else pasta, CLAUDE_TIMEOUT,
+                          origem="qualidade", referencia=f"{t['id']} conferência da revisão")
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] conferência da revisão não rodou: {e}")
+        return r
+    v = _json_do_texto(qa.get("result", ""))
+    mudou = [str(x) for x in (v.get("mudou_sem_pedir") or [])][:8]
+    faltou = [str(x) for x in (v.get("problemas") or [])][:8]
+    if not v or (v.get("ajuste_feito") and not mudou and not faltou) or not r.get("session_id"):
+        r["result"] = (r.get("result") or "") + ("\n\n_Conferido: só o ajuste pedido mudou._" if v.get("ajuste_feito") else "")
+        return r
+    try:
+        r2 = executar_producao(
+            "A conferência da nova versão encontrou problemas. Corrija SÓ isto, sem mudar mais nada:\n"
+            + "".join(f"- Mudou sem ter sido pedido (VOLTE como estava na versão anterior, {anterior.as_posix()}): {x}\n" for x in mudou)
+            + "".join(f"- Ajuste incompleto: {x}\n" for x in faltou)
+            + "Re-exporte só os arquivos afetados e responda com o relatório curto.",
+            pasta, [anterior], modelo=modelo_agente, sessao=r["session_id"], referencia=f"{t['id']} correção da revisão")
+        arrumar_entrega(pasta, t["agente"])
+        r2["result"] = (r2.get("result") or "") + "\n\n_Conferência da revisão: corrigido o que tinha mudado além do pedido._"
+        return r2
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] correção da revisão falhou: {e}")
+        r["result"] = (r.get("result") or "") + "\n\n_Atenção, mudou além do pedido: " + "; ".join(mudou + faltou)[:800] + "_"
+        return r
+
+
 def executar_local(prompt: str) -> str:
     """O modelo configurado no Jarvis (Ollama no perfil local). O motivo de uma
     falha vai no erro, em vez de um "não respondeu" que não ajuda ninguém."""
@@ -783,16 +885,25 @@ def executar(t: dict) -> Path:
             else:
                 pasta, marca, projeto = pastas_do_trabalho(t)
                 copiar_material(t, pasta, projeto)
-                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto, t["agente"]),
+                anterior = store.trabalho(int(t.get("revisao_de") or 0)) if t.get("revisao_de") else None
+                revisao = bool(anterior and anterior.get("pasta") and Path(anterior["pasta"]).is_dir()
+                               and (t.get("ajuste") or "").strip())
+                if revisao and not sessao and not t.get("retomar"):
+                    grandes = _copiar_versao_anterior(Path(anterior["pasta"]), pasta)
+                    prompt = prompt_de_revisao(t, anterior, grandes)
+                elif revisao and not sessao:
+                    prompt = prompt_de_revisao(t, anterior, [])
+                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto, t["agente"], revisao),
                                                  encoding="utf-8")
                 store.atualizar(t["id"], pasta=str(pasta))
-                leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados()) if p is not None]
+                leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados(),
+                                       Path(anterior["pasta"]) if revisao else None) if p is not None]
                 leitura = list(dict.fromkeys(leitura))
                 modelo_ag = uso.modelo("agentes", agente.extras.get("modelo", ""))
                 r = _producao_continuavel(t, prompt, pasta, leitura, sessao, ref, modelo_ag)
                 arrumar_entrega(pasta, t["agente"])
                 if t["agente"] in VISUAIS and not pergunta_do_agente(r["result"]):
-                    r = checar_qualidade(t, pasta, r, modelo_ag)
+                    r = checar_qualidade(t, pasta, r, modelo_ag, Path(anterior["pasta"]) if revisao else None)
             texto = r["result"]
             pergunta = pergunta_do_agente(texto)
             if pergunta:
@@ -868,7 +979,8 @@ def _producao_continuavel(t: dict, prompt: str, pasta: Path, leitura: list[Path]
     nova = str(uuid.uuid4())
     if not sessao:
         store.atualizar(t["id"], retomar=nova)
-        prompt = _aviso_do_que_ja_existe(pasta) + prompt
+        if not (t.get("revisao_de") and (t.get("ajuste") or "").strip()):   # numa revisão os arquivos são a versão anterior
+            prompt = _aviso_do_que_ja_existe(pasta) + prompt
     r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo,
                           nova_sessao=nova, timeout=timeout)
     store.atualizar(t["id"], retomar="", interrupcoes=0)

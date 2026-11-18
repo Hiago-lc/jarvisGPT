@@ -284,7 +284,9 @@ def trabalho_aprovar(id: int) -> dict:
 @mcp.tool()
 def trabalho_refazer(id: int, ajuste: str, anexos: list[str] | None = None) -> dict:
     """Pede uma nova versão de uma entrega, com o ajuste que o usuário quer (e, em
-    `anexos`, os caminhos de arquivos novos que ele enviou para usar)."""
+    `anexos`, os caminhos de arquivos novos que ele enviou para usar). O agente parte da
+    versão anterior e muda SÓ o que está no `ajuste`: escreva nele apenas a mudança pedida,
+    com as palavras do usuário, sem reescrever o pedido inteiro nem acrescentar melhorias."""
     return _api("POST", f"trabalhos/{int(id)}/refazer", {"ajuste": ajuste, "anexos": anexos or []})
 
 

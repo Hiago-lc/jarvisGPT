@@ -206,3 +206,48 @@ class ContinuacaoTests(unittest.TestCase):
         self.assertEqual(chamadas[1]["sessao"], sid)
         self.assertEqual(r["result"], "pronto")
         self.assertEqual(store.trabalho(t["id"])["retomar"], "")
+
+
+class RevisaoTests(unittest.TestCase):
+    """Refazer com ajuste: parte da versão anterior e muda só o que foi pedido."""
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": self.dir.name, "HAIZEN_QA": "0"})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_nova_versao_copia_a_anterior_e_pede_so_o_ajuste(self):
+        from haizen import executor, servicos, store
+        ant = Path(self.dir.name) / "entrega v1"
+        (ant / "fontes").mkdir(parents=True)
+        (ant / "post.png").write_bytes(b"png")
+        (ant / "fontes" / "post.html").write_text("<h1>Black Friday</h1>")
+        (ant / "RELATORIO.md").write_text("feito")
+        t = store.criar_trabalho("designer", "post de black friday", "claude", None)
+        store.atualizar(t["id"], status="aguardando_aprovacao", pasta=str(ant), arquivo=str(ant / "post.png"))
+        novo = servicos.refazer(t["id"], "trocar o título para Cyber Monday")
+        self.assertEqual(novo["revisao_de"], t["id"])
+        self.assertEqual(novo["ajuste"], "trocar o título para Cyber Monday")
+        nova_pasta = Path(self.dir.name) / "entrega v2"
+        nova_pasta.mkdir()
+        visto = {}
+
+        def falso(tt, prompt, pasta, leitura, sessao, ref, modelo):
+            visto.update(prompt=prompt, leitura=leitura, claude=(pasta / "CLAUDE.md").read_text())
+            return {"result": "Trocado o título em post.png.", "session_id": "s"}
+        with patch.object(executor, "pastas_do_trabalho", return_value=(nova_pasta, None, None)), \
+                patch.object(executor, "_producao_continuavel", side_effect=falso), \
+                patch.object(executor, "claude_sem_login", return_value=False):
+            executor.executar(store.trabalho(novo["id"]))
+        self.assertTrue((nova_pasta / "post.png").is_file())
+        self.assertTrue((nova_pasta / "fontes" / "post.html").is_file())
+        self.assertTrue((nova_pasta / "fontes" / "RELATORIO-versao-anterior.md").is_file())
+        self.assertIn("ÚNICA mudança", visto["prompt"])
+        self.assertIn("Cyber Monday", visto["prompt"])
+        self.assertIn("MODO REVISÃO", visto["claude"])
+        self.assertNotIn("Padrão de criação da HAIZEN", visto["claude"])
+        self.assertIn(ant, visto["leitura"])

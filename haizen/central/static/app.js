@@ -979,7 +979,7 @@ async function abrirTrabalho(id, recarregar) {
         <div class="campos">${campo({ nome: "resposta", rotulo: "Sua resposta", tipo: "textarea", largo: true })}</div></div>` : ""}
       <div id="galeria-trabalho"></div>
       ${t.entrega ? `<details class="relatorio"${t.pasta ? "" : " open"}><summary>Relatório do agente</summary><div class="entrega">${esc(t.entrega)}</div></details>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
-      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}
+      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar (só isso muda; o resto fica igual)", tipo: "textarea", largo: true })}
         <div class="largo"><span class="rotulo-anexos">Arquivos novos para esta versão (opcional)</span><div id="aj-anexos" class="anexos-caixa"></div></div></div>` : ""}`,
     aoAbrir: (corpo) => { galeriaTrabalho(t, $("#galeria-trabalho")); if (pode) sel = seletorAnexos($("#aj-anexos", corpo), corpo); },
     acoes: pode ? [

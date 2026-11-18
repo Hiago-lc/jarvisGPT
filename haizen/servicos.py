@@ -250,6 +250,9 @@ def refazer(tid: int, ajuste: str, anexos: list | None = None) -> dict:
                                 projeto_id=t.get("projeto_id"), etapa=t.get("etapa") or 0,
                                 titulo=t.get("titulo") or "", aprovacao=bool(t.get("aprovacao", 1)),
                                 depende_de=json.loads(t.get("depende_de") or "[]"), anexos=ids)
+    # Nova versão = a anterior com SÓ o ajuste: o agente parte dos arquivos dela, não do zero.
+    if (ajuste or "").strip():
+        novo = store.atualizar(novo["id"], revisao_de=tid, ajuste=ajuste.strip())
     store.atualizar(tid, status="rejeitado", observacao=(ajuste or "").strip())
     _aprender(t, ajuste, "ajuste pedido")
     if t.get("projeto_id"):
