@@ -214,3 +214,20 @@ ffmpeg, node) abre console.
 Na página de indicadores, **Exportar PDF** (páginas A4) e **Exportar JPG** (imagem da página inteira)
 salvam o relatório do período escolhido na pasta Downloads, sem menu, botões e chat, com o cabeçalho
 "HAIZEN · Relatório de indicadores".
+
+## Levar o Jarvis para outro computador (ex.: notebook)
+
+O código vem do GitHub; o resto (banco com clientes, tarefas, financeiro e projetos, configurações,
+tokens e memória) vai num pacote protegido por senha:
+
+1. No computador de origem: `exportar-para-outro-pc.bat`. Escolha uma senha. O pacote vai para
+   `Meu Drive\JARVIS - migracao` (sincroniza sozinho para o outro computador).
+2. No computador novo: instale o Jarvis (clone do GitHub, branch `central-haizen`, na mesma pasta
+   `C:\JARVIS`), rode o instalador e abra uma vez; depois feche e rode `importar-de-outro-pc.bat`
+   com a mesma senha.
+3. No computador novo, faça o login do Claude Code (`conectar-claude.bat`) e escaneie o QR do
+   WhatsApp de novo. Os tokens da Meta, Google Ads e lojas já vão no pacote.
+
+Não vão: anexos do chat (podem ter vários GB), o perfil do WhatsApp Web e caches. Use um
+computador de cada vez: cada um tem o seu próprio banco, e os dois ligados rodariam as rotinas
+(análises, resumos, publicações) em dobro.
