@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from . import agentes, store
@@ -174,6 +175,29 @@ def _ambiente_assinatura() -> dict:
 
 
 PRODUCAO_TIMEOUT = int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT", "2700"))     # 45 min
+# Vídeo baixa material, renderiza e mixa: precisa de mais tempo por rodada.
+TIMEOUT_POR_AGENTE = {"video": int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT_VIDEO", "7200")),   # 2 h
+                      "dev": int(os.environ.get("HAIZEN_PRODUCAO_TIMEOUT_DEV", "5400"))}       # 1h30
+MAX_INTERRUPCOES = int(os.environ.get("HAIZEN_MAX_INTERRUPCOES", "3"))
+
+
+class TempoEsgotado(RuntimeError):
+    """O Claude Code passou do tempo da rodada. O trabalho pode continuar da mesma conversa."""
+
+
+def _matar_arvore(proc: subprocess.Popen) -> None:
+    """Mata o Claude Code e o que ele abriu (ffmpeg, node, python): no Windows, matar só o
+    processo pai deixa os filhos segurando a saída e o Jarvis fica esperando para sempre."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            proc.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
 FERRAMENTAS = Path(__file__).resolve().parent / "producao" / "ferramentas.py"
 # O que o Claude Code pode usar ao produzir: ler/escrever arquivos (só nas
 # pastas liberadas com --add-dir e na pasta do trabalho) e rodar o Python do
@@ -203,6 +227,23 @@ def _config_mcp_producao(pasta: Path) -> Path:
     return arq
 
 
+def _processo(cmd: list[str], *, input: str, cwd: str, env: dict, timeout: int) -> subprocess.CompletedProcess:
+    """Como subprocess.run, mas no tempo esgotado mata a árvore inteira (ffmpeg, node, python que o
+    Claude Code abriu); senão os filhos seguram a saída e o Jarvis espera para sempre."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", cwd=cwd, env=env)
+    try:
+        out, err = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _matar_arvore(proc)
+        try:
+            proc.communicate(timeout=60)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def _python_console() -> str:
     """O Python do Jarvis em modo console (pythonw não mostra a saída)."""
     exe = Path(sys.executable)
@@ -226,20 +267,20 @@ def rodar_claude(args: list[str], prompt: str, pasta: Path, timeout: int, env: d
                            "irm https://claude.ai/install.ps1 | iex")
     pasta.mkdir(parents=True, exist_ok=True)
     try:
-        proc = subprocess.run(
-            [exe, *args], input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            cwd=str(pasta), env=env or _ambiente_assinatura(), timeout=timeout)
+        proc = _processo([exe, *args], input=prompt, cwd=str(pasta), env=env or _ambiente_assinatura(),
+                         timeout=timeout)
     except subprocess.TimeoutExpired:
         uso.registrar({}, origem, referencia, erro=f"passou de {timeout // 60} min")
-        raise RuntimeError(f"o Claude Code passou de {timeout // 60} minutos e foi interrompido") from None
-    saida = (proc.stdout or "").strip()
+        raise TempoEsgotado(f"o Claude Code passou de {timeout // 60} minutos e foi interrompido") from None
+    stdout, stderr = proc.stdout, proc.stderr
+    saida = (stdout or "").strip()
     try:
         dados = json.loads(saida.splitlines()[-1]) if saida else {}
     except ValueError:
         dados = {}
     erro = ""
     if proc.returncode != 0 or dados.get("is_error"):
-        erro = (dados.get("result") or (proc.stderr or saida)[-400:] or str(proc.returncode)).strip()
+        erro = (dados.get("result") or (stderr or saida)[-400:] or str(proc.returncode)).strip()
     uso.registrar(dados, origem, referencia, erro=erro)
     if erro:
         raise RuntimeError(f"o Claude Code falhou: {erro}")
@@ -267,7 +308,7 @@ def executar_claude(prompt: str, pasta: Path, *, modelo: str = "", sessao: str =
 
 
 def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: str = "", sessao: str = "",
-                      referencia: str = "") -> dict:
+                      referencia: str = "", nova_sessao: str = "", timeout: int = 0) -> dict:
     """O agente produz os arquivos na `pasta` do trabalho, lendo o material das
     pastas em `leitura` (a do cliente, a do projeto). Devolve o resultado do
     Claude Code (relatório em "result", "session_id" para continuar)."""
@@ -277,11 +318,12 @@ def executar_producao(prompt: str, pasta: Path, leitura: list[Path], *, modelo: 
     args = ["-p", "Siga o CLAUDE.md desta pasta e faça a tarefa descrita na entrada. Grave os arquivos "
                   "nesta pasta. No fim, responda só com o relatório curto da entrega (ou com PERGUNTA:).",
             "--output-format", "json", "--permission-mode", "acceptEdits", *_modelo_args(modelo),
-            *_retomar_args(sessao), "--mcp-config", str(_config_mcp_producao(pasta))]
+            *_retomar_args(sessao), *(["--session-id", nova_sessao] if nova_sessao and not sessao else []),
+            "--mcp-config", str(_config_mcp_producao(pasta))]
     for d in [*leitura, RECEITAS]:
         args += ["--add-dir", str(d)]
     args += ["--allowedTools", ",".join(PERMISSOES)]
-    return rodar_claude(args, prompt, pasta, PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
+    return rodar_claude(args, prompt, pasta, timeout or PRODUCAO_TIMEOUT, env, origem="agente", referencia=referencia)
 
 
 _PERGUNTA = re.compile(r"^\s*\**\s*PERGUNTA\s*:?\**\s*:?", re.I)
@@ -369,27 +411,53 @@ def pasta_haizen() -> Path | None:
 
 VISUAIS = ("criativos", "designer", "social", "video")
 
-_DIRECAO_DE_ARTE = """## Padrão de criação da HAIZEN (peças visuais)
-Faça como um diretor de arte de agência, não como um template.
+_DIRECAO_DE_ARTE = """## Padrão de criação da HAIZEN (peças visuais e vídeo) — OBRIGATÓRIO
+Você é diretor de arte sênior de agência premiada. A régua: a peça poderia estar num portfólio do Behance ou num
+anúncio de marca grande. "Correto" não basta; parecer template é reprovação.
 
-1. Repertório (rápido, no máximo 4 referências):
-   - Veja as peças antigas e aprovadas do cliente na pasta dele e o guia da marca.
-   - Veja trabalhos já aprovados pela HAIZEN, a régua de qualidade: `{aprovados}` (as pastas mais recentes primeiro).
-   - Busque na web 2 a 3 referências do nicho e do formato (WebSearch: "anúncio <nicho> instagram design", Behance, Pinterest,
-     Biblioteca de Anúncios da Meta). Para VER uma referência, baixe a imagem com python para `fontes/referencias/` e abra com Read.
-2. Conceito em 3 linhas no topo do HTML (comentário): a ideia, a hierarquia e o porquê. Nada de documento.
-3. Execução:
-   - Uma mensagem principal por peça; título com no máximo ~7 palavras, grande e legível no celular.
-   - Hierarquia clara: título > apoio > CTA. Máximo 2 famílias de fonte (Google Fonts) e 3 pesos.
-   - Grade e margens generosas (6% a 8% da largura); alinhamentos consistentes; respiro.
-   - A foto/produto real do cliente protagonista; recorte, sobreposição ou moldura com intenção. Tratamento de cor coerente.
-   - Contraste forte (texto sobre foto: sombra suave, véu ou faixa); nada de texto pequeno sobre área movimentada.
-   - Paleta da marca com uma cor de destaque para o CTA. Logo presente e discreto.
-   - Evite cara de template: gradientes genéricos, excesso de elementos, emojis, ícones de banco, tudo centralizado sem motivo.
-   - Stories/reels: nada importante nos 250 px de cima nem nos 350 px de baixo.
-   - Quando fizer sentido, 2 variações de abordagem (ex.: foto x tipografia) em vez de 2 cópias iguais.
-4. Autocrítica antes de entregar: abra cada PNG e dê nota de 1 a 5 em impacto em 1 segundo, legibilidade no celular,
-   hierarquia, acabamento e fidelidade à marca. Abaixo de 4 em qualquer item: corrija e exporte de novo (no máximo 2 rodadas)."""
+### 1. Pesquisa visual (sempre, antes de desenhar)
+- `referencias("<nicho> <formato> <estilo>")` — ex.: "anuncio clinica estetica premium", "carrossel branding minimalista",
+  "reels pacote viagem" com `video=true`. Faça 1 ou 2 buscas com termos diferentes (um do nicho, um de estilo).
+- Abra as capturas com Read. Escolha 3 a 5 referências fortes; se quiser ver uma em alta, `baixar_imagens`.
+- Veja também as peças aprovadas do cliente e da HAIZEN: `{aprovados}` (régua de qualidade).
+- `prancha(...)` com as escolhidas → `fontes/referencias/prancha.jpg` e, em `fontes/direcao.md` (curto, 6–10 linhas):
+  o conceito da peça e, para cada referência, O QUE pegar dela (grade, tipografia, tratamento de foto, cor, movimento).
+  Inspire-se na linguagem; NUNCA copie layout, texto ou marca de terceiros.
+
+### 2. Base técnica
+- `kit_de_design()`: use o CSS do kit (escala tipográfica forte, texturas, selos, CTA, zonas seguras) e parta do modelo
+  de layout mais próximo do conceito — e então transforme com a marca do cliente. Cada série com cara própria.
+- Fotos do cliente: `tratar_foto` com o MESMO estilo em toda a série; produto/pessoa em destaque → `recortar` e compor
+  com sombra real (classe .produto + .sombra-chao), tipografia atrás/na frente para profundidade.
+- Fontes: Google Fonts com personalidade e coerentes com a marca (ex.: Inter Tight, Space Grotesk, Sora, Manrope,
+  Fraunces, Instrument Serif, DM Serif Display). Máx. 2 famílias.
+
+### 3. Princípios de design moderno (aplique, não cite)
+- Hierarquia brutal: 1 elemento dominante (foto, número ou título gigante), o resto subordinado. Título 2,5–4x o texto.
+- Tipografia como imagem: tamanhos grandes, entrelinha apertada (0,9–1,0), tracking negativo em títulos, quebras de
+  linha intencionais, uma palavra-chave destacada (cor, itálico, marca-texto).
+- Grade e respiro: margens 7–8%, alinhamentos fortes à esquerda ou assimétricos com intenção; nada "tudo centralizado".
+- Profundidade e textura: camadas (foto/produto/tipo), sombras realistas, granulado leve, gradientes ricos e discretos.
+- Cor: paleta da marca em 60/30/10; uma única cor de ação; contraste AA no texto.
+- Sem clichês: nada de banco de imagem genérico, ícones de stock, emoji como elemento gráfico, sombra preta dura,
+  contorno em texto pequeno, 5 elementos competindo.
+- Stories/reels: nada importante nos 250 px de cima nem nos 350 px de baixo.
+
+### 4. Exploração e escolha
+- Peça principal: faça 2 direções diferentes de verdade (ex.: tipográfica x foto protagonista), exporte as duas,
+  `prancha` lado a lado junto da prancha de referências e escolha a mais forte (ou combine). Depois desdobre a série.
+
+### 5. Vídeo (motion design)
+- Pesquisa com `referencias(..., video=true)`; roteiro em cenas com tempo (gancho 0–1,5 s; algo muda a cada 1,5–2 s).
+- Use `fontes/kit/motion.js` (M.palavras, M.mascara, M.kenburns, M.contador, M.destaque, M.trocar) ou GSAP com
+  `window.timeline`; modelo `08-reels-kinetic.html`. Easing de entrada rápida e assentamento suave; nada linear em texto.
+- Foto/clipe real do cliente em tela cheia com Ken Burns; tipografia grande; legenda com `legendar` quando houver fala.
+- Confira SEMPRE com `folha_de_contato`: ritmo, legibilidade, cortes e zonas seguras.
+
+### 6. Autocrítica antes de entregar
+Abra as finais e compare com a prancha de referências. Nota 1–10 em: impacto em 1 s, hierarquia, tipografia,
+acabamento, fidelidade à marca, "parece anúncio de marca grande?". Qualquer item abaixo de 8: refaça (até 2 rodadas).
+Um diretor de arte vai revisar depois de você com essa mesma régua."""
 
 
 def pasta_aprovados() -> Path | None:
@@ -415,7 +483,60 @@ def guardar_aprovado(t: dict) -> Path | None:
     return destino
 
 
-def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "") -> str:
+_MODO_REVISAO = """## MODO REVISÃO — esta é uma nova versão, não um trabalho novo (OBRIGATÓRIO)
+O dono da HAIZEN aprovou tudo da versão anterior, MENOS o que está no ajuste. Por isso:
+- Esta pasta já começa com uma cópia da versão anterior (finais e fontes/). Parta DELA: abra os arquivos-fonte
+  (HTML, roteiro, projeto, legendas) e edite só o trecho que o ajuste pede.
+- Mude SOMENTE o que o ajuste pede. Todo o resto fica IDÊNTICO: textos, cores, fontes, tamanhos, posições,
+  imagens, cortes, ordem, duração, trilha, narração, transições, nomes de arquivo.
+- NÃO refaça do zero, NÃO pesquise novas referências, NÃO crie novas direções, NÃO "aproveite para melhorar"
+  outras coisas, mesmo que você ache que ficaria melhor. Se achar que outra coisa precisa mudar, escreva
+  isso em Pendências no relatório, sem mudar.
+- Re-exporte só as peças afetadas pelo ajuste, por cima dos mesmos nomes de arquivo. As outras já estão
+  certas na pasta (copiadas da versão anterior): não toque nelas.
+- Se o ajuste for ambíguo (não dá para saber qual peça ou trecho), pergunte antes de mexer.
+- No relatório, diga exatamente o que mudou e em quais arquivos."""
+
+
+def _copiar_versao_anterior(origem: Path, destino: Path, limite: int = 60_000_000) -> list[Path]:
+    """Copia a versão anterior para a pasta da nova, para o agente editar em vez de recriar.
+    Arquivos muito grandes (vídeos brutos baixados) não são copiados: o agente lê da pasta anterior."""
+    import shutil
+    grandes: list[Path] = []
+    if not origem.is_dir():
+        return grandes
+    for f in origem.rglob("*"):
+        rel = f.relative_to(origem)
+        if not f.is_file() or rel.name in (".trabalho", "CLAUDE.md") or rel.parts[0].startswith(".claude"):
+            continue
+        alvo = destino / ("fontes/RELATORIO-versao-anterior.md" if rel.as_posix() == "RELATORIO.md" else rel)
+        if alvo.exists():
+            continue
+        if f.stat().st_size > limite:
+            grandes.append(f)
+            continue
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(f, alvo)
+        except OSError as e:
+            print(f"[HAIZEN] não copiei {f.name} da versão anterior: {e}")
+    return grandes
+
+
+def prompt_de_revisao(t: dict, anterior: dict, grandes: list[Path]) -> str:
+    original = t["pedido"].split("\n\nAjuste pedido na revisão:")[0]
+    return (
+        "NOVA VERSÃO de uma entrega já feita (siga o MODO REVISÃO do CLAUDE.md).\n\n"
+        f"AJUSTE PEDIDO (a ÚNICA mudança a fazer):\n{t['ajuste'].strip()}\n\n"
+        f"A versão anterior está copiada nesta pasta (original em `{Path(anterior['pasta']).as_posix()}`; "
+        "o relatório dela está em fontes/RELATORIO-versao-anterior.md).\n"
+        + (("Arquivos grandes que NÃO foram copiados (use direto da pasta anterior, se precisar):\n"
+            + "\n".join(f"- {g.as_posix()}" for g in grandes[:30]) + "\n") if grandes else "")
+        + "\nPedido original, só para contexto (já foi atendido; NÃO refaça):\n" + original[:3000])
+
+
+def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, agente: str = "",
+                        revisao: bool = False) -> str:
     """O CLAUDE.md que o agente lê ao começar: onde está o material, onde gravar,
     as ferramentas e o padrão de qualidade da HAIZEN."""
     linhas = [
@@ -467,6 +588,10 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "- `legendar(video, saida, palavras_por_vez, cor_destaque)`: legenda queimada palavra a palavra a partir da fala.",
         "- `video(saida, entradas, largura, altura, zoom, musica, max_clipe)`: junta imagens e clipes num vídeo.",
         "- `quadros(video, segundos)`: extrai quadros para você abrir e conferir.",
+        "- Direção de arte: `referencias(tema, video)` (capturas da Biblioteca de Anúncios da Meta, Behance, Dribbble, "
+        "Pinterest), `ver_site(url)`, `baixar_imagens(urls)`, `prancha(imagens)` (moodboard/comparação), "
+        "`kit_de_design()` (CSS + motion.js + 8 modelos de layout), `recortar(imagem, saida)` (tira o fundo), "
+        "`tratar_foto(imagem, saida, estilo)`, `folha_de_contato(video)` (12 quadros numa imagem).",
         "- `ffmpeg(argumentos)`: o ffmpeg direto (último argumento = arquivo de saída nesta pasta).",
         "- `python(script, argumentos)`: roda um script .py que você gravou em `fontes/` (planilhas, ler .docx/.pdf).",
         "- Se algo falhar: `verificar()`. Caminhos relativos são desta pasta.",
@@ -486,7 +611,7 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "- Não existe gerador de imagens por IA aqui: não invente fotos. Se faltar uma foto ou um dado, use o que existe e liste em "
         "Pendências.",
         "- Português do Brasil. Nunca invente preço, prazo, número ou depoimento.",
-        "- Economize: não repita leituras, não gere versões que ninguém pediu, não escreva textos longos de explicação.",
+        "- Economize: não repita leituras, não gere versões que ninguém pediu (as 2 direções do Padrão de criação fazem parte do processo e ficam em `fontes/`), não escreva textos longos de explicação.",
         f"- Scripts auxiliares que você escrever (python para gerar planilhas, ler .docx etc.) ficam em `fontes/` desta pasta. "
         f"NUNCA grave nada na pasta do Jarvis (`{Path(__file__).resolve().parents[1].as_posix()}`) nem em outro lugar fora "
         "desta pasta.",
@@ -501,7 +626,9 @@ def instrucoes_da_pasta(pasta: Path, marca: Path | None, projeto: Path | None, a
         "Curto, no máximo 10 linhas em Markdown: os arquivos entregues (nome e tamanho) e, se houver, Pendências/perguntas para o "
         "cliente. Sem contar o processo.",
     ]
-    if agente in VISUAIS:
+    if revisao:
+        linhas += ["", _MODO_REVISAO]
+    elif agente in VISUAIS:
         linhas += ["", _DIRECAO_DE_ARTE.format(aprovados=(pasta_aprovados() or Path("—")).as_posix())]
     saber = conhecimento(agente)
     if saber:
@@ -548,13 +675,47 @@ def _quadros_para_qa(video: Path, destino: Path) -> list[Path]:
     return feitos
 
 
+VISUAL = Path(__file__).resolve().parent / "producao" / "visual.py"
+
+
+def _visual(*args: str) -> bool:
+    try:
+        r = subprocess.run([sys.executable, str(VISUAL), *args], capture_output=True, stdin=subprocess.DEVNULL,
+                           timeout=300)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def arquivos_para_qa(pasta: Path) -> list[Path]:
     if not pasta.is_dir():
         return []
     imgs = sorted(f for f in pasta.iterdir() if f.is_file() and f.suffix.lower() in _QA_EXT_IMG)[:8]
     for v in sorted(pasta.glob("*.mp4"))[:2]:
-        imgs += _quadros_para_qa(v, pasta / "fontes" / "quadros-qa")
+        folha = pasta / "fontes" / "quadros-qa" / f"{v.stem}-contato.jpg"
+        folha.parent.mkdir(parents=True, exist_ok=True)
+        if _visual("contato", str(v), str(folha), "--quadros", "12") and folha.is_file():
+            imgs.append(folha)                       # o vídeo inteiro numa imagem: ritmo e cortes
+        else:
+            imgs += _quadros_para_qa(v, pasta / "fontes" / "quadros-qa")
     return imgs
+
+
+def referencias_para_qa(pasta: Path) -> Path | None:
+    """A prancha de referências do agente (ou uma montada agora), para comparar o nível."""
+    refs = pasta / "fontes" / "referencias"
+    if not refs.is_dir():
+        return None
+    pronta = refs / "prancha.jpg"
+    if pronta.is_file():
+        return pronta
+    imgs = sorted((f for f in refs.iterdir() if f.suffix.lower() in _QA_EXT_IMG and f.is_file()),
+                  key=lambda f: f.stat().st_mtime)[-6:]
+    if not imgs:
+        return None
+    alvo = pasta / "fontes" / "quadros-qa" / "referencias.jpg"
+    alvo.parent.mkdir(parents=True, exist_ok=True)
+    return alvo if _visual("prancha", str(alvo), *map(str, imgs), "--colunas", "3") and alvo.is_file() else None
 
 
 def _json_do_texto(texto: str) -> dict:
@@ -565,7 +726,7 @@ def _json_do_texto(texto: str) -> dict:
         return {}
 
 
-def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> dict:
+def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "", anterior: Path | None = None) -> dict:
     """Um diretor de arte (outra chamada, que não fez a peça) olha as finais. Se
     reprovar, o agente corrige uma vez na mesma conversa. Devolve o resultado
     final do agente e anota a nota no relatório."""
@@ -577,15 +738,27 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
         return r
     checagem = conhecimento(t["agente"]).split("## Checagem final")[-1] if "## Checagem final" in \
         conhecimento(t["agente"]) else ""
+    if anterior is not None:
+        return _checar_revisao(t, pasta, r, modelo_agente, anterior, arquivos)
+    refs = referencias_para_qa(pasta)
+    direcao = pasta / "fontes" / "direcao.md"
+    direcao_txt = direcao.read_text(encoding="utf-8", errors="replace")[:1500] if direcao.is_file() else ""
     prompt = (
-        "Você é o diretor de arte sênior da agência HAIZEN revisando peças ANTES de irem ao dono. Abra cada arquivo "
-        "abaixo com Read e avalie com rigor de agência premiada: impacto em 1 segundo, legibilidade no celular, "
-        "hierarquia, acabamento (alinhamento, respiro, contraste, cortes), fidelidade à marca, erros de português, "
-        "texto cortado, zonas seguras, promessas inventadas.\n"
-        f"{checagem.strip()}\n\nPedido original:\n{t['pedido'][:2500]}\n\nArquivos:\n"
+        "Você é o diretor de criação de uma agência premiada revisando peças ANTES de irem ao dono da HAIZEN. Abra cada "
+        "arquivo abaixo com Read e seja exigente como num portfólio: impacto em 1 segundo, hierarquia, tipografia "
+        "(escala, peso, entrelinha, quebras), grade e respiro, tratamento de foto, profundidade, acabamento, "
+        "fidelidade à marca, cara de template ou de banco de imagem, erros de português, texto cortado, zonas "
+        "seguras, promessas inventadas. Em vídeo (folha de contato): ritmo, gancho nos primeiros quadros, "
+        "legibilidade de cada quadro, transições.\n"
+        + (f"\nREFERÊNCIAS que o agente pesquisou (a peça precisa estar NO NÍVEL delas): {refs.as_posix()}\n" if refs
+           else "\nO agente NÃO deixou referências em fontes/referencias: aponte isso como problema (faltou pesquisa "
+                "visual com a ferramenta referencias).\n")
+        + (f"\nDireção escolhida pelo agente:\n{direcao_txt}\n" if direcao_txt else "")
+        + f"{checagem.strip()}\n\nPedido original:\n{t['pedido'][:2500]}\n\nArquivos:\n"
         + "\n".join(f"- {a.as_posix()}" for a in arquivos)
         + '\n\nResponda SÓ com JSON: {"nota": 1-10, "aprovado": true|false, "problemas": ["arquivo: problema → como '
-          'corrigir", ...]}. Aprove (nota ≥ 7) se estiver pronto para um cliente exigente; problemas só os que importam.')
+          'corrigir de forma concreta (tamanho, posição, fonte, cor, corte)", ...]}. Aprove só com nota ≥ 8: pronta '
+          'para um cliente exigente e no nível das referências. Problemas: só os que mudam o resultado, no máximo 8.')
     try:
         qa = rodar_claude(["-p", "Revise as peças descritas na entrada e responda só com o JSON pedido.",
                            "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools", "Read",
@@ -598,15 +771,16 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
     veredito = _json_do_texto(qa.get("result", ""))
     nota = veredito.get("nota")
     problemas = [str(p) for p in (veredito.get("problemas") or [])][:10]
-    aprovado = bool(veredito.get("aprovado")) or (isinstance(nota, (int, float)) and nota >= 7)
+    aprovado = (isinstance(nota, (int, float)) and nota >= 8) or (nota is None and bool(veredito.get("aprovado")))
     if not veredito or aprovado or not r.get("session_id"):
         r["result"] = (r.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10._" if nota else "")
         return r
     try:
         r2 = executar_producao(
-            "O diretor de arte da HAIZEN revisou suas peças e NÃO aprovou ainda (nota "
-            f"{nota}/10). Corrija tudo abaixo, exporte de novo por cima dos mesmos arquivos e responda só com o "
-            "relatório curto:\n" + "\n".join(f"- {p}" for p in problemas),
+            "O diretor de criação da HAIZEN revisou suas peças e NÃO aprovou ainda (nota "
+            f"{nota}/10; a régua é 8). Corrija tudo abaixo — se o problema for de conceito, refaça a peça, não remende —, "
+            "confira de novo (prancha com as referências / folha de contato), exporte por cima dos mesmos arquivos e "
+            "responda só com o relatório curto:\n" + "\n".join(f"- {p}" for p in problemas),
             pasta, [], modelo=modelo_agente, sessao=r["session_id"], referencia=f"{t['id']} correção da checagem")
         arrumar_entrega(pasta, t["agente"])
         r2["result"] = (r2.get("result") or "") + (f"\n\n_Checagem de qualidade: nota {nota}/10 na primeira versão; "
@@ -615,6 +789,51 @@ def checar_qualidade(t: dict, pasta: Path, r: dict, modelo_agente: str = "") -> 
     except Exception as e:  # noqa: BLE001
         print(f"[HAIZEN] correção da checagem falhou: {e}")
         r["result"] = (r.get("result") or "") + "\n\n_Checagem de qualidade apontou: " + "; ".join(problemas)[:800] + "_"
+        return r
+
+
+def _checar_revisao(t: dict, pasta: Path, r: dict, modelo_agente: str, anterior: Path, arquivos: list[Path]) -> dict:
+    """Numa nova versão, a checagem não julga a peça de novo: confere se o ajuste foi feito e se
+    NADA além dele mudou em relação à versão anterior."""
+    from haizen import uso
+    prompt = (
+        "Você confere uma NOVA VERSÃO de peças da HAIZEN. O dono pediu SÓ este ajuste:\n"
+        f"{(t.get('ajuste') or '').strip()}\n\n"
+        f"Versão anterior (aprovada em todo o resto): {anterior.as_posix()}\nNova versão: {pasta.as_posix()}\n"
+        "Abra com Read os arquivos finais das duas pastas (mesmo nome) e compare. Verifique: 1) o ajuste foi "
+        "aplicado direito; 2) nada além dele mudou (textos, cores, fontes, posições, imagens, cortes, ordem, "
+        "duração). Não opine sobre estética nem sugira melhorias.\n\nArquivos da nova versão:\n"
+        + "\n".join(f"- {a.as_posix()}" for a in arquivos)
+        + '\n\nResponda SÓ com JSON: {"ajuste_feito": true|false, "mudou_sem_pedir": ["arquivo: o que mudou"], '
+          '"problemas": ["arquivo: o que falta no ajuste"]}')
+    try:
+        qa = rodar_claude(["-p", "Compare as versões descritas na entrada e responda só com o JSON pedido.",
+                           "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools", "Read",
+                           "--add-dir", str(pasta), "--add-dir", str(anterior), *_modelo_args(uso.modelo("qualidade"))],
+                          prompt, pasta / "fontes" if (pasta / "fontes").is_dir() else pasta, CLAUDE_TIMEOUT,
+                          origem="qualidade", referencia=f"{t['id']} conferência da revisão")
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] conferência da revisão não rodou: {e}")
+        return r
+    v = _json_do_texto(qa.get("result", ""))
+    mudou = [str(x) for x in (v.get("mudou_sem_pedir") or [])][:8]
+    faltou = [str(x) for x in (v.get("problemas") or [])][:8]
+    if not v or (v.get("ajuste_feito") and not mudou and not faltou) or not r.get("session_id"):
+        r["result"] = (r.get("result") or "") + ("\n\n_Conferido: só o ajuste pedido mudou._" if v.get("ajuste_feito") else "")
+        return r
+    try:
+        r2 = executar_producao(
+            "A conferência da nova versão encontrou problemas. Corrija SÓ isto, sem mudar mais nada:\n"
+            + "".join(f"- Mudou sem ter sido pedido (VOLTE como estava na versão anterior, {anterior.as_posix()}): {x}\n" for x in mudou)
+            + "".join(f"- Ajuste incompleto: {x}\n" for x in faltou)
+            + "Re-exporte só os arquivos afetados e responda com o relatório curto.",
+            pasta, [anterior], modelo=modelo_agente, sessao=r["session_id"], referencia=f"{t['id']} correção da revisão")
+        arrumar_entrega(pasta, t["agente"])
+        r2["result"] = (r2.get("result") or "") + "\n\n_Conferência da revisão: corrigido o que tinha mudado além do pedido._"
+        return r2
+    except Exception as e:  # noqa: BLE001
+        print(f"[HAIZEN] correção da revisão falhou: {e}")
+        r["result"] = (r.get("result") or "") + "\n\n_Atenção, mudou além do pedido: " + "; ".join(mudou + faltou)[:800] + "_"
         return r
 
 
@@ -666,16 +885,25 @@ def executar(t: dict) -> Path:
             else:
                 pasta, marca, projeto = pastas_do_trabalho(t)
                 copiar_material(t, pasta, projeto)
-                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto, t["agente"]),
+                anterior = store.trabalho(int(t.get("revisao_de") or 0)) if t.get("revisao_de") else None
+                revisao = bool(anterior and anterior.get("pasta") and Path(anterior["pasta"]).is_dir()
+                               and (t.get("ajuste") or "").strip())
+                if revisao and not sessao and not t.get("retomar"):
+                    grandes = _copiar_versao_anterior(Path(anterior["pasta"]), pasta)
+                    prompt = prompt_de_revisao(t, anterior, grandes)
+                elif revisao and not sessao:
+                    prompt = prompt_de_revisao(t, anterior, [])
+                (pasta / "CLAUDE.md").write_text(instrucoes_da_pasta(pasta, marca, projeto, t["agente"], revisao),
                                                  encoding="utf-8")
                 store.atualizar(t["id"], pasta=str(pasta))
-                leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados()) if p is not None]
+                leitura = [p for p in (marca, projeto, pasta_haizen(), pasta_aprovados(),
+                                       Path(anterior["pasta"]) if revisao else None) if p is not None]
                 leitura = list(dict.fromkeys(leitura))
                 modelo_ag = uso.modelo("agentes", agente.extras.get("modelo", ""))
-                r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo_ag)
+                r = _producao_continuavel(t, prompt, pasta, leitura, sessao, ref, modelo_ag)
                 arrumar_entrega(pasta, t["agente"])
                 if t["agente"] in VISUAIS and not pergunta_do_agente(r["result"]):
-                    r = checar_qualidade(t, pasta, r, modelo_ag)
+                    r = checar_qualidade(t, pasta, r, modelo_ag, Path(anterior["pasta"]) if revisao else None)
             texto = r["result"]
             pergunta = pergunta_do_agente(texto)
             if pergunta:
@@ -706,6 +934,57 @@ def executar(t: dict) -> Path:
     if t.get("resposta"):
         store.atualizar(t["id"], resposta="")
     return arq
+
+
+_CONTINUAR = ("Você foi interrompido no meio desta tarefa ({motivo}). Continue DE ONDE PAROU, na mesma pasta: "
+              "confira o que já está pronto (downloads, quadros, partes renderizadas, áudio) e NÃO refaça o que já "
+              "existe e está certo. Termine a entrega seguindo o CLAUDE.md. Se uma etapa pesada (render, download) "
+              "demorar, faça em partes e guarde cada parte pronta.")
+
+
+def _aviso_do_que_ja_existe(pasta: Path) -> str:
+    """Uma tentativa anterior deixou arquivos (downloads, partes renderizadas)? Avisa para reaproveitar."""
+    fontes = pasta / "fontes"
+    if not fontes.is_dir():
+        return ""
+    arqs = [f for f in fontes.rglob("*") if f.is_file()]
+    if len(arqs) < 3:
+        return ""
+    exemplos = ", ".join(str(f.relative_to(pasta)) for f in sorted(arqs, key=lambda f: -f.stat().st_mtime)[:12])
+    return (f"ATENÇÃO: uma tentativa anterior desta tarefa foi interrompida e deixou {len(arqs)} arquivos em fontes/ "
+            f"(os mais recentes: {exemplos}). Confira e REAPROVEITE o que estiver certo (material baixado, partes "
+            "renderizadas, áudio): não baixe nem renderize de novo o que já existe.\n\n")
+
+
+def _producao_continuavel(t: dict, prompt: str, pasta: Path, leitura: list[Path], sessao: str, ref: str,
+                          modelo: str) -> dict:
+    """Roda a produção numa conversa com id conhecido. Se for interrompida (tempo, limite do Claude,
+    Jarvis fechado), a próxima rodada continua essa conversa em vez de começar do zero."""
+    timeout = TIMEOUT_POR_AGENTE.get(t["agente"], PRODUCAO_TIMEOUT)
+    retomar = "" if sessao else (t.get("retomar") or "")
+    if retomar:
+        motivo = "passou do tempo da rodada" if int(t.get("interrupcoes") or 0) else "o Jarvis parou no meio"
+        try:
+            r = executar_producao(_CONTINUAR.format(motivo=motivo), pasta, leitura, sessao=retomar,
+                                  referencia=f"{ref} (continuação)", modelo=modelo, timeout=timeout)
+        except TempoEsgotado:
+            raise
+        except RuntimeError as e:
+            if "No conversation found" not in str(e):
+                raise
+            retomar = ""                         # a conversa sumiu: começa de novo
+        else:
+            store.atualizar(t["id"], retomar="", interrupcoes=0)
+            return r
+    nova = str(uuid.uuid4())
+    if not sessao:
+        store.atualizar(t["id"], retomar=nova)
+        if not (t.get("revisao_de") and (t.get("ajuste") or "").strip()):   # numa revisão os arquivos são a versão anterior
+            prompt = _aviso_do_que_ja_existe(pasta) + prompt
+    r = executar_producao(prompt, pasta, leitura, sessao=sessao, referencia=ref, modelo=modelo,
+                          nova_sessao=nova, timeout=timeout)
+    store.atualizar(t["id"], retomar="", interrupcoes=0)
+    return r
 
 
 def _local_com_retentativa(agente, cliente, t: dict, prompt: str | None = None) -> str:

@@ -1,0 +1,28 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<!-- MODELO: produto herói (feed 1080x1350). Quando usar: e-commerce, lançamento, produto físico com foto recortada.
+     Troque: produto.png (recorte com a ferramenta `recortar`), cores do :root, palavra gigante de fundo, título, preço/CTA.
+     Ideia: tipografia enorme ATRÁS do produto cria profundidade; produto grande e com sombra real. -->
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Inter+Tight:wght@700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="kit/haizen-kit.css">
+<style>
+  :root { --fundo: #ede6da; --tinta: #16130f; --suave: rgba(22,19,15,.66); --marca: #c8522d; --destaque: #16130f; --apoio: #f2b84b; }
+  .fundo-palavra { position: absolute; left: -2%; right: -2%; top: 23%; text-align: center; z-index: 1;
+    font: 900 330px/0.8 var(--fonte-titulo); letter-spacing: -.07em; color: var(--marca); }
+  .produto { left: 50%; top: 18%; height: 60%; transform: translateX(-50%) rotate(-6deg); }
+  .sombra-chao { left: 32%; right: 32%; top: 76%; }
+  .cta { background: var(--tinta); color: var(--fundo); box-shadow: none; }
+  .preco { font: 800 64px/1 var(--fonte-titulo); letter-spacing: -.04em; }
+  .preco s { font-size: 30px; font-weight: 600; color: var(--suave); margin-right: 10px; }
+</style></head>
+<body><div class="peca grao">
+  <div class="fundo-palavra">LINHO</div>
+  <div class="sombra-chao"></div>
+  <img class="produto" src="produto.png" alt="">
+  <div class="area" style="z-index:4">
+    <div class="fila entre"><img class="logo" src="logo.png" alt=""><span class="tag">Coleção Verão</span></div>
+    <div class="empurra fila entre" style="align-items:flex-end">
+      <div><p class="titulo t-l" style="max-width:560px">Leve como deve ser o verão.</p></div>
+      <div style="text-align:right"><p class="preco"><s>R$ 259</s>R$ 189</p><span class="cta" style="margin-top:22px">Comprar agora <span class="seta">→</span></span></div>
+    </div>
+  </div>
+</div></body></html>

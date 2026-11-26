@@ -142,7 +142,8 @@ def estado() -> dict:
     from haizen.central import claude_cerebro
     if claude_cerebro.ativo():
         return {"modelo": "Claude", "onde": "Claude Code (sua assinatura)", "cerebro": "claude",
-                "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt"))}
+                "voz": bool(pipe.get("tts")), "ouvido": bool(pipe.get("stt")),
+                "pensando": claude_cerebro._TRAVA.locked()}
     llm = get_provider_config(pipe.get("llm") or "openai_compat")
     base = llm.get("base_url", "")
     onde = ("modelo local" if "127.0.0.1" in base or "localhost" in base
@@ -475,6 +476,26 @@ def historico(limite: int = 40) -> list[dict]:
                            "ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
     return [{"papel": r["papel"], "texto": r["texto"], "acoes": json.loads(r["acoes"] or "[]"),
              "criado_em": r["criado_em"], "origem": r["origem"]} for r in reversed(rows)]
+
+
+def buscar_mensagens(texto: str = "", limite: int = 6, dias: int = 30) -> list[dict]:
+    """Mensagens antigas da conversa, inteiras. Sem texto: as últimas. Com texto: as que contêm
+    as palavras (todas), das mais novas para as mais antigas."""
+    import time as _t
+    desde = _t.time() - max(1, dias) * 86400
+    palavras = [p for p in re.split(r"\s+", (texto or "").strip()) if len(p) > 1][:6]
+    sql = "SELECT id, papel, texto, criado_em FROM jarvis_mensagens WHERE criado_em >= ?"
+    args: list = [desde]
+    for p in palavras:
+        sql += " AND texto LIKE ?"
+        args.append(f"%{p}%")
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(max(1, min(int(limite), 20)))
+    with store.conexao() as con:
+        rows = con.execute(sql, args).fetchall()
+    return [{"id": r["id"], "papel": "usuario" if r["papel"] == "usuario" else "jarvis",
+             "quando": _t.strftime("%d/%m %H:%M", _t.localtime(r["criado_em"])), "texto": r["texto"][:12000]}
+            for r in reversed(rows)]
 
 
 def limpar_historico() -> None:

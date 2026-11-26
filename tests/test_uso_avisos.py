@@ -24,7 +24,7 @@ class UsoTests(unittest.TestCase):
         from haizen import executor
         cp = subprocess.CompletedProcess([], codigo, saida, "")
         with patch.object(executor, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             r = executor.rodar_claude(["-p"], "x", Path(self.dir.name) / "w", 10, **kw)
         return r, run
 
@@ -65,7 +65,7 @@ class UsoTests(unittest.TestCase):
         from haizen import executor as ex
         cp = subprocess.CompletedProcess([], 0, saida, "")
         with patch.object(ex, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             executor.executar_producao("p", Path(self.dir.name) / "w", [], modelo="opus", sessao="s1")
         cmd = run.call_args[0][0]
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
@@ -108,7 +108,7 @@ class ProducaoMcpTests(unittest.TestCase):
         from haizen import executor
         cp = subprocess.CompletedProcess([], 0, json.dumps({"result": "ok", "session_id": "s"}), "")
         with patch.object(executor, "claude_disponivel", return_value="claude"), \
-                patch("haizen.executor.subprocess.run", return_value=cp) as run:
+                patch("haizen.executor._processo", return_value=cp) as run:
             executor.executar_producao("p", self.pasta, [])
         cmd = run.call_args[0][0]
         cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
@@ -172,3 +172,82 @@ class RevisaoGeralTests(unittest.TestCase):
         with patch("haizen.worker.iniciar"), patch("haizen.executor.claude_disponivel", return_value="claude"):
             self.assertEqual(worker.retomar_apos_limite(), 1)
         self.assertEqual(store.trabalho(t["id"])["status"], "na_fila")
+
+
+class ContinuacaoTests(unittest.TestCase):
+    """Trabalho longo que passa do tempo continua a mesma conversa, sem começar do zero."""
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": self.dir.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_tempo_esgotado_guarda_a_conversa_e_continua(self):
+        from haizen import executor, store
+        t = store.criar_trabalho("video", "faz o vídeo", "claude", None)
+        chamadas = []
+
+        def falso(prompt, pasta, leitura, **kw):
+            chamadas.append(kw)
+            if len(chamadas) == 1:
+                raise executor.TempoEsgotado("passou")
+            return {"result": "pronto", "session_id": kw.get("sessao")}
+        with patch.object(executor, "executar_producao", side_effect=falso):
+            with self.assertRaises(executor.TempoEsgotado):
+                executor._producao_continuavel(store.trabalho(t["id"]), "p", Path(self.dir.name), [], "", "r", "")
+            sid = store.trabalho(t["id"])["retomar"]
+            self.assertEqual(chamadas[0]["nova_sessao"], sid)
+            store.atualizar(t["id"], interrupcoes=1)
+            r = executor._producao_continuavel(store.trabalho(t["id"]), "p", Path(self.dir.name), [], "", "r", "")
+        self.assertEqual(chamadas[1]["sessao"], sid)
+        self.assertEqual(r["result"], "pronto")
+        self.assertEqual(store.trabalho(t["id"])["retomar"], "")
+
+
+class RevisaoTests(unittest.TestCase):
+    """Refazer com ajuste: parte da versão anterior e muda só o que foi pedido."""
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": self.dir.name, "HAIZEN_QA": "0"})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_nova_versao_copia_a_anterior_e_pede_so_o_ajuste(self):
+        from haizen import executor, servicos, store
+        ant = Path(self.dir.name) / "entrega v1"
+        (ant / "fontes").mkdir(parents=True)
+        (ant / "post.png").write_bytes(b"png")
+        (ant / "fontes" / "post.html").write_text("<h1>Black Friday</h1>")
+        (ant / "RELATORIO.md").write_text("feito")
+        t = store.criar_trabalho("designer", "post de black friday", "claude", None)
+        store.atualizar(t["id"], status="aguardando_aprovacao", pasta=str(ant), arquivo=str(ant / "post.png"))
+        novo = servicos.refazer(t["id"], "trocar o título para Cyber Monday")
+        self.assertEqual(novo["revisao_de"], t["id"])
+        self.assertEqual(novo["ajuste"], "trocar o título para Cyber Monday")
+        nova_pasta = Path(self.dir.name) / "entrega v2"
+        nova_pasta.mkdir()
+        visto = {}
+
+        def falso(tt, prompt, pasta, leitura, sessao, ref, modelo):
+            visto.update(prompt=prompt, leitura=leitura, claude=(pasta / "CLAUDE.md").read_text())
+            return {"result": "Trocado o título em post.png.", "session_id": "s"}
+        with patch.object(executor, "pastas_do_trabalho", return_value=(nova_pasta, None, None)), \
+                patch.object(executor, "_producao_continuavel", side_effect=falso), \
+                patch.object(executor, "claude_sem_login", return_value=False):
+            executor.executar(store.trabalho(novo["id"]))
+        self.assertTrue((nova_pasta / "post.png").is_file())
+        self.assertTrue((nova_pasta / "fontes" / "post.html").is_file())
+        self.assertTrue((nova_pasta / "fontes" / "RELATORIO-versao-anterior.md").is_file())
+        self.assertIn("ÚNICA mudança", visto["prompt"])
+        self.assertIn("Cyber Monday", visto["prompt"])
+        self.assertIn("MODO REVISÃO", visto["claude"])
+        self.assertNotIn("Padrão de criação da HAIZEN", visto["claude"])
+        self.assertIn(ant, visto["leitura"])

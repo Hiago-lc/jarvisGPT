@@ -209,6 +209,25 @@ def projeto_criar(pedido: str, cliente: str = "", marca: str = "", anexos: list[
 
 
 @mcp.tool()
+def projeto_complementar(id: int, informacao: str = "", anexos: list[str] | None = None, marca: str = "") -> dict:
+    """Acrescenta a um projeto JÁ ABERTO o que o usuário lembrou depois: informação nova (ex.: a
+    música de fundo, um detalhe do roteiro), arquivos enviados (`anexos`) ou a pasta do cliente
+    (`marca`, ex.: "12 - Cliente Exemplo"). Vale para as etapas que ainda não foram feitas. Use isto em vez
+    de abrir um projeto novo duplicado."""
+    return _api("POST", f"projetos/{int(id)}/complementar", {"informacao": informacao, "anexos": anexos or [],
+                                                             "marca": marca})
+
+
+@mcp.tool()
+def conversa_anterior(texto: str = "", limite: int = 6, dias: int = 30) -> list[dict]:
+    """O que foi dito antes nesta conversa com o usuário, com as mensagens INTEIRAS. Sem `texto`:
+    as últimas mensagens. Com `texto`: procura as palavras (ex.: "ACI música", "proposta Google").
+    Use sempre que o usuário responder curto ("1", "sim", "a segunda", "pode") e você não tiver a
+    sua mensagem anterior completa, ou quando ele falar de algo combinado antes."""
+    return _api("GET", "jarvis/buscar", texto=texto, limite=limite, dias=dias)
+
+
+@mcp.tool()
 def projetos() -> list[dict]:
     """Projetos recentes com situação e etapas (agente, título, status)."""
     return _api("GET", "projetos")
@@ -265,7 +284,9 @@ def trabalho_aprovar(id: int) -> dict:
 @mcp.tool()
 def trabalho_refazer(id: int, ajuste: str, anexos: list[str] | None = None) -> dict:
     """Pede uma nova versão de uma entrega, com o ajuste que o usuário quer (e, em
-    `anexos`, os caminhos de arquivos novos que ele enviou para usar)."""
+    `anexos`, os caminhos de arquivos novos que ele enviou para usar). O agente parte da
+    versão anterior e muda SÓ o que está no `ajuste`: escreva nele apenas a mudança pedida,
+    com as palavras do usuário, sem reescrever o pedido inteiro nem acrescentar melhorias."""
     return _api("POST", f"trabalhos/{int(id)}/refazer", {"ajuste": ajuste, "anexos": anexos or []})
 
 
@@ -350,6 +371,17 @@ def trafego_aprovar(acao_id: int, ativar: bool = False, nota: str = "") -> dict:
 
 
 @mcp.tool()
+def trafego_editar(acao_id: int, campos: dict) -> dict:
+    """MUDA uma proposta de tráfego que ainda não foi aplicada, em vez de criar outra. Use sempre que o
+    usuário pedir ajuste numa proposta existente ("troca o texto", "usa o conjunto X", "põe esta peça",
+    "muda o orçamento para R$ 80"). campos: alvo_id, alvo_nome, nivel, de, para, motivo, impacto, nota (o que
+    mudou) e detalhes (mesclado; em subir_criativo, "pecas" substitui a lista: [{arquivo (caminho ou id do
+    anexo [anexo:ID]), texto_principal, titulo, descricao, cta}], e também page_id, instagram_id, destino, cta).
+    A proposta continua esperando a aprovação do usuário."""
+    return _api("POST", f"trafego/acoes/{int(acao_id)}/editar", dict(campos or {}))
+
+
+@mcp.tool()
 def trafego_rejeitar(acao_id: int, motivo: str = "") -> dict:
     """Rejeita uma otimização proposta."""
     return _api("POST", f"trafego/acoes/{int(acao_id)}/rejeitar", {"motivo": motivo})
@@ -416,6 +448,101 @@ def ecommerce_aprovar(acao_id: int) -> dict:
 def ecommerce_rejeitar(acao_id: int, nota: str = "") -> dict:
     """Descarta uma proposta da loja."""
     return _api("POST", f"ecommerce/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
+
+
+# ── indicadores por período ────────────────────────────────────────────────
+def _enxuto(r: dict) -> dict:
+    return {k: r.get(k) for k in ("periodo", "anterior", "resultado_nome", "total", "total_anterior", "variacao")} | {
+        "campanhas": (r.get("campanhas") or [])[:15], "quebras": r.get("quebras"),
+        "serie": r.get("serie") if len(r.get("serie") or []) <= 40 else None, "termos": (r.get("termos") or [])[:15]}
+
+
+@mcp.tool()
+def indicadores_meta(conta_id: str, ini: str = "", fim: str = "") -> dict:
+    """Números de uma conta do Meta Ads (act_...) num período (AAAA-MM-DD; vazio = últimos 30 dias):
+    investimento, resultado principal, custo por resultado, CTR, CPC, CPM, ROAS, comparação com o período
+    anterior, campanhas e quebras por plataforma/idade/gênero. Direto da API, sem análise."""
+    return _enxuto(_api("GET", f"trafego/contas/{conta_id}/indicadores", ini=ini, fim=fim))
+
+
+@mcp.tool()
+def indicadores_google(conta_id: str, ini: str = "", fim: str = "") -> dict:
+    """Números de uma conta do Google Ads num período (AAAA-MM-DD; vazio = últimos 30 dias): custo,
+    conversões, CPA, ROAS, cliques, CTR, CPC, comparação com o período anterior, campanhas, dispositivos
+    e termos que mais gastaram. Direto da API, sem análise."""
+    return _enxuto(_api("GET", f"googleads/contas/{str(conta_id).replace('-', '')}/indicadores", ini=ini, fim=fim))
+
+
+# ── Google Ads dos clientes ────────────────────────────────────────────────
+@mcp.tool()
+def googleads_painel() -> list:
+    """Contas do Google Ads: gasto e conversões (ontem, 7 e 30 dias, com variação), CPA/ROAS por campanha,
+    desperdício em termos de pesquisa, resumo da última análise e propostas esperando aprovação (com id)."""
+    out = []
+    for c in _api("GET", "googleads").get("contas", []):
+        m = c.get("metricas") or {}
+        out.append({"id": c["id"], "nome": c["nome"], "ativa": bool(c.get("ativo")), "cliente": c.get("cliente_nome"),
+                    "ontem": m.get("ontem"), "ult7": m.get("ult7"), "var7": m.get("var7"), "ult30": m.get("ult30"),
+                    "var30": m.get("var30"), "campanhas": (m.get("campanhas") or [])[:8],
+                    "desperdicio_termos": m.get("desperdicio_termos"), "analise": c.get("analise"),
+                    "propostas": [{k: a.get(k) for k in ("id", "tipo", "titulo", "motivo", "detalhes")}
+                                  for a in c.get("propostas") or []]})
+    return out
+
+
+@mcp.tool()
+def googleads_analisar(conta_id: str = "") -> dict:
+    """Roda a análise de uma conta do Google Ads (ou de todas as ativas) em segundo plano."""
+    return _api("POST", f"googleads/contas/{conta_id}/analisar" if conta_id else "googleads/analisar")
+
+
+@mcp.tool()
+def googleads_propor(conta_id: str, tipo: str, titulo: str, detalhes: dict, motivo: str = "") -> dict:
+    """Cria uma PROPOSTA (não aplica). Tipos: orcamento {campanha_id, orcamento_diario (R$/dia)};
+    pausar_campanha/ativar_campanha {campanha_id}; negativar_termos {campanha_id, termos: [...],
+    correspondencia: PHRASE|EXACT|BROAD}; pausar_palavra {recurso}; pausar_anuncio {recurso};
+    criar_campanha_pesquisa {nome, orcamento_diario, lance: conversoes|cliques|cpa, cpa_alvo, locais: ["São Paulo"]
+    (vazio = Brasil), url_final, negativas: [...], grupos: [{nome, palavras: [{texto, correspondencia}], titulos: [3–15,
+    até 30 caracteres], descricoes: [2–4, até 90], caminho1, caminho2}]} — nasce pausada. Pergunte ao usuário o que
+    faltar (link da página, verba, cidades, oferta) antes de propor. Ids e recursos vêm do googleads_painel.
+    criar_campanha_demand_gen (YouTube, Discover, Gmail e Display; é o jeito de anunciar vídeo pela API):
+    {nome, orcamento_diario, lance, cpa_alvo, locais, url_final, nome_empresa (até 25), logo (anexo ou caminho),
+    anuncio_video: {videos: [link do YouTube OU o anexo do vídeo, que é enviado ao YouTube como não listado],
+    titulos [1–5, até 40], titulos_longos [1–5, até 90], descricoes [1–5, até 90], cta: LEARN_MORE|SHOP_NOW|BUY_NOW|
+    ORDER_NOW|SIGN_UP|CONTACT_US|GET_QUOTE|BOOK_NOW|...}, anuncio_imagem: {imagens [anexos; cortadas em 1,91:1, 1:1 e
+    4:5], titulos [1–5, até 40], descricoes [1–5, até 90], cta_texto (até 10 letras, ex.: "Comprar")}}; até 20 imagens no total (peça já no formato do Google entra só nele) — um dos dois anúncios ou os dois.
+    criar_campanha_display: {nome, orcamento_diario, lance, locais, url_final, nome_empresa, logo, imagens [anexos],
+    titulos [1–5, até 30], titulo_longo (até 90), descricoes [1–5, até 90]}. Campanhas novas nascem pausadas.
+    Arquivos: passe o id do anexo (o que vem em [anexo:ID]) ou o caminho do arquivo."""
+    return _api("POST", f"googleads/contas/{conta_id}/propor", {"tipo": tipo, "titulo": titulo, "motivo": motivo,
+                                                               "detalhes": detalhes})
+
+
+@mcp.tool()
+def midia_info(arquivo: str) -> dict:
+    """Abre um vídeo ou imagem anexado (id do [anexo:ID] ou caminho) e diz duração, resolução, proporção, tamanho
+    e avisos para anúncio. Use antes de montar campanha com vídeo/imagem."""
+    return _api("GET", "googleads/midia", ref=arquivo)
+
+
+@mcp.tool()
+def googleads_aprovar(acao_id: int) -> dict:
+    """APLICA no Google Ads uma proposta. SÓ depois de mostrar o que muda (conta, campanha, valores) e o usuário
+    confirmar explicitamente nesta conversa."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/aprovar", {})
+
+
+@mcp.tool()
+def googleads_editar(acao_id: int, detalhes: dict) -> dict:
+    """MUDA uma proposta do Google Ads ainda não aplicada (ex.: verba, títulos, vídeo, cidades), em vez de
+    criar outra. Mande os detalhes COMPLETOS já com a mudança (pegue os atuais em googleads_painel)."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/editar", {"detalhes": detalhes})
+
+
+@mcp.tool()
+def googleads_rejeitar(acao_id: int, nota: str = "") -> dict:
+    """Descarta uma proposta do Google Ads."""
+    return _api("POST", f"googleads/acoes/{int(acao_id)}/rejeitar", {"nota": nota})
 
 
 # ── rotina (resumo do dia, cobranças, relatórios mensais) ─────────────────

@@ -1,0 +1,26 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<!-- MODELO: prova / resultado (feed 1080x1350). Quando usar: case, depoimento REAL, antes e depois, resultado com número.
+     Troque: número e frase SÓ com dados reais do cliente; foto do cliente/produto; nome de quem falou (com autorização).
+     Ideia: número gigante + citação curta + rosto real geram confiança. -->
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,500&family=Inter:wght@500;600&family=Inter+Tight:wght@800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="kit/haizen-kit.css">
+<style>
+  :root { --fundo: #101014; --tinta: #f7f5f0; --marca: #2b59ff; --destaque: #7cf0b2; }
+  .foto { opacity: .9; }
+  .numero { font: 900 260px/.82 var(--fonte-titulo); letter-spacing: -.07em; color: var(--destaque); }
+  .aspas { font: italic 500 46px/1.15 "Fraunces", Georgia, serif; max-width: 820px; }
+  .quem { display: flex; align-items: center; gap: 18px; margin-top: 34px; }
+  .quem img { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; border: 3px solid var(--destaque); }
+</style></head>
+<body><div class="peca grao">
+  <img class="foto" src="foto.jpg" alt=""><div class="veu-baixo" style="background:linear-gradient(180deg,rgba(16,16,20,.2) 0%,rgba(16,16,20,.55) 40%,rgba(16,16,20,.96) 72%)"></div>
+  <div class="area" style="z-index:2">
+    <div class="fila entre"><img class="logo" src="logo.png" alt=""><span class="tag">Resultado real</span></div>
+    <div class="empurra">
+      <p class="numero">+212%</p>
+      <p class="sobre" style="color:var(--suave);margin:10px 0 34px">em pedidos pelo site em 60 dias</p>
+      <p class="aspas">“Pela primeira vez o site trouxe mais cliente que o Instagram.”</p>
+      <div class="quem"><img src="pessoa.jpg" alt=""><div><p style="font:600 26px/1.2 var(--fonte-texto)">Nome do cliente</p><p class="texto" style="font-size:22px">Cargo, Empresa</p></div></div>
+    </div>
+  </div>
+</div></body></html>

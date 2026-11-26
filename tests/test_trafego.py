@@ -53,8 +53,17 @@ class TrafegoTests(unittest.TestCase):
             return self.respostas.pop(0)
         self.p = patch("haizen.executor._rodar_claude", side_effect=falso)
         self.p.start()
+        self.enviadas = []
+        self.pi = patch("haizen.trafego.envio.subir_imagem",
+                        side_effect=lambda conta, arq: (self.enviadas.append(arq.name), {"image_hash": "HASH-" + arq.stem,
+                                                                                          "image_url": ""})[1])
+        self.pi.start()
+        self.pt = patch("haizen.trafego.envio.token", return_value="EAA" + "x" * 120)
+        self.pt.start()
 
     def tearDown(self):
+        self.pt.stop()
+        self.pi.stop()
         self.p.stop()
         self.env.stop()
         self.dir.cleanup()
@@ -236,6 +245,8 @@ class TrafegoTests(unittest.TestCase):
         self.assertNotIn("mcp__meta-ads__ads_activate_entity", p)
         self.assertIn("NÃO ative nada", self.chamadas[-1][1])
         self.assertIn("Últimas vagas para Porto Seguro!", self.chamadas[-1][1])
+        self.assertIn("image_hash HASH-01 - Feed", self.chamadas[-1][1])          # a peça já foi enviada à conta
+        self.assertEqual(self.enviadas, ["01 - Feed.png"])
 
     def test_subir_e_ativar_e_falta_de_upload(self):
         self._conectar()
@@ -250,7 +261,55 @@ class TrafegoTests(unittest.TestCase):
         self.assertIn("mcp__meta-ads__ads_activate_entity", self._permitidas())
         self.assertIn("ATIVE o que criou", self.chamadas[-1][1])
         self.assertEqual(r["status"], "falhou")
-        self.assertIn("Ads CLI", r["resultado"])
+        self.assertIn("token do Meta Ads", r["resultado"])
+
+    def test_editar_proposta_pelo_chat_e_reenvio_so_do_novo(self):
+        self._conectar()
+        a1, a2 = Path(self.dir.name) / "a.jpg", Path(self.dir.name) / "b.jpg"
+        a1.write_bytes(b"jpg")
+        a2.write_bytes(b"jpg")
+        with store_patch_anexo(a1) as ids:
+            self.respostas.append(json.dumps({"alvo_id": "1", "alvo_nome": "C", "pecas": [
+                {"arquivo": a1.as_posix(), "texto_principal": "antigo", "titulo": "t"}]}))
+            a = self.t.preparar_criativos("act_1", "", None, ids)
+        self.respostas.append('{"ok": false, "detalhe": "conjunto pausado"}')
+        self.assertEqual(self.t.aprovar(a["id"], em_segundo_plano=False)["status"], "falhou")
+        self.assertEqual(self.enviadas, ["a.jpg"])
+        with patch("haizen.central.anexos.caminho", return_value=a2):
+            e = self.t.editar(a["id"], {"alvo_id": "52591677986663", "alvo_nome": "Vendas | Público engajado 60 dias",
+                                        "nota": "trocar conjunto e acrescentar peça", "detalhes": {"cta": "SHOP_NOW", "pecas": [
+                {"arquivo": a1.as_posix(), "texto_principal": "Black Friday Loja", "titulo": "Kit 4 por R$ 399"},
+                {"arquivo": "[anexo:20261111-b.jpg]", "texto_principal": "Polos", "titulo": "2 por R$ 398"}]}})
+        self.assertEqual((e["status"], e["alvo_id"]), ("proposta", "52591677986663"))
+        d = json.loads(e["detalhes"])
+        self.assertEqual(d["arquivos"], [str(a1), str(a2)])
+        self.assertEqual(d["pecas"][0]["image_hash"], "HASH-a")                 # já enviada: guardada
+        self.assertEqual(d["cta"], "SHOP_NOW")
+        self.respostas.append('{"ok": true, "detalhe": "2 anúncios criados"}')
+        r = self.t.aprovar(a["id"], em_segundo_plano=False)
+        self.assertEqual(r["status"], "aplicada")
+        self.assertEqual(self.enviadas, ["a.jpg", "b.jpg"])                       # só a nova subiu
+        self.assertIn("Black Friday Loja", self.chamadas[-1][1])
+        self.assertIn("52591677986663", self.chamadas[-1][1])
+        with self.assertRaises(ValueError):
+            self.t.editar(a["id"], {"motivo": "x"})                               # aplicada não edita
+
+    def test_sem_token_falha_antes_de_chamar_o_claude(self):
+        from haizen.trafego import envio
+        self._conectar()
+        img = Path(self.dir.name) / "p.jpg"
+        img.write_bytes(b"jpg")
+        with store_patch_anexo(img) as ids:
+            self.respostas.append(json.dumps({"alvo_id": "1", "alvo_nome": "C", "pecas": [
+                {"arquivo": img.as_posix(), "texto_principal": "t", "titulo": "t"}]}))
+            a = self.t.preparar_criativos("act_1", "", None, ids)
+        n = len(self.chamadas)
+        with patch.object(envio, "subir_imagem", side_effect=envio.ErroEnvio("sem token do Meta Ads (Tráfego → Configurar)")), \
+                patch.object(envio, "endereco_publico", side_effect=envio.ErroEnvio("sem página")):
+            r = self.t.aprovar(a["id"], em_segundo_plano=False)
+        self.assertEqual(r["status"], "falhou")
+        self.assertIn("token do Meta Ads", r["resultado"])
+        self.assertEqual(len(self.chamadas), n)
 
     def test_estrutura_cria_anuncios_e_retoma_de_onde_parou(self):
         self._conectar()
@@ -289,3 +348,50 @@ class TrafegoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnvioMetaTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"JARVIS_DATA_DIR": self.dir.name})
+        self.env.start()
+        from haizen.trafego import envio
+        self.e = envio
+
+    def tearDown(self):
+        self.env.stop()
+        self.dir.cleanup()
+
+    def test_token_imagem_video_e_reaproveita(self):
+        import urllib.parse as up
+        with self.assertRaises(ValueError):
+            self.e.salvar_token("abc")
+        self.e.salvar_token("EAA" + "y" * 150)
+        self.assertTrue(self.e.token_proprio().startswith("EAA"))
+        img = Path(self.dir.name) / "a.png"
+        img.write_bytes(b"\x89PNG")
+        vid = Path(self.dir.name) / "v.mp4"
+        vid.write_bytes(b"mp4")
+        chamadas = []
+
+        def http(metodo, url, dados=None, cab=None, timeout=300):
+            chamadas.append((metodo, url, dados))
+            if "/adimages" in url:
+                f = dict(up.parse_qsl(dados.decode()))
+                assert f["access_token"].startswith("EAA") and f["bytes"]
+                return {"images": {"a.png": {"hash": "H1", "url": "https://x/a.png"}}}
+            if "/advideos" in url:
+                return {"id": "V1"}
+            if "/V1?" in url:
+                return {"status": {"video_status": "ready"}, "picture": "https://x/thumb.jpg"}
+            if "debug_token" in url:
+                return {"data": {"is_valid": True, "scopes": ["ads_management"], "expires_at": 0}}
+            return {}
+        with patch.object(self.e, "_http", side_effect=http):
+            pecas = [{"arquivo": str(img)}, {"arquivo": str(vid), "titulo": "Vídeo"}, {"arquivo": str(img), "image_hash": "JA"}]
+            self.e.preparar_pecas("123", pecas)
+            self.assertTrue(self.e.situacao()["pronto"])
+        self.assertEqual(pecas[0]["image_hash"], "H1")
+        self.assertEqual((pecas[1]["video_id"], pecas[1]["thumbnail_url"]), ("V1", "https://x/thumb.jpg"))
+        self.assertIn("/act_123/adimages", chamadas[0][1])
+        self.assertEqual(sum(1 for c in chamadas if "/adimages" in c[1]), 1)       # a que já tinha hash não sobe

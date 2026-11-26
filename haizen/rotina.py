@@ -224,6 +224,13 @@ def resumo(hoje: dt.date | None = None) -> dict:
             blocos["Lojas"] = lojas_txt
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from haizen import googleads
+        g = googleads.resumo_linhas()
+        if g:
+            blocos["Google Ads"] = g
+    except Exception:  # noqa: BLE001
+        pass
     soc = []
     try:
         from haizen import social
@@ -597,8 +604,8 @@ def tarefas_devidas(agora: dt.datetime | None = None) -> list[str]:
 
 def _trafego_ocupado() -> bool:
     try:
-        from haizen import ecommerce, trafego
-        return bool(trafego.ESTADO.get("fazendo") or ecommerce.ESTADO.get("fazendo"))
+        from haizen import ecommerce, googleads, trafego
+        return bool(trafego.ESTADO.get("fazendo") or ecommerce.ESTADO.get("fazendo") or googleads.ESTADO.get("fazendo"))
     except Exception:  # noqa: BLE001
         return False
 

@@ -93,7 +93,7 @@ class SocialTests(unittest.TestCase):
         self.dir.cleanup()
 
     def _conectar(self):
-        r = self.s.conectar("EAAB" + "x" * 60)
+        r = self.s.conectar("EAAB" + "x" * 160)
         self.assertEqual(r["escolhida"]["username"], "haizen.agencia")
 
     def test_token_fica_fora_do_repo_e_e_validado(self):
@@ -102,6 +102,40 @@ class SocialTests(unittest.TestCase):
         self._conectar()
         self.assertTrue(str(self.ig._arq_token()).startswith(self.dir.name))
         self.assertTrue(self.s.painel()["conectado"])
+
+    def test_token_errado_nao_apaga_o_que_funcionava(self):
+        self._conectar()
+        bom = self.ig.token()
+        with self.assertRaises(ValueError) as e:
+            self.s.conectar("0123456789abcdef0123456789abcdef")             # "Token do cliente" do app
+        self.assertIn("Token do cliente", str(e.exception))
+        with self.assertRaises(ValueError):
+            self.s.conectar("123456789012345")                               # ID do app
+        with patch.object(self.ig, "contas", side_effect=self.ig.ErroInstagram("Invalid OAuth access token")):
+            with self.assertRaises(ValueError) as e:
+                self.s.conectar("EAAB" + "y" * 160)
+        self.assertIn("anterior continua guardado", str(e.exception))
+        self.assertEqual(self.ig.token(), bom)
+
+    def test_permissao_que_falta_aparece(self):
+        self._conectar()
+        with patch.object(self.ig, "info_do_token", return_value={"valido": True, "vence_em": 0,
+                                                                  "escopos": ["instagram_basic", "pages_show_list"]}):
+            self.s.conferir_token(forcar=True)
+        self.assertIn("instagram_content_publish", self.s.painel()["config"]["token_faltando"])
+        import io
+        import urllib.error
+        corpo = io.BytesIO(json.dumps({"error": {"code": 10, "message": "(#10) Requires instagram_content_publish "
+                                                                       "permission to manage the object"}}).encode())
+        err = urllib.error.HTTPError("u", 403, "x", {}, corpo)
+        self.p[0].stop()
+        try:
+            with patch("urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(self.ig.ErroInstagram) as e:
+                    self.ig._http("POST", "https://graph/x")
+        finally:
+            self.p[0].start()
+        self.assertIn("não tem a permissão instagram_content_publish", str(e.exception))
 
     def test_analise_ve_a_grade_e_monta_o_calendario(self):
         self._conectar()

@@ -213,6 +213,9 @@ CREATE INDEX IF NOT EXISTS tarefas_status ON tarefas(status);
 # Colunas acrescentadas a tabelas que já existiam em bancos de versões
 # anteriores. CREATE TABLE IF NOT EXISTS não altera uma tabela existente.
 _COLUNAS_NOVAS = {
+    "trafego_contas": {
+        "resultado": "TEXT NOT NULL DEFAULT ''",   # resultado principal escolhido (vazio = automático)
+    },
     "clientes": {
         "status": "TEXT NOT NULL DEFAULT 'Ativo'",
         "contato": "TEXT NOT NULL DEFAULT ''",
@@ -234,6 +237,10 @@ _COLUNAS_NOVAS = {
         "pergunta": "TEXT NOT NULL DEFAULT ''",       # o que o agente perguntou
         "resposta": "TEXT NOT NULL DEFAULT ''",       # a sua resposta
         "sessao": "TEXT NOT NULL DEFAULT ''",         # conversa do Claude Code para continuar
+        "retomar": "TEXT NOT NULL DEFAULT ''",        # conversa interrompida (tempo, limite, Jarvis fechado)
+        "revisao_de": "INTEGER NOT NULL DEFAULT 0",   # nova versão (refazer) de qual trabalho
+        "ajuste": "TEXT NOT NULL DEFAULT ''",         # o que mudar nessa nova versão
+        "interrupcoes": "INTEGER NOT NULL DEFAULT 0", # quantas vezes passou do tempo seguidas
     },
     "trafego_analises": {"diagnostico": "TEXT NOT NULL DEFAULT '{}'"},   # criativos, públicos, estrutura, funil
     "trafego_acoes": {"detalhes": "TEXT NOT NULL DEFAULT '{}'",           # especificação da mudança
@@ -390,7 +397,7 @@ def atualizar(tid: int, **campos) -> dict:
     if "status" in campos and campos["status"] not in STATUS:
         raise ValueError(f"status inválido: {campos['status']}")
     permitidos = {"status", "arquivo", "erro", "observacao", "executor", "depende_de", "pasta",
-                  "pergunta", "resposta", "sessao"}
+                  "pergunta", "resposta", "sessao", "retomar", "interrupcoes", "revisao_de", "ajuste"}
     if isinstance(campos.get("depende_de"), list):
         campos["depende_de"] = json.dumps([int(x) for x in campos["depende_de"]])
     sets = {k: v for k, v in campos.items() if k in permitidos}

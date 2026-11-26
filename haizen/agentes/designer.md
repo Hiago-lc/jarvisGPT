@@ -15,4 +15,6 @@ Quando o pedido for identidade visual:
 Quando o pedido for direção de arte de uma campanha:
 - `Direção de arte.md` curto (conceito, paleta, tipografia) e 2 peças-modelo em PNG (ex.: um feed e um stories) que a equipe vai seguir, feitas com o Padrão de criação do CLAUDE.md.
 
+Em tudo, comece pela pesquisa visual (`referencias` com o nicho e o estilo, `prancha`, `fontes/direcao.md`) e use o `kit_de_design()` nas peças-modelo e mockups.
+
 Use o que já existe na pasta do cliente (logo, cores, fontes, peças antigas): respeite a marca existente.

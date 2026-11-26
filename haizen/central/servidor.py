@@ -205,9 +205,12 @@ class _Handler(BaseHTTPRequestHandler):
         bruto = self._bruto(2_000_000)
         return json.loads(bruto.decode("utf-8") or "{}") if bruto else {}
 
-    def _binario(self, corpo: bytes, tipo: str):
+    def _binario(self, corpo: bytes, tipo: str, nome: str = ""):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", tipo)
+        if nome:
+            from urllib.parse import quote
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(nome)}")
         self.send_header("Content-Length", str(len(corpo)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -234,6 +237,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._erro(HTTPStatus.FORBIDDEN, "host não permitido")
         url = urlparse(self.path)
+        if url.path == "/oauth/google-ads" and metodo == "GET":
+            return self._retorno_google_ads(url)
         if not url.path.startswith("/api/"):
             if metodo != "GET":
                 return self._erro(HTTPStatus.METHOD_NOT_ALLOWED, "método não permitido")
@@ -255,7 +260,7 @@ class _Handler(BaseHTTPRequestHandler):
         if isinstance(resultado, _Audio):
             return self._binario(resultado.dados, "audio/wav")
         if isinstance(resultado, _Arquivo):
-            return self._binario(resultado.dados, resultado.tipo)
+            return self._binario(resultado.dados, resultado.tipo, getattr(resultado, "nome", ""))
         self._json(resultado)
 
     def _api(self, metodo, partes, q):
@@ -312,6 +317,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._rotina(metodo, partes[1:], q)
         if partes and partes[0] == "ecommerce":
             return self._ecommerce(metodo, partes[1:], q)
+        if partes and partes[0] == "googleads":
+            return self._googleads(metodo, partes[1:], q)
         if partes and partes[0] == "trafego":
             return self._trafego(metodo, partes[1:], q)
         if partes and partes[0] == "pc":
@@ -445,6 +452,12 @@ class _Handler(BaseHTTPRequestHandler):
                 return _projeto(proj)
             if metodo == "DELETE":
                 return store.apagar_projeto(pid)
+        if len(partes) == 2 and partes[1] == "complementar" and metodo == "POST":
+            c = self._corpo()
+            r = servicos.complementar_projeto(int(partes[0]), c.get("informacao", ""), c.get("anexos") or [],
+                                              c.get("marca", ""))
+            worker.iniciar()
+            return r
         return _NAO_ACHOU
 
     def _whatsapp(self, metodo, partes, q):
@@ -463,7 +476,24 @@ class _Handler(BaseHTTPRequestHandler):
                 return {"estado": "erro", "erro": r, "imagem": ""}
             return r
         if rota == "recentes" and metodo == "GET":
-            return {"conversas": _ou_erro(*whatsapp_web.run_op({"op": "recent"}, timeout=90))}
+            conversas = _ou_erro(*whatsapp_web.run_op({"op": "recent", "limit": 50}, timeout=90))
+            for c in conversas:
+                try:
+                    cli = store.buscar_cliente(c["contato"])
+                except Exception:  # noqa: BLE001
+                    cli = None
+                c["cliente"] = {"id": cli["id"], "nome": cli["nome"]} if cli else None
+            return {"conversas": conversas}
+        if rota == "respostas" and metodo == "GET":
+            from haizen.central import whatsapp_ia
+            return {"respostas": whatsapp_ia.respostas()}
+        if rota == "respostas" and metodo == "POST":
+            from haizen.central import whatsapp_ia
+            return {"respostas": whatsapp_ia.salvar_respostas(self._corpo().get("respostas") or [])}
+        if rota == "resumir" and metodo == "POST":
+            from haizen.central import whatsapp_ia
+            c = self._corpo()
+            return {"texto": whatsapp_ia.resumir(str(c.get("contato") or ""), c.get("mensagens") or [])}
         if rota == "janela" and metodo == "POST":
             mostrar = bool(self._corpo().get("mostrar", True))
             return {"ok": bool(_ou_erro(*whatsapp_web.run_op({"op": "window", "show": mostrar}, timeout=30)))}
@@ -473,8 +503,8 @@ class _Handler(BaseHTTPRequestHandler):
             contato = (q.get("contato") or "").strip()
             if not contato:
                 raise ValueError("informe o contato")
-            n = max(1, min(40, int(q.get("n") or 15)))
-            msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=60))
+            n = max(1, min(80, int(q.get("n") or 15)))
+            msgs = _ou_erro(*whatsapp_web.run_op({"op": "read", "recipient": contato, "count": n}, timeout=90))
             from core import transcrever
             msgs = transcrever.com_transcricoes(msgs)
             cli = store.buscar_cliente(contato)
@@ -508,7 +538,8 @@ class _Handler(BaseHTTPRequestHandler):
         if rota == "sugerir" and metodo == "POST":
             from haizen.central import whatsapp_ia
             c = self._corpo()
-            return {"texto": whatsapp_ia.sugerir_resposta(str(c.get("contato") or ""), c.get("mensagens") or [])}
+            return {"texto": whatsapp_ia.sugerir_resposta(str(c.get("contato") or ""), c.get("mensagens") or [],
+                                                          str(c.get("pedido") or ""))}
         return _NAO_ACHOU
 
     def _agenda(self, metodo, partes, q):
@@ -566,8 +597,7 @@ class _Handler(BaseHTTPRequestHandler):
             if acao == "" and metodo == "POST":
                 return ec.editar_loja(lid, self._corpo())
             if acao == "analisar" and metodo == "POST":
-                ec.analisar_em_segundo_plano(lid)
-                return {"ok": True}
+                return {"ok": ec.analisar_em_segundo_plano(lid)}
             if acao == "produtos" and metodo == "GET":
                 return ec.buscar_produtos(lid, str((q or {}).get("busca") or ""))
             if acao == "propor" and metodo == "POST":
@@ -575,8 +605,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return ec.propor(lid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
                                  c.get("detalhes") or {}, "manual")
         if rota == "analisar" and metodo == "POST":
-            ec.analisar_em_segundo_plano(None)
-            return {"ok": True}
+            return {"ok": ec.analisar_em_segundo_plano(None)}
         if rota == "acoes" and len(partes) == 3 and metodo == "POST":
             aid, acao = int(partes[1]), partes[2]
             if acao == "aprovar":
@@ -584,6 +613,94 @@ class _Handler(BaseHTTPRequestHandler):
                 return ec.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None)
             if acao == "rejeitar":
                 return ec.rejeitar(aid, str(self._corpo().get("nota") or ""))
+        return _NAO_ACHOU
+
+    def _retorno_google_ads(self, url):
+        """O Google volta aqui depois de você autorizar (página normal, não /api)."""
+        from haizen.googleads import api as gapi
+        q = {k: v[-1] for k, v in parse_qs(url.query).items()}
+        try:
+            if q.get("error"):
+                raise ValueError(f"o Google não autorizou ({q['error']})")
+            gapi.concluir(q.get("state", ""), q.get("code", ""))
+            from haizen import googleads
+            googleads.sincronizar_contas()
+            titulo, texto = "Google Ads conectado", "Pode fechar esta aba e voltar ao Jarvis: as contas já aparecem na tela Google Ads."
+        except Exception as e:  # noqa: BLE001
+            titulo, texto = "Não conectou", str(e)
+        import html as _html
+        corpo = (f"<!doctype html><meta charset=utf-8><title>{_html.escape(titulo)}</title>"
+                 f"<body style='font:18px system-ui;max-width:560px;margin:80px auto;padding:0 20px'>"
+                 f"<h1>{_html.escape(titulo)}</h1><p>{_html.escape(texto)}</p>"
+                 f"<p><a href='/#/googleads'>Voltar para a tela Google Ads</a></p></body>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _googleads(self, metodo, partes, q=None):
+        from haizen import googleads as ga
+        from haizen.googleads import api as gapi
+        rota = partes[0] if partes else ""
+        if rota == "" and metodo == "GET":
+            return ga.painel()
+        if rota == "config" and metodo == "POST":
+            ga.salvar_config(self._corpo())
+            return ga.painel()
+        if rota == "autorizar" and metodo == "POST":
+            host = self.headers.get("Host", f"127.0.0.1:{PORTA}")
+            if not host.split(":")[0] in ("127.0.0.1", "localhost"):
+                raise ValueError("conecte o Google Ads pelo próprio computador (o Google só volta para 127.0.0.1)")
+            return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads",
+                                                youtube=self._corpo().get("youtube", True) is not False)}
+        if rota == "midia" and metodo == "GET":
+            from haizen.googleads import midia
+            ref = str((q or {}).get("ref") or "")
+            p_ = midia.arquivo(ref)
+            if p_.suffix.lower() in midia.VIDEOS:
+                return midia.info_video(ref)
+            return midia.conferir_imagem(ref)
+        if rota == "desconectar" and metodo == "POST":
+            gapi.desconectar()
+            return ga.painel()
+        if rota == "sincronizar" and metodo == "POST":
+            ga.sincronizar_contas()
+            return ga.painel()
+        if rota == "analisar" and metodo == "POST":
+            return {"ok": ga.analisar_em_segundo_plano(None)}
+        if rota == "contas" and len(partes) >= 2:
+            cid, acao = partes[1], (partes[2] if len(partes) > 2 else "")
+            if acao == "" and metodo == "POST":
+                return ga.editar_conta(cid, self._corpo())
+            if acao == "indicadores" and len(partes) == 4 and partes[3] == "exportar" and metodo == "GET":
+                return _exportar_indicadores("google", ga.conta(cid), q or {})
+            if acao == "indicadores" and metodo == "GET":
+                from haizen import indicadores
+                q = q or {}
+                if q.get("novo"):
+                    indicadores.limpar_cache()
+                c = ga.conta(cid)
+                an = ga.ultima_analise(c["id"])
+                return {**indicadores.google(c["id"], q.get("ini", ""), q.get("fim", "")), "conta_info": c,
+                        "analise": {k: an.get(k) for k in ("criado_em", "resumo", "saude", "alertas")} if an else None,
+                        "acoes": ga.acoes(c["id"], ("proposta", "erro"))}
+            if acao == "analisar" and metodo == "POST":
+                return {"ok": ga.analisar_em_segundo_plano(cid)}
+            if acao == "propor" and metodo == "POST":
+                c = self._corpo()
+                return ga.propor(cid, str(c.get("tipo") or ""), str(c.get("titulo") or ""), str(c.get("motivo") or ""),
+                                 c.get("detalhes") or {}, "manual")
+        if rota == "acoes" and len(partes) == 3 and metodo == "POST":
+            aid, acao = int(partes[1]), partes[2]
+            if acao == "aprovar":
+                c = self._corpo()
+                return ga.aprovar(aid, c.get("detalhes") if isinstance(c.get("detalhes"), dict) else None,
+                                  c.get("ativar") if isinstance(c.get("ativar"), bool) else None)
+            if acao == "rejeitar":
+                return ga.rejeitar(aid, str(self._corpo().get("nota") or ""))
+            if acao == "editar":
+                return ga.editar(aid, self._corpo().get("detalhes") or {})
         return _NAO_ACHOU
 
     def _rotina(self, metodo, partes, q=None):
@@ -696,6 +813,17 @@ class _Handler(BaseHTTPRequestHandler):
             return trafego.salvar_config(self._corpo())
         if rota == "resumo" and metodo == "GET":
             return {"texto": trafego.resumo_texto()}
+        if rota == "contas" and len(partes) == 3 and partes[2] == "indicadores" and metodo == "GET":
+            from haizen import indicadores
+            q = q or {}
+            if q.get("novo"):
+                indicadores.limpar_cache()
+            c = trafego.conta(unquote(partes[1]))
+            r = indicadores.meta(c["id"], q.get("ini", ""), q.get("fim", ""), c.get("objetivo") or "", c.get("resultado") or "")
+            return {**r, "conta_info": c, "analise": trafego.ultimas_analises().get(c["id"]),
+                    "acoes": [a for a in trafego.acoes(("proposta", "aplicando", "falhou")) if a["conta_id"] == c["id"]]}
+        if rota == "contas" and len(partes) == 4 and partes[2:] == ["indicadores", "exportar"] and metodo == "GET":
+            return _exportar_indicadores("meta", trafego.conta(unquote(partes[1])), q or {})
         if rota == "contas" and len(partes) == 2 and metodo == "PATCH":
             return trafego.atualizar_conta(unquote(partes[1]), self._corpo())
         if rota == "analises" and len(partes) == 2 and metodo == "GET":
@@ -723,6 +851,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return trafego.aprovar(aid, ativar=bool(c.get("ativar")), nota=str(c.get("nota") or "")[:1500])
             if partes[2] == "rejeitar":
                 return trafego.rejeitar(aid, str(self._corpo().get("motivo") or ""))
+            if partes[2] == "editar" and metodo == "POST":
+                return trafego.editar(aid, self._corpo())
         if rota == "acoes" and len(partes) == 1 and metodo == "POST":
             c = self._corpo()
             return trafego.propor(str(c.get("conta_id") or ""), str(c.get("tipo") or "manual"),
@@ -818,6 +948,8 @@ class _Handler(BaseHTTPRequestHandler):
         rota = partes[0] if partes else ""
         if rota == "estado" and metodo == "GET":
             return {**cerebro.estado(), "confirmacao": cerebro.confirmacao_pendente()}
+        if rota == "buscar" and metodo == "GET":
+            return cerebro.buscar_mensagens(q.get("texto", ""), int(q.get("limite") or 6), int(q.get("dias") or 30))
         if rota == "historico" and metodo == "GET":
             return cerebro.historico(int(q.get("limite") or 40))
         if rota == "historico" and metodo == "DELETE":
@@ -867,10 +999,20 @@ class _Audio:
         self.dados = dados
 
 
+def _exportar_indicadores(plataforma: str, conta: dict, q: dict) -> "_Arquivo":
+    from haizen import exportar, indicadores
+    i, f, _, _ = indicadores.periodo(q.get("ini", ""), q.get("fim", ""))
+    formato = (q.get("formato") or "pdf").lower().replace("jpeg", "jpg")
+    dados = exportar.indicadores(plataforma, conta["id"], i.isoformat(), f.isoformat(), formato, PORTA)
+    nome = exportar.nome_arquivo(conta.get("cliente_nome") or conta.get("nome") or "", plataforma, i.isoformat(),
+                                 f.isoformat(), formato)
+    return _Arquivo(dados, exportar.TIPOS[formato], nome)
+
+
 class _Arquivo:
     """Um arquivo produzido por um agente, para a página mostrar."""
-    def __init__(self, dados: bytes, tipo: str):
-        self.dados, self.tipo = dados, tipo
+    def __init__(self, dados: bytes, tipo: str, nome: str = ""):
+        self.dados, self.tipo, self.nome = dados, tipo, nome
 
 
 _TIPOS_ENTREGA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
@@ -936,6 +1078,8 @@ def iniciar(abrir_navegador: bool = True, assumir: bool = False, espera: float =
                     rotina.iniciar_agenda()           # resumo da manhã, backup, cobranças, relatório mensal
                     from haizen import ecommerce
                     ecommerce.iniciar_agenda()        # lojas Shopify/Tray: análise diária, fim das promoções
+                    from haizen import googleads
+                    googleads.iniciar_agenda()        # Google Ads dos clientes: análise diária
                 except Exception as e:  # noqa: BLE001
                     print(f"[Tráfego] agenda não iniciou: {e}")
     if abrir_navegador:

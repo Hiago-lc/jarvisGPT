@@ -13,6 +13,7 @@ Instagram. Vídeo (reels) sobe direto do PC (upload resumível).
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.error
@@ -63,6 +64,25 @@ def token() -> str:
     return t
 
 
+def conferir_formato(t: str) -> str:
+    """Barra o que não é token de usuário: o "Token do cliente" (32 letras/números), a
+    "Chave secreta do app" e o ID do app costumam ser colados por engano."""
+    t = (t or "").strip().strip('"').strip()
+    if not t or " " in t:
+        raise ValueError("cole só o token, sem espaços")
+    if re.fullmatch(r"[0-9a-f]{32}", t):
+        raise ValueError("isso é o \"Token do cliente\" ou a \"Chave secreta\" do app, não o token de acesso. Gere o "
+                         "token no Explorador da Graph API (botão Generate Access Token): ele começa com EAA e é bem "
+                         "mais comprido")
+    if t.isdigit() or "|" in t:
+        raise ValueError("isso é o ID do app (ou token de app), não o token de acesso do usuário. Gere no Explorador "
+                         "da Graph API: ele começa com EAA")
+    if not t.startswith("EA") or len(t) < 100:
+        raise ValueError("isso não parece um token de acesso da Meta (ele começa com EAA e tem mais de 100 "
+                         "caracteres). Copie de novo do Explorador da Graph API ou do Depurador de Token")
+    return t
+
+
 def salvar_token(t: str) -> None:
     t = (t or "").strip()
     if len(t) < 30 or " " in t:
@@ -86,13 +106,26 @@ def _http(metodo: str, url: str, dados: bytes | None = None, cabecalhos: dict | 
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
+        corpo = b""
         try:
-            erro = json.loads(e.read()).get("error") or {}
+            corpo = e.read() or b""
+            j = json.loads(corpo)
+            # O envio de vídeo (rupload) responde o erro em "debug_info", não em "error".
+            erro = j.get("error") or j.get("debug_info") or {}
         except Exception:  # noqa: BLE001
             erro = {}
         msg = erro.get("error_user_msg") or erro.get("message") or f"HTTP {e.code}"
+        if msg == f"HTTP {e.code}" and corpo:
+            msg += f": {corpo.decode('utf-8', 'replace')[:300]}"
+        print(f"[Instagram] {metodo} {url.split('?')[0]} → {e.code}: {corpo[:600]!r}")
+        m = re.search(r"Requires (\w+) permission", str(erro.get("message") or ""))
+        if m or erro.get("code") == 10:
+            perm = m.group(1) if m else "a permissão necessária"
+            msg = (f"o token não tem a permissão {perm}. Gere um token novo marcando {perm} (veja o passo a passo "
+                   f"em \"Trocar token\" na aba Social) e troque. ({msg})")
+            raise ErroInstagram(msg) from None
         if erro.get("code") in (190, 102) or e.code == 401:
-            msg = ("o acesso ao Instagram venceu ou foi revogado: gere um token novo e cole na aba Social "
+            msg = ("o acesso ao Instagram venceu ou o token guardado não vale: clique em \"Trocar token\" na aba Social "
                    f"({msg})")
         raise ErroInstagram(msg) from None
     except urllib.error.URLError as e:
@@ -115,9 +148,20 @@ def _post(caminho: str, tk: str | None = None, **params) -> dict:
 
 
 # ── conta ───────────────────────────────────────────────────────────────────
-def contas() -> list[dict]:
+def info_do_token(tk: str | None = None) -> dict:
+    """Quando o token vence (0 = não vence) e se ainda vale, pelo depurador da própria Meta."""
+    tk = tk or token()
+    try:
+        d = (_get("debug_token", tk, input_token=tk).get("data") or {})
+    except ErroInstagram:
+        return {}
+    return {"valido": bool(d.get("is_valid")), "vence_em": int(d.get("expires_at") or 0),
+            "acesso_vence_em": int(d.get("data_access_expires_at") or 0), "escopos": d.get("scopes") or []}
+
+
+def contas(tk: str | None = None) -> list[dict]:
     """As contas do Instagram ligadas às Páginas do token: [{ig_id, username, page_id, page_nome}]."""
-    r = _get("me/accounts", fields="id,name,access_token,instagram_business_account{id,username,name}", limit=100)
+    r = _get("me/accounts", tk, fields="id,name,access_token,instagram_business_account{id,username,name}", limit=100)
     out = []
     for p in r.get("data") or []:
         ig = p.get("instagram_business_account")
@@ -242,10 +286,50 @@ def endereco_publico(page_id: str, arquivo: Path) -> str:
     return imagens[0]["source"]
 
 
-def _esperar(container: str, limite: int = 600) -> None:
+_CONTA_ANUNCIOS: dict = {}
+
+
+def _conta_de_anuncios() -> str:
+    """Uma conta de anúncios que o token enxerga (a da HAIZEN, se houver) para hospedar imagens."""
+    if "id" in _CONTA_ANUNCIOS:
+        return _CONTA_ANUNCIOS["id"]
+    from haizen.trafego import envio
+    r = _get("me/adaccounts", envio.token() or None, fields="id,name,account_status", limit=200)
+    contas = [c for c in r.get("data") or [] if int(c.get("account_status") or 0) == 1] or (r.get("data") or [])
+    escolhida = next((c for c in contas if "haizen" in (c.get("name") or "").lower()), None) or (contas[0] if contas else {})
+    _CONTA_ANUNCIOS["id"] = escolhida.get("id", "")
+    return _CONTA_ANUNCIOS["id"]
+
+
+def endereco_da_imagem(page_id: str, arquivo: Path) -> str:
+    """Endereço público da imagem para o Instagram baixar. Primeiro pela biblioteca de imagens da
+    conta de anúncios (só precisa de ads_management); se não der, por foto não publicada da Página
+    (precisa de pages_manage_posts)."""
+    jpg = _jpeg(arquivo)
+    erro = None
+    try:
+        conta = _conta_de_anuncios()
+        if conta:
+            from haizen.trafego import envio
+            url = envio.subir_imagem(conta, jpg).get("image_url")
+            if url:
+                return url
+    except Exception as e:  # noqa: BLE001
+        erro = e
+    try:
+        return endereco_publico(page_id, jpg)
+    except ErroInstagram as e:
+        if "pages_manage_posts" in str(e) or "not available" in str(e):
+            raise ErroInstagram("não consegui hospedar a imagem: o token precisa de ads_management (para usar a "
+                                "biblioteca da conta de anúncios) ou de pages_manage_posts"
+                                + (f" ({erro})" if erro else "")) from None
+        raise
+
+
+def _esperar(container: str, limite: int = 600, tk: str | None = None) -> None:
     fim = time.time() + limite
     while time.time() < fim:
-        r = _get(container, fields="status_code,status")
+        r = _get(container, tk, fields="status_code,status")
         if r.get("status_code") == "FINISHED":
             return
         if r.get("status_code") in ("ERROR", "EXPIRED"):
@@ -254,18 +338,94 @@ def _esperar(container: str, limite: int = 600) -> None:
     raise ErroInstagram("a Meta demorou demais para processar a mídia")
 
 
+def video_para_instagram(arquivo: Path) -> Path:
+    """Cópia do vídeo no padrão que o Instagram aceita sem recusar (erro 2207076 e parecidos):
+    H.264 yuv420p até 1080x1920 e 30 fps, áudio AAC 48 kHz estéreo (silêncio se não tiver) e o
+    índice no começo do arquivo. A cópia fica numa pasta temporária; o original não muda."""
+    import subprocess
+    import tempfile
+    from haizen.producao.ferramentas import ffmpeg
+    exe = ffmpeg()
+    destino = Path(tempfile.mkdtemp(prefix="jarvis-ig-")) / (arquivo.stem[:60] + ".mp4")
+    sonda = subprocess.run([exe, "-hide_banner", "-i", str(arquivo)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    tem_audio = "Audio:" in (sonda.stderr or "")
+    escala = ("scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease,"
+              "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30,format=yuv420p")
+    cmd = [exe, "-y", "-hide_banner", "-loglevel", "error", "-i", str(arquivo)]
+    if not tem_audio:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    cmd += ["-map", "0:v:0", "-map", "0:a:0" if tem_audio else "1:a:0", "-vf", escala,
+            "-c:v", "libx264", "-profile:v", "high", "-level", "4.1", "-preset", "veryfast", "-crf", "20",
+            "-maxrate", "20M", "-bufsize", "40M", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            "-movflags", "+faststart", "-shortest", str(destino)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+    if r.returncode != 0 or not destino.is_file():
+        raise ErroInstagram(f"não consegui preparar o vídeo para o Instagram: {(r.stderr or '').strip()[-300:]}")
+    return destino
+
+
 def _video(ig_id: str, arquivo: Path, legenda: str, reels: bool = True, carrossel: bool = False) -> str:
+    try:
+        arquivo = video_para_instagram(arquivo)
+    except Exception as e:  # noqa: BLE001 - sem ffmpeg, tenta o original
+        print(f"[Instagram] enviando o vídeo original: {e}")
     params = {"upload_type": "resumable", "media_type": "REELS" if reels and not carrossel else "VIDEO"}
     if carrossel:
         params["is_carousel_item"] = "true"
     elif legenda:
         params["caption"] = legenda
-    c = _post(f"{ig_id}/media", **params)
     dados = arquivo.read_bytes()
-    _http("POST", f"{RUPLOAD}/{c['id']}", dados,
-          {"Authorization": f"OAuth {token()}", "offset": "0", "file_size": str(len(dados))}, timeout=900)
+
+    def enviar(tk: str) -> str:
+        c = _post(f"{ig_id}/media", tk, **params)
+        _http("POST", c.get("uri") or f"{RUPLOAD}/{c['id']}", dados,
+              {"Authorization": f"OAuth {tk}", "offset": "0", "file_size": str(len(dados)),
+               "Content-Type": "application/octet-stream"}, timeout=900)
+        _esperar(c["id"], tk=tk)
+        return c["id"]
+    erro = None
+    # Primeiro com o token da Página ligada ao Instagram (o envio de vídeo recusa alguns tokens de
+    # usuário do sistema com "Request processing failed"); depois com o token cadastrado.
+    candidatos = []
+    try:
+        from haizen import social
+        page = social.config().get("page_id") or ""
+        if page:
+            candidatos.append(_token_da_pagina(page))
+    except Exception as e:  # noqa: BLE001
+        print(f"[Instagram] sem token da Página: {e}")
+    candidatos.append(token())
+    for tk in dict.fromkeys(candidatos):
+        try:
+            return enviar(tk)
+        except ErroInstagram as e:
+            erro = e
+    # Plano B: o vídeo vai para a biblioteca da conta de anúncios (ads_management) e o Instagram
+    # baixa de lá, pelo endereço do arquivo.
+    try:
+        url = endereco_do_video(arquivo)
+    except Exception as e2:  # noqa: BLE001
+        raise ErroInstagram(f"não consegui enviar o vídeo ao Instagram ({erro}); plano B também falhou: {e2}") from None
+    params.pop("upload_type", None)
+    c = _post(f"{ig_id}/media", video_url=url, **params)
     _esperar(c["id"])
     return c["id"]
+
+
+def endereco_do_video(arquivo: Path) -> str:
+    """Endereço público do vídeo pela biblioteca da conta de anúncios."""
+    from haizen.trafego import envio
+    conta = _conta_de_anuncios()
+    if not conta:
+        raise ErroInstagram("nenhuma conta de anúncios para hospedar o vídeo")
+    vid = envio.subir_video(conta, arquivo, arquivo.stem)["video_id"]
+    for _ in range(30):
+        src = (_get(vid, envio.token() or None, fields="source") or {}).get("source")
+        if src:
+            return src
+        time.sleep(10)
+    raise ErroInstagram("a Meta não liberou o endereço do vídeo")
 
 
 def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> dict:
@@ -281,7 +441,7 @@ def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> di
         if video(f):
             cid = _video(ig_id, f, legenda)
         else:
-            cid = _post(f"{ig_id}/media", image_url=endereco_publico(page_id, f), caption=legenda)["id"]
+            cid = _post(f"{ig_id}/media", image_url=endereco_da_imagem(page_id, f), caption=legenda)["id"]
             _esperar(cid)
     else:
         filhos = []
@@ -289,7 +449,7 @@ def publicar(ig_id: str, page_id: str, arquivos: list[Path], legenda: str) -> di
             if video(f):
                 filhos.append(_video(ig_id, f, "", carrossel=True))
             else:
-                filhos.append(_post(f"{ig_id}/media", image_url=endereco_publico(page_id, f),
+                filhos.append(_post(f"{ig_id}/media", image_url=endereco_da_imagem(page_id, f),
                                     is_carousel_item="true")["id"])
         for fid in filhos:
             _esperar(fid)

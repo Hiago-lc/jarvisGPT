@@ -158,3 +158,76 @@ Conexão: um token do seu app da Meta com as permissões de Instagram (o passo a
 - **Conectar Shopify**: na loja do cliente, criar um app próprio (Configurações → Apps → Desenvolver apps, ou Dev Dashboard) com read/write_products, read_orders, read/write_discounts, read_reports, read_inventory; colar o token (shpat_…) ou Client ID + secret.
 - **Conectar Tray**: a HAIZEN precisa ser parceira Tray (partners.tray.com.br) e ter um aplicativo; cadastre consumer key/secret em E-commerce → Configurar. Cada cliente instala o app em Meus aplicativos; cole o endereço da API e o code.
 - Os acessos ficam criptografados (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`, fora do banco e do backup.
+
+## Direção de arte dos agentes (criativos, designer, vídeo)
+
+- **Pesquisa visual obrigatória**: `referencias` captura a Biblioteca de Anúncios da Meta, Behance, Dribbble e Pinterest com o tema; o agente vê as capturas, monta a `prancha` e escreve `fontes/direcao.md` (o que pegar de cada referência).
+- **Kit de design** (`haizen/producao/kit/`): CSS com escala tipográfica forte, texturas, selos, CTA e zonas seguras; `motion.js` para vídeo (revelar palavras, máscaras, Ken Burns, contador, marca-texto); 8 modelos de layout (produto herói, editorial, oferta, bento, prova, capa de carrossel, story, reels cinético).
+- **Foto**: `recortar` tira o fundo (rembg, instalado na primeira vez) e `tratar_foto` dá o mesmo tratamento de cor à série.
+- **Duas direções** da peça principal, comparadas lado a lado antes de escolher.
+- **Vídeo** conferido em folha de contato (12 quadros). O agente de vídeo passou a usar o Opus.
+- **Diretor de criação** revisa comparando com as referências; só passa com nota ≥ 8, senão o agente refaz.
+
+## Google Ads (contas dos clientes)
+
+- Tela **Google Ads**: gasto, conversões, CPA e ROAS (ontem, 7 e 30 dias), campanhas com perda por orçamento, termos de pesquisa que gastaram sem converter. Análise todo dia às 07:20 das contas marcadas (entra no resumo da manhã).
+- O Jarvis **propõe** (orçamento, pausar/ativar campanha, negativar termos, pausar palavra-chave ou anúncio) e **você aprova**. Mudança de orçamento acima de 50% de uma vez e orçamento compartilhado são barrados.
+- **Conectar** (uma vez, neste PC): no Google Cloud, ativar a Google Ads API, pedir o acesso **Explorer** (Google Ads API → Visão geral → Upgrade access level) e usar um cliente OAuth "App para computador". Desde 09/2026 não existe mais developer token. O refresh token fica criptografado (DPAPI) em `%LOCALAPPDATA%\JarvisGPT\ecommerce_acessos.json`.
+
+## Pedir ao Jarvis em cada ferramenta
+
+- Nas telas Google Ads, Tráfego, E-commerce, Social, Financeiro e Clientes há o botão **Pedir ao Jarvis** (canto inferior direito): um chat que já sabe em que tela você está. Pedidos de mudança viram propostas na própria tela, para você aprovar; dá para anexar arquivos.
+- Google Ads: o Jarvis cria **campanha de pesquisa completa** (orçamento, lance, cidades, grupos, palavras-chave, anúncios responsivos, negativas) como proposta, com prévia do anúncio. Ao aprovar você escolhe se ela nasce ativa ou pausada (padrão: pausada).
+- Google Ads também cria **YouTube / Demand Gen** (anúncio em vídeo e/ou imagem no YouTube, Discover, Gmail e Display) e **Display** (anúncio responsivo). Vídeo anexado no chat é enviado ao YouTube como **não listado**; as imagens são cortadas sozinhas em 1,91:1, 1:1 e 4:5 e o logo vira 1:1. Criar campanha de vídeo/imagem roda em segundo plano e avisa no fim. Campanhas do tipo "Vídeo" clássico não podem ser criadas pela API do Google: o caminho é o Demand Gen.
+- Para enviar vídeo ao YouTube: ative a **YouTube Data API v3** no projeto do Google Cloud e reconecte o Google Ads (Configurar → Desconectar → Conectar), para liberar a permissão do YouTube. A conta Google precisa ter um canal.
+
+## Tráfego: subir peças e editar propostas
+
+- O conector da Meta não envia arquivo do PC. O Jarvis agora **envia as imagens e vídeos** para a conta de anúncios (Marketing API: /adimages e /advideos) antes de o gestor criar os anúncios, e passa o image_hash / video_id prontos. Precisa de um **token do Meta Ads com ads_management** (Tráfego → Configurar; o ideal é o de um *usuário do sistema* do Gerenciador de Negócios, que não vence). Sem ele, para imagem, tenta o endereço público pela Página da HAIZEN.
+- O que já subiu fica guardado na proposta: tentar de novo não reenvia.
+- No chat, ajustes numa proposta existente (texto, conjunto, peça nova, orçamento) **editam a proposta** (`trafego_editar` / `googleads_editar`) em vez de criar outra. A conversa do Jarvis agora guarda mais contexto antes de recomeçar.
+
+## Indicadores por conta (Meta e Google)
+
+Em Tráfego e em Google Ads, clique no nome da conta (ou em **Indicadores**) para abrir a página dela:
+período (7, 14, 30 e 90 dias, este mês, mês passado, 6 e 12 meses ou datas escolhidas), comparação
+com o período anterior do mesmo tamanho, gráfico de investimento com a métrica escolhida, campanhas
+(ordenáveis), quebras (plataforma, idade e gênero no Meta; dispositivo no Google) e, no Google, os
+termos de pesquisa que mais gastaram. Os números vêm direto das APIs (Meta: o token do Meta Ads em
+Tráfego → Configurar), sem gastar Claude. As contas do Meta aparecem agrupadas por BM. O Jarvis
+também consulta esses números pelo chat (`indicadores_meta`, `indicadores_google`).
+
+## WhatsApp
+
+Busca e filtros (não lidas, clientes), lista que se atualiza sozinha a cada minuto, resumo da
+conversa, respostas rápidas editáveis, orientação para a sugestão de resposta, carregar mensagens
+anteriores e transcrição automática dos áudios (se o reconhecimento de voz não estiver instalado,
+o Jarvis instala sozinho na primeira vez). Se um áudio não baixar, a mensagem como o WhatsApp
+mostrou fica em `%LOCALAPPDATA%\JarvisGPT\whatsapp_audio_erro.html` para ajustar o Jarvis.
+
+## Sem janela preta
+
+O início automático com o Windows agora é um `Jarvis HAIZEN.vbs` (o `.cmd` antigo é trocado sozinho
+na próxima vez que o Jarvis abre), e nada que o Jarvis roda por trás (Claude Code, PowerShell,
+ffmpeg, node) abre console.
+
+Na página de indicadores, **Exportar PDF** (páginas A4) e **Exportar JPG** (imagem da página inteira)
+salvam o relatório do período escolhido na pasta Downloads, sem menu, botões e chat, com o cabeçalho
+"HAIZEN · Relatório de indicadores".
+
+## Levar o Jarvis para outro computador (ex.: notebook)
+
+O código vem do GitHub; o resto (banco com clientes, tarefas, financeiro e projetos, configurações,
+tokens e memória) vai num pacote protegido por senha:
+
+1. No computador de origem: `exportar-para-outro-pc.bat`. Escolha uma senha. O pacote vai para
+   `Meu Drive\JARVIS - migracao` (sincroniza sozinho para o outro computador).
+2. No computador novo: instale o Jarvis (clone do GitHub, branch `central-haizen`, na mesma pasta
+   `C:\JARVIS`), rode o instalador e abra uma vez; depois feche e rode `importar-de-outro-pc.bat`
+   com a mesma senha.
+3. No computador novo, faça o login do Claude Code (`conectar-claude.bat`) e escaneie o QR do
+   WhatsApp de novo. Os tokens da Meta, Google Ads e lojas já vão no pacote.
+
+Não vão: anexos do chat (podem ter vários GB), o perfil do WhatsApp Web e caches. Use um
+computador de cada vez: cada um tem o seu próprio banco, e os dois ligados rodariam as rotinas
+(análises, resumos, publicações) em dobro.

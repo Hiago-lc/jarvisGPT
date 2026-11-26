@@ -112,6 +112,92 @@ def animar(html: str, saida: str, largura: int = 1080, altura: int = 1920, segun
     return _ferr(*args, timeout=1800)
 
 
+VISUAL = Path(__file__).resolve().parent / "visual.py"
+KIT = Path(__file__).resolve().parent / "kit"
+
+
+def _vis(*args: str, timeout: int = 900) -> str:
+    return _rodar([sys.executable, str(VISUAL), *args], timeout)
+
+
+@mcp.tool()
+def referencias(tema: str, video: bool = False, fontes: str = "") -> str:
+    """PESQUISA VISUAL: abre a Biblioteca de Anúncios da Meta, Behance, Dribbble e Pinterest com o tema
+    (ex.: "anuncio clinica estetica", "pacote viagem nordeste reels") e salva capturas em fontes/referencias/.
+    Abra as capturas com Read para VER as referências. `video=True` busca motion design/anúncios em vídeo.
+    `fontes` opcional: "meta_ads,behance,dribbble,pinterest". Gera também um .json com links das imagens."""
+    return _vis("referencias", *tema.split(), "--pasta", str(_dentro("fontes/referencias")),
+                *(["--video"] if video else []), *(["--fontes", fontes] if fontes else []), timeout=600)
+
+
+@mcp.tool()
+def ver_site(url: str, saida: str = "", largura: int = 1440, altura: int = 2200) -> str:
+    """Captura uma página (projeto do Behance, site do cliente, concorrente) em JPG para você ver com Read."""
+    saida = saida or f"fontes/referencias/site-{abs(hash(url)) % 10**8}.jpg"
+    return _vis("ver-site", url, str(_dentro(saida)), "--largura", str(largura), "--altura", str(altura), timeout=300)
+
+
+@mcp.tool()
+def baixar_imagens(urls: list[str], pasta: str = "fontes/referencias") -> str:
+    """Baixa em alta as imagens de referência escolhidas (links do .json da pesquisa ou do ver_site)."""
+    return _vis("baixar", str(_dentro(pasta)), *urls[:15], timeout=300)
+
+
+@mcp.tool()
+def prancha(imagens: list[str], saida: str = "fontes/referencias/prancha.jpg", colunas: int = 3,
+            legendas: bool = True) -> str:
+    """Junta várias imagens numa prancha só: para montar o moodboard ou comparar suas versões lado a lado
+    (mais barato do que abrir uma por uma)."""
+    return _vis("prancha", str(_dentro(saida)), *[str(_dentro(i, gravar=False)) for i in imagens[:24]],
+                "--colunas", str(colunas), *(["--legendas"] if legendas else []), timeout=300)
+
+
+@mcp.tool()
+def folha_de_contato(video: str, saida: str = "", quadros: int = 12) -> str:
+    """Folha de contato do vídeo (N quadros em grade com o tempo): confira ritmo, legibilidade e transições
+    de uma vez só."""
+    v = _dentro(video, gravar=False)
+    saida = saida or f"fontes/quadros/{v.stem}-contato.jpg"
+    return _vis("contato", str(v), str(_dentro(saida)), "--quadros", str(quadros), timeout=600)
+
+
+@mcp.tool()
+def recortar(imagem: str, saida: str) -> str:
+    """Tira o fundo da foto (produto, pessoa) e salva PNG transparente, pronto para compor com sombra.
+    Na primeira vez instala o recorte automático (alguns minutos)."""
+    return _vis("recortar", str(_dentro(imagem, gravar=False)), str(_dentro(saida)), timeout=2400)
+
+
+@mcp.tool()
+def tratar_foto(imagem: str, saida: str, estilo: str = "vivo", vinheta: float = 0.0, granulado: float = 0.0) -> str:
+    """Tratamento de cor coerente para a série (use o MESMO estilo em todas as fotos): vivo, quente, frio, pb,
+    cinema, suave. vinheta 0–0.4, granulado 0–0.08."""
+    return _vis("tratar", str(_dentro(imagem, gravar=False)), str(_dentro(saida)), "--estilo", estilo,
+                "--vinheta", str(vinheta), "--granulado", str(granulado), timeout=300)
+
+
+@mcp.tool()
+def kit_de_design() -> str:
+    """Copia o kit da HAIZEN para fontes/kit/ (CSS com tipografia forte, texturas, selos, CTA, zonas seguras;
+    motion.js para vídeo) e lista os modelos de layout com quando usar cada um. Copie o modelo escolhido para
+    fontes/<peca>.html e reescreva com a marca do cliente — o modelo é ponto de partida, não a peça."""
+    import shutil
+    destino = _dentro("fontes/kit")
+    destino.mkdir(parents=True, exist_ok=True)
+    for f in ("haizen-kit.css", "motion.js"):
+        shutil.copy2(KIT / f, destino / f)
+    (destino / "modelos").mkdir(exist_ok=True)
+    linhas = ["Kit em fontes/kit/ (haizen-kit.css, motion.js). Modelos em fontes/kit/modelos/ — copie para fontes/ "
+              "(o link do CSS é kit/haizen-kit.css):"]
+    for m in sorted((KIT / "modelos").glob("*.html")):
+        shutil.copy2(m, destino / "modelos" / m.name)
+        texto = m.read_text(encoding="utf-8")
+        ini = texto.find("<!--")
+        resumo = " ".join(texto[ini + 4:texto.find("-->", ini)].split()) if ini >= 0 else ""
+        linhas.append(f"- {m.name}: {resumo[:330]}")
+    return "\n".join(linhas)
+
+
 @mcp.tool()
 def legendar(video: str, saida: str, palavras_por_vez: int = 3, cor_destaque: str = "#FFD400",
              fonte: str = "Montserrat ExtraBold") -> str:

@@ -155,7 +155,7 @@ class ExecutorTests(_Temp):
         done = subprocess.CompletedProcess([], 0, stdout=json.dumps({'result': 'Proposta'}), stderr='')
         with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk-cobrada'}), \
              patch('haizen.executor.claude_disponivel', return_value='claude'), \
-             patch('subprocess.run', return_value=done) as run:
+             patch('haizen.executor._processo', return_value=done) as run:
             self.assertEqual(executor.executar_claude('prompt', Path(self.dir.name) / 'w')["result"], 'Proposta')
         kwargs = run.call_args.kwargs
         self.assertNotIn('ANTHROPIC_API_KEY', kwargs['env'])
@@ -165,7 +165,7 @@ class ExecutorTests(_Temp):
         from haizen import executor
         done = subprocess.CompletedProcess([], 1, stdout=json.dumps({'is_error': True, 'result': 'limite atingido'}), stderr='')
         with patch('haizen.executor.claude_disponivel', return_value='claude'), \
-             patch('subprocess.run', return_value=done):
+             patch('haizen.executor._processo', return_value=done):
             with self.assertRaises(RuntimeError) as e:
                 executor.executar_claude('p', Path(self.dir.name) / 'w')
         self.assertIn('limite atingido', str(e.exception))

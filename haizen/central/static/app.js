@@ -153,6 +153,9 @@ if (APP) document.body.classList.add("app");
 let PONTE = false;          // a janela do Jarvis está aberta e respondendo
 let NATIVO = null;          // quem, na tela atual, quer saber do estado da janela
 
+// Modo exportação (PDF/JPG dos indicadores): a página sai sem menu, botões e chat.
+if (new URLSearchParams(location.search).has("exportar")) document.documentElement.classList.add("exportando");
+
 async function navegar() {
   const [rota, param] = (location.hash.replace(/^#\/?/, "") || (PONTE ? "jarvis" : "painel")).split("/");
   const padrao = PONTE ? "jarvis" : "painel";
@@ -165,6 +168,7 @@ async function navegar() {
   if (CONVERSA.ligada && tela !== "jarvis") desligarConversa();   // sair da tela desliga o microfone
   try {
     await opcoes();
+    chatDaTela(tela);
     await ROTAS[tela](param);
   } catch (e) {
     main.innerHTML = `<p class="erro">Não consegui carregar esta tela: ${esc(e.message)}. Confira se o Jarvis está aberto e recarregue a página.</p>`;
@@ -188,6 +192,12 @@ async function atualizarSelo() {
     s.hidden = !n;
     s.textContent = n;
     s.title = `${n} otimização(ões) do Meta Ads esperando sua aprovação`;
+  } catch (_) { /* silencioso */ }
+  try {
+    const ga = await api("GET", "googleads");
+    const n = ga.contas.filter((c) => c.ativo).reduce((t, c) => t + c.propostas.length, 0);
+    const s = $("#selo-googleads");
+    s.hidden = !n; s.textContent = n; s.title = `${n} mudança(s) no Google Ads esperando sua aprovação`;
   } catch (_) { /* silencioso */ }
   try {
     const ec = await api("GET", "ecommerce");
@@ -276,7 +286,8 @@ function barras(itens, chave, max) {
 }
 
 ROTAS.painel = async () => {
-  const p = lembrar("central.periodo", periodoPadrao("mes"));
+  let p = lembrar("central.periodo", periodoPadrao("mes"));
+  if (!p || !p.de || !p.ate) p = periodoPadrao("mes");      // valor de outra tela ou corrompido
   const [d, rot] = await Promise.all([api("GET", `painel?de=${p.de}&ate=${p.ate}`), api("GET", "rotina").catch(() => null)]);
   const sel = seletorPeriodo(p, (novo) => { guardar("central.periodo", novo); ROTAS.painel(); });
   const hoje = hojeIso();
@@ -968,7 +979,7 @@ async function abrirTrabalho(id, recarregar) {
         <div class="campos">${campo({ nome: "resposta", rotulo: "Sua resposta", tipo: "textarea", largo: true })}</div></div>` : ""}
       <div id="galeria-trabalho"></div>
       ${t.entrega ? `<details class="relatorio"${t.pasta ? "" : " open"}><summary>Relatório do agente</summary><div class="entrega">${esc(t.entrega)}</div></details>` : t.status === "executando" || t.status === "na_fila" ? '<p class="sub">Ainda sem entrega. Esta tela atualiza sozinha.</p>' : ""}
-      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar", tipo: "textarea", largo: true })}
+      ${pode ? `<div class="campos" style="margin-top:14px">${campo({ nome: "ajuste", rotulo: "Se quiser outra versão, diga o que mudar (só isso muda; o resto fica igual)", tipo: "textarea", largo: true })}
         <div class="largo"><span class="rotulo-anexos">Arquivos novos para esta versão (opcional)</span><div id="aj-anexos" class="anexos-caixa"></div></div></div>` : ""}`,
     aoAbrir: (corpo) => { galeriaTrabalho(t, $("#galeria-trabalho")); if (pode) sel = seletorAnexos($("#aj-anexos", corpo), corpo); },
     acoes: pode ? [
@@ -1492,13 +1503,20 @@ function cartaoAcao(a) {
     ${estado}${botoes}</article>`;
 }
 
+// Contas do Meta agrupadas pelo Gerenciador de Negócios (BM) a que pertencem.
+function porBM(lista) {
+  const grupos = new Map();
+  lista.forEach((c) => { const k = c.negocio || "Sem gerenciador de negócios"; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(c); });
+  return [...grupos.entries()].sort((a, b) => (b[1].some((c) => c.ativo) - a[1].some((c) => c.ativo)) || a[0].localeCompare(b[0]));
+}
+
 function cartaoConta(c, an) {
   const m = an?.metricas || {};
   const sit = an ? an.situacao : "";
   const kpi = (rot, val) => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong></div>`;
   return `<article class="traf-conta${c.ativo ? "" : " inativa"}">
     <div class="traf-conta-topo">
-      <div><h3>${sit ? `<span class="traf-sit sit-${esc(sit)}" title="${esc(TRAF_SIT[sit] || sit)}"></span>` : ""}${esc(c.cliente_nome || c.nome)}</h3>
+      <div><h3>${sit ? `<span class="traf-sit sit-${esc(sit)}" title="${esc(TRAF_SIT[sit] || sit)}"></span>` : ""}<a class="ind-link" href="#/trafego/${encodeURIComponent(c.id)}">${esc(c.cliente_nome || c.nome)}</a></h3>
         <p class="sub">${esc(c.nome)} · ${esc(c.id)}${an ? ` · análise de ${esc(an.dia.split("-").reverse().join("/"))}` : ""}</p></div>
       <label class="caixa traf-ativo"><input type="checkbox" data-ativo="${esc(c.id)}"${c.ativo ? " checked" : ""}> Análise diária</label>
     </div>
@@ -1513,6 +1531,7 @@ function cartaoConta(c, an) {
     <p class="traf-resumo">${esc(an.resumo)}</p>
     ${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}` : an?.erro ? `<p class="erro">${esc(an.erro)}</p>` : `<p class="sub">${c.ativo ? "Ainda sem análise." : "Fora da análise diária."}</p>`}
     <div class="traf-botoes">
+      <a class="botao primario" href="#/trafego/${encodeURIComponent(c.id)}">Indicadores</a>
       <button class="botao" data-metas="${esc(c.id)}">Metas e cliente</button>
       ${an && !an.erro && an.tem_diagnostico ? `<button class="botao" data-diagnostico="${an.id}">Diagnóstico</button>` : ""}
       ${an && !an.erro ? `<button class="botao" data-relatorio="${an.id}">Relatório</button>` : ""}
@@ -1574,7 +1593,7 @@ function metasConta(c, recarregar) {
   });
 }
 
-function configTrafego(cfg, recarregar) {
+function configTrafego(cfg, recarregar, envio) {
   dialogo({
     titulo: "Tráfego: configurações",
     corpo: `<div class="campos">
@@ -1582,7 +1601,10 @@ function configTrafego(cfg, recarregar) {
         <div></div>
         ${campo({ nome: "whatsapp_ativo", rotulo: "Mandar o resumo no meu WhatsApp depois da análise", tipo: "checkbox", valor: cfg.whatsapp_ativo, largo: true })}
         ${campo({ nome: "whatsapp_contato", rotulo: "Para qual conversa (o seu número ou a conversa \"Você\", igual ao WhatsApp)", valor: cfg.whatsapp_contato, largo: true })}
+        ${campo({ nome: "meta_token", rotulo: "Token do Meta Ads para subir imagens e vídeos (vazio = manter)", tipo: "password", largo: true,
+          ajuda: envio?.pronto ? "Envio de arquivos pronto." : (envio?.aviso || "") })}
       </div>
+      <details class="traf-detalhes"><summary>Como gerar o token (uma vez, não vence, serve também para a aba Social)</summary>${META_PASSOS_TOKEN}</details>
       <p class="sub">O resumo vai só para essa conversa. O Jarvis nunca manda nada para clientes sem você confirmar.</p>`,
     acoes: [{ texto: "Cancelar", acao: () => {} },
       { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
@@ -1592,7 +1614,8 @@ function configTrafego(cfg, recarregar) {
   });
 }
 
-ROTAS.trafego = async () => {
+ROTAS.trafego = async (param) => {
+  if (param) return paginaIndicadores("meta", decodeURIComponent(param));
   main.innerHTML = `
     <div class="topo"><div><h1>Tráfego</h1><p class="sub" id="traf-sub">Meta Ads: análise diária e otimizações com a sua aprovação.</p></div>
       <div class="traf-topo-botoes"><button class="botao" id="traf-config">Configurar</button><button class="botao primario" id="traf-analisar">Analisar agora</button></div></div>
@@ -1618,11 +1641,13 @@ ROTAS.trafego = async () => {
     } else {
       const ordem = { critico: 0, atencao: 1, erro: 2, bem: 3 };
       const lista = [...contas].sort((a, b) => (b.ativo - a.ativo) || ((ordem[analises[a.id]?.situacao] ?? 4) - (ordem[analises[b.id]?.situacao] ?? 4)));
-      corpo.innerHTML = `${fazendo}${erro}${aviso}
+      const precisaEnvio = !dados.envio?.pronto && acoes.some((a) => a.tipo === "subir_criativo" || (a.detalhes?.pecas || []).length);
+      const avisoEnvio = precisaEnvio ? `<div class="traf-faixa erro">Para o Jarvis subir as imagens e vídeos no Meta, cadastre o token do Meta Ads. ${esc(dados.envio?.aviso || "")} <button class="botao" data-traf-token>Configurar</button></div>` : "";
+      corpo.innerHTML = `${fazendo}${erro}${aviso}${avisoEnvio}
         <section class="traf-secao"><h2>Esperando sua aprovação ${acoes.length ? `<span class="selo">${acoes.length}</span>` : ""}</h2>
           ${acoes.length ? `<div class="traf-acoes">${acoes.map(cartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma otimização pendente.</p>'}</section>
         <section class="traf-secao"><div class="bloco-topo"><h2>Contas</h2><button class="botao" data-conectar ${estado.fazendo ? "disabled" : ""}>Atualizar lista de contas</button></div>
-          ${lista.length ? `<div class="traf-contas">${lista.map((c) => cartaoConta(c, analises[c.id])).join("")}</div>` : '<p class="vazio">Nenhuma conta encontrada. Confira se marcou as contas no login do Facebook.</p>'}</section>
+          ${lista.length ? porBM(lista).map(([bm, cs], _, todos) => `${todos.length > 1 ? `<h3 class="ind-bm">${esc(bm)} <span class="sub">${cs.length} ${cs.length === 1 ? "conta" : "contas"}</span></h3>` : ""}<div class="traf-contas">${cs.map((c) => cartaoConta(c, analises[c.id])).join("")}</div>`).join("") : '<p class="vazio">Nenhuma conta encontrada. Confira se marcou as contas no login do Facebook.</p>'}</section>
         ${historico.length ? `<section class="traf-secao"><h2>Decidido recentemente</h2><ul class="lista bloco">${historico.map((a) => `<li><span>${esc(TRAF_TIPOS[a.tipo] || a.tipo)}: ${esc(a.alvo_nome || "—")} <span class="sub">(${esc(a.conta_nome || a.conta_id)})</span></span><span class="meta">${esc({ aplicada: "aplicada", rejeitada: "rejeitada", anotada: "anotada" }[a.status] || a.status)}</span></li>`).join("")}</ul></section>` : ""}`;
     }
     $$("[data-conectar]", corpo).forEach((b) => b.addEventListener("click", async () => {
@@ -1657,7 +1682,8 @@ ROTAS.trafego = async () => {
   $("#traf-analisar").addEventListener("click", async () => {
     try { await api("POST", "trafego/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); }
   });
-  $("#traf-config").addEventListener("click", () => dados && configTrafego(dados.config, desenhar));
+  $("#traf-config").addEventListener("click", () => dados && configTrafego(dados.config, desenhar, dados.envio));
+  corpo.addEventListener("click", (e) => { if (e.target.closest("[data-traf-token]") && dados) configTrafego(dados.config, desenhar, dados.envio); });
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open) return;
@@ -1843,14 +1869,14 @@ ROTAS.ecommerce = async () => {
       const a = propostas.find((x) => String(x.id) === b.dataset.ecAprovar);
       if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar na loja ${a.loja_nome}: ${a.titulo}?`, "Aplicar"))) return;
       b.disabled = true;
-      try { const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); desenhar(); } catch (e) { avisar(e.message); b.disabled = false; }
+      try { const r = await api("POST", `ecommerce/acoes/${a.id}/aprovar`, {}); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); } desenhar();
     }));
     $$("[data-ec-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => {
-      try { await api("POST", `ecommerce/acoes/${b.dataset.ecRejeitar}/rejeitar`, {}); desenhar(); } catch (e) { avisar(e.message); }
+      try { await api("POST", `ecommerce/acoes/${b.dataset.ecRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar();
     }));
     $$("[data-ec-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => ecAjustar(propostas.find((x) => String(x.id) === b.dataset.ecAjustar), desenhar)));
     $$("[data-ec-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => {
-      try { await api("POST", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecAnalisar)}/analisar`, {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+      try { const r = await api("POST", `ecommerce/lojas/${encodeURIComponent(b.dataset.ecAnalisar)}/analisar`, {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
     }));
     $$("[data-ec-reconectar]", corpo).forEach((b) => b.addEventListener("click", () => ecConectar(dados, desenhar, lojas.find((l) => l.id === b.dataset.ecReconectar))));
     $$("[data-ec-pedir]", corpo).forEach((b) => b.addEventListener("click", () => ecPedir(lojas.find((l) => l.id === b.dataset.ecPedir), desenhar)));
@@ -1872,7 +1898,7 @@ ROTAS.ecommerce = async () => {
     $("#ec-analisar").disabled = !!estado.fazendo || !lojas.length;
   };
   $("#ec-analisar").addEventListener("click", async () => {
-    try { await api("POST", "ecommerce/analisar", {}); avisar("Análise começou"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
+    try { const r = await api("POST", "ecommerce/analisar", {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); }
   });
   $("#ec-conectar").addEventListener("click", () => dados && ecConectar(dados, desenhar));
   $("#ec-config").addEventListener("click", () => dados && dialogo({
@@ -1888,6 +1914,607 @@ ROTAS.ecommerce = async () => {
     if (document.hidden || $("#dialogo").open) return;
     if (dados?.estado?.fazendo) desenhar().catch(() => {});
   }, 8000);
+};
+
+// ── Pedir ao Jarvis em cada ferramenta ─────────────────────────────────────
+const CHAT_TELAS = {
+  googleads: { nome: "Google Ads", dica: "Ex.: “Cria uma campanha de pesquisa para a Loja X em São Paulo, R$ 50/dia, para a página…”",
+    contexto: "Google Ads dos clientes. Veja contas e campanhas com googleads_painel. Ajuste em proposta existente: googleads_editar (não crie outra). Para criar campanha (pesquisa, YouTube/Demand Gen com vídeo ou imagem, Display) ou mudar algo, monte a proposta com googleads_propor; confira vídeos/imagens anexados com midia_info; pergunte o que faltar (conta, link da página, verba, cidades, oferta, logo). NÃO aprove: eu aprovo na tela Google Ads." },
+  trafego: { nome: "Tráfego (Meta Ads)", dica: "Ex.: “Monta uma campanha de mensagens para a Clínica X com os criativos aprovados”",
+    contexto: "Meta Ads dos clientes. Use trafego_painel, trafego_relatorio, trafego_analisar, trafego_propor (inclusive estrutura de campanha nova) e trafego_subir_criativos. Se eu pedir ajuste numa proposta que já existe, use trafego_editar nela (não crie outra). Peças anexadas: passe o id do [anexo:ID]; o Jarvis envia as imagens/vídeos para a conta na hora de aplicar. NÃO aprove: eu aprovo na tela Tráfego." },
+  ecommerce: { nome: "E-commerce", dica: "Ex.: “Cupom BLACK15 de 15% na loja X até domingo”",
+    contexto: "Lojas Shopify/Tray dos clientes. Use ecommerce_painel, ecommerce_produtos e ecommerce_propor. NÃO aprove: eu aprovo na tela E-commerce." },
+  social: { nome: "Social", dica: "Ex.: “Cria um carrossel sobre os 3 erros de marca para quinta”",
+    contexto: "Instagram da HAIZEN. Use social_painel, social_novo_post, social_analisar, social_raio_x. Não publique sem eu pedir." },
+  financeiro: { nome: "Financeiro", dica: "Ex.: “Quanto falta receber este mês?”", contexto: "Financeiro da HAIZEN (receitas, despesas). Use painel, listar e registrar." },
+  clientes: { nome: "Clientes", dica: "Ex.: “Resume a ficha do cliente X”", contexto: "Clientes da HAIZEN. Use ficha_cliente, listar, registrar." },
+};
+
+function chatDaTela(tela) {
+  const def = CHAT_TELAS[tela];
+  let doca = $("#doca-chat");
+  if (!def || PONTE) { doca?.remove(); return; }
+  if (doca?.dataset.tela === tela) return;
+  doca?.remove();
+  const chave = `central.chat.${tela}`;
+  let msgs = [];
+  try { msgs = JSON.parse(sessionStorage.getItem(chave) || "[]"); } catch (_) { msgs = []; }
+  const guardar = () => { try { sessionStorage.setItem(chave, JSON.stringify(msgs.slice(-30))); } catch (_) { /* sem armazenamento */ } };
+  document.body.insertAdjacentHTML("beforeend", `<div id="doca-chat" data-tela="${tela}">
+    <button class="doca-botao" type="button" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Pedir ao Jarvis</span></button>
+    <section class="doca-painel" hidden aria-label="Conversa com o Jarvis sobre ${esc(def.nome)}">
+      <header><div><strong>Jarvis · ${esc(def.nome)}</strong><span class="sub">Mudanças viram propostas para você aprovar aqui.</span></div>
+        <button type="button" class="doca-fechar" aria-label="Fechar">×</button></header>
+      <div class="doca-msgs"></div>
+      <div class="doca-anexos"></div>
+      <form class="doca-form"><button type="button" class="doca-clipe" aria-label="Anexar arquivo">📎</button>
+        <textarea rows="2" placeholder="Escreva o pedido… (Enter envia)"></textarea><button class="botao primario" type="submit">Enviar</button></form>
+    </section></div>`);
+  doca = $("#doca-chat");
+  const painel = $(".doca-painel", doca), lista = $(".doca-msgs", doca), campoTexto = $("textarea", doca);
+  const anexos = seletorAnexos($(".doca-anexos", doca), painel, { compacto: true });
+  const desenhar = () => {
+    lista.innerHTML = msgs.length ? msgs.map((m) => balao(m)).join("") : `<p class="sub doca-vazio">${esc(def.dica)}</p>`;
+    hidratarAnexos(lista);
+    lista.scrollTop = lista.scrollHeight;
+  };
+  // A conversa desta tela vem do servidor: sair da página (ou fechar a aba) não perde a resposta,
+  // o Jarvis continua trabalhando e a resposta aparece aqui quando você voltar.
+  const prefixo = `[Pedido feito na tela ${def.nome}.`;
+  let esperando = null;
+  const doServidor = async () => {
+    const hist = await api("GET", "jarvis/historico?limite=80").catch(() => null);
+    if (!Array.isArray(hist)) return false;
+    const daTela = [];
+    hist.forEach((m, i) => {
+      if (m.papel !== "usuario" || !String(m.texto || "").startsWith(prefixo)) return;
+      daTela.push({ papel: "usuario", texto: String(m.texto).split("\n").slice(1).join("\n") });
+      const prox = hist[i + 1];
+      if (prox && prox.papel !== "usuario") daTela.push({ papel: "jarvis", texto: prox.texto, acoes: prox.acoes });
+    });
+    if (!daTela.length) return false;
+    msgs = daTela.slice(-30); guardar();
+    return daTela[daTela.length - 1].papel === "usuario";
+  };
+  const acompanhar = async () => {
+    const semResposta = await doServidor();
+    const est = semResposta ? await api("GET", "jarvis/estado").catch(() => ({})) : {};
+    if (doca.isConnected && !JARVIS.ocupado) {
+      desenhar();
+      if (semResposta && est.pensando) {
+        lista.insertAdjacentHTML("beforeend", '<div class="msg ele pensando"><p>Ainda trabalhando no seu pedido…</p></div>');
+        lista.scrollTop = lista.scrollHeight;
+        clearTimeout(esperando); esperando = setTimeout(acompanhar, 5000);
+      }
+    }
+  };
+  const abrir = (sim) => { painel.hidden = !sim; $(".doca-botao", doca).setAttribute("aria-expanded", String(sim)); if (sim) { desenhar(); acompanhar(); campoTexto.focus(); } };
+  $(".doca-botao", doca).addEventListener("click", () => abrir(painel.hidden));
+  $(".doca-fechar", doca).addEventListener("click", () => abrir(false));
+  $(".doca-clipe", doca).addEventListener("click", () => anexos.abrir());
+  campoTexto.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $(".doca-form", doca).requestSubmit(); } });
+  $(".doca-form", doca).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const texto = campoTexto.value.trim();
+    let ids = [];
+    try { ids = exigirAnexosProntos(anexos); } catch (err) { avisar(err.message); return; }
+    if ((!texto && !ids.length) || JARVIS.ocupado) return;
+    JARVIS.ocupado = true;
+    const marcas = ids.map((id) => `\n[anexo:${id}]`).join("");
+    msgs.push({ papel: "usuario", texto: texto + marcas });
+    campoTexto.value = ""; anexos.limpar(); desenhar();
+    lista.insertAdjacentHTML("beforeend", '<div class="msg ele pensando"><p>Pensando…</p></div>');
+    lista.scrollTop = lista.scrollHeight;
+    try {
+      const r = await api("POST", "jarvis/mensagem", { texto: `[Pedido feito na tela ${def.nome}. ${def.contexto}]\n${texto}`, anexos: ids });
+      msgs.push({ papel: "jarvis", texto: r.resposta, acoes: r.acoes });
+      if (r.confirmacao) msgs.push({ papel: "jarvis", texto: `Preciso da sua confirmação: ${r.confirmacao.titulo}. Abra a tela do Jarvis para confirmar.` });
+      if (location.hash.replace(/^#\/?/, "").split("/")[0] === tela && !$("#dialogo").open) ROTAS[tela]().catch(() => {});
+    } catch (err) {
+      msgs.push({ papel: "jarvis", texto: `Não consegui: ${err.message}` });
+    } finally {
+      JARVIS.ocupado = false; guardar();
+      if (doca.isConnected) desenhar();
+    }
+  });
+}
+
+// ── Indicadores por conta (Meta e Google): período, gráfico, campanhas e quebras ─
+const PERIODOS = [["7", "7 dias"], ["14", "14 dias"], ["30", "30 dias"], ["90", "90 dias"], ["mes", "Este mês"],
+  ["mes_passado", "Mês passado"], ["180", "6 meses"], ["365", "12 meses"], ["livre", "Escolher datas"]];
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function periodoAtual() {
+  let p = { id: "30" };
+  try { p = JSON.parse(localStorage.getItem("central.periodo.anuncios") || "null") || p; } catch (_) { /* sem armazenamento */ }
+  return p;
+}
+
+function datasDoPeriodo(p) {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const ontem = new Date(hoje); ontem.setDate(hoje.getDate() - 1);
+  if (p.id === "livre" && p.ini && p.fim) return { ini: p.ini, fim: p.fim };
+  if (p.id === "mes") {
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    return hoje.getDate() === 1 ? datasDoPeriodo({ id: "mes_passado" }) : { ini: isoLocal(ini), fim: isoLocal(ontem) };
+  }
+  if (p.id === "mes_passado") {
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    const fim = new Date(hoje.getFullYear(), hoje.getMonth(), 0);
+    return { ini: isoLocal(ini), fim: isoLocal(fim) };
+  }
+  const n = +p.id || 30;
+  const ini = new Date(ontem); ini.setDate(ontem.getDate() - n + 1);
+  return { ini: isoLocal(ini), fim: isoLocal(ontem) };
+}
+
+function seletorPeriodoInd(alvo, aoMudar) {
+  const p = periodoAtual();
+  const d = datasDoPeriodo(p);
+  alvo.innerHTML = `<div class="ind-periodos" role="group" aria-label="Período">
+      ${PERIODOS.map(([id, rot]) => `<button type="button" class="ind-chip" data-periodo="${id}" aria-pressed="${p.id === id}">${rot}</button>`).join("")}</div>
+    <form class="ind-livre"${p.id === "livre" ? "" : " hidden"}>
+      <label>De <input type="date" id="ind-ini" name="ini" value="${d.ini}" max="${isoLocal(new Date())}"></label>
+      <label>Até <input type="date" id="ind-fim" name="fim" value="${d.fim}" max="${isoLocal(new Date())}"></label>
+      <button class="botao pequeno primario" type="submit">Ver</button></form>`;
+  const guardar = (x) => { try { localStorage.setItem("central.periodo.anuncios", JSON.stringify(x)); } catch (_) { /* sem armazenamento */ } };
+  $$("[data-periodo]", alvo).forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.periodo;
+    $$("[data-periodo]", alvo).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (id === "livre") { $(".ind-livre", alvo).hidden = false; $("#ind-ini", alvo).focus(); return; }
+    $(".ind-livre", alvo).hidden = true;
+    guardar({ id }); aoMudar(datasDoPeriodo({ id }));
+  }));
+  $(".ind-livre", alvo).addEventListener("submit", (e) => {
+    e.preventDefault();
+    const ini = $("#ind-ini", alvo).value, fim = $("#ind-fim", alvo).value;
+    if (!ini || !fim) { avisar("Escolha as duas datas"); return; }
+    const x = ini <= fim ? { id: "livre", ini, fim } : { id: "livre", ini: fim, fim: ini };
+    guardar(x); aoMudar(datasDoPeriodo(x));
+  });
+  return d;
+}
+
+const tetoBonito = (v) => {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)); const n = v / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+};
+const rotuloData = (iso, grupo) => {
+  const [a, m, d] = iso.split("-");
+  return grupo === "mes" ? `${MESES[+m - 1]}/${a.slice(2)}` : `${d}/${m}`;
+};
+
+// Barras (investimento) + linha (a métrica escolhida), com dica ao passar o mouse.
+function grafico(serie, o) {
+  const W = 760, H = 250, L = 64, R = 64, T = 14, B = 30;
+  const n = serie.length || 1, larg = (W - L - R) / n;
+  const vb = serie.map((x) => +x[o.barra] || 0), vl = serie.map((x) => (x[o.linha] == null ? null : +x[o.linha]));
+  const mb = tetoBonito(Math.max(...vb, 0)), ml = tetoBonito(Math.max(...vl.filter((v) => v != null), 0));
+  const yb = (v) => T + (H - T - B) * (1 - v / mb), yl = (v) => T + (H - T - B) * (1 - v / ml);
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const passo = Math.max(1, Math.ceil(n / 8));
+  const pts = vl.map((v, i) => (v == null ? null : [L + larg * (i + 0.5), yl(v)]));
+  let caminho = "", area = "";
+  let aberto = false;
+  pts.forEach((p) => {
+    if (!p) { aberto = false; return; }
+    caminho += `${aberto ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`; aberto = true;
+  });
+  const validos = pts.filter(Boolean);
+  if (validos.length > 1) area = `M${validos[0][0].toFixed(1)},${H - B}` + validos.map((p) => `L${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("") + `L${validos[validos.length - 1][0].toFixed(1)},${H - B}Z`;
+  const ultimo = validos[validos.length - 1];
+  return `<div class="ind-grafico-caixa"><svg class="ind-grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.rotBarra)} e ${esc(o.rotLinha)} no período">
+    ${ticks.map((t) => `<line class="g-grade" x1="${L}" x2="${W - R}" y1="${yb(mb * t)}" y2="${yb(mb * t)}"/>
+      <text class="g-eixo" x="${L - 8}" y="${yb(mb * t) + 4}" text-anchor="end">${esc(o.fmtBarraCurto(mb * t))}</text>
+      <text class="g-eixo g-eixo-linha" x="${W - R + 8}" y="${yl(ml * t) + 4}">${esc(o.fmtLinhaCurto(ml * t))}</text>`).join("")}
+    ${vb.map((v, i) => `<rect class="g-barra" x="${(L + larg * i + larg * 0.14).toFixed(1)}" y="${yb(v).toFixed(1)}" width="${Math.max(1, larg * 0.72).toFixed(1)}" height="${Math.max(0, H - B - yb(v)).toFixed(1)}" rx="2"/>`).join("")}
+    ${area ? `<path class="g-area" d="${area}"/>` : ""}
+    <path class="g-linha" d="${caminho}"/>
+    ${ultimo ? `<circle class="g-ponto" cx="${ultimo[0].toFixed(1)}" cy="${ultimo[1].toFixed(1)}" r="4"/>` : ""}
+    ${serie.map((x, i) => (i % passo === 0 || i === n - 1) && !(i !== n - 1 && n - 1 - i < passo / 2) ? `<text class="g-eixo" x="${(L + larg * (i + 0.5)).toFixed(1)}" y="${H - 9}" text-anchor="middle">${rotuloData(x.dia, o.grupo)}</text>` : "").join("")}
+    <line class="g-mira" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
+    <rect class="g-captura" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}"/>
+  </svg><div class="g-dica" hidden></div>
+  <div class="g-legenda"><span><i class="g-leg-barra"></i>${esc(o.rotBarra)}</span><span><i class="g-leg-linha"></i>${esc(o.rotLinha)}</span></div></div>`;
+}
+
+function ligarGrafico(caixa, serie, o) {
+  const svg = $("svg", caixa), dica = $(".g-dica", caixa), mira = $(".g-mira", caixa), cap = $(".g-captura", caixa);
+  if (!svg || !serie.length) return;
+  const W = 760, L = 64, R = 64, larg = (W - L - R) / serie.length;
+  const mostrar = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width * W;
+    const i = Math.min(serie.length - 1, Math.max(0, Math.floor((x - L) / larg)));
+    const s = serie[i], cx = L + larg * (i + 0.5);
+    mira.setAttribute("x1", cx); mira.setAttribute("x2", cx); mira.setAttribute("visibility", "visible");
+    const fim = o.grupo === "semana" ? " (semana)" : "";
+    dica.innerHTML = `<strong>${o.grupo === "mes" ? rotuloData(s.dia, "mes") : dataBr(s.dia)}${fim}</strong>
+      <span>${esc(o.rotBarra)}: ${esc(o.fmtBarra(s[o.barra]))}</span><span>${esc(o.rotLinha)}: ${esc(o.fmtLinha(s[o.linha]))}</span>`;
+    dica.hidden = false;
+    const px = cx / W * r.width;
+    dica.style.left = `${Math.min(Math.max(px, 70), r.width - 70)}px`;
+  };
+  cap.addEventListener("pointermove", mostrar);
+  cap.addEventListener("pointerleave", () => { dica.hidden = true; mira.setAttribute("visibility", "hidden"); });
+}
+
+const fmtPct = (v) => (v == null ? "—" : `${numBR(v, 2)}%`);
+const fmtX = (v) => (v == null ? "—" : `${numBR(v, 2)}x`);
+const fmtNum = (v) => (v == null ? "—" : numBR(v, +v % 1 ? 1 : 0));
+const fmtCurto = (v) => (v >= 1e6 ? `${numBR(v / 1e6, 1)} mi` : v >= 1e3 ? `${numBR(v / 1e3, v >= 1e4 ? 0 : 1)} mil` : numBR(v, v % 1 ? 1 : 0));
+const fmtMoedaCurta = (v) => `R$ ${fmtCurto(v)}`;
+
+const IND_DEF = {
+  meta: {
+    tela: "trafego", nome: "Tráfego",
+    barra: ["gasto", "Investimento", moeda, fmtMoedaCurta],
+    kpis: (t) => [["gasto", "Investimento", moeda, 0], ["resultados", t.resultado_nome || "Resultados", fmtNum, 1],
+      ["custo_resultado", "Custo por resultado", (v) => (v == null ? "—" : moeda(v)), -1],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, 1], ["valor", "Valor das compras", moeda, 1]] : []),
+      ["ctr", "CTR (link)", fmtPct, 1], ["cpc", "CPC (link)", (v) => (v == null ? "—" : moeda(v)), -1],
+      ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v)), -1], ["impressoes", "Impressões", fmtNum, 0],
+      ["alcance", "Alcance", fmtNum, 0], ["frequencia", "Frequência", (v) => (v == null ? "—" : numBR(v, 2)), 0]],
+    linhas: (t) => [["resultados", t.resultado_nome || "Resultados", fmtNum, fmtCurto], ["custo_resultado", "Custo por resultado", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["ctr", "CTR", fmtPct, (v) => `${numBR(v, 1)}%`], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta], ...(t.total.valor ? [["roas", "ROAS", fmtX, (v) => `${numBR(v, 1)}x`]] : [])],
+    colunas: (t) => [["gasto", "Investimento", moeda], ["resultados", t.resultado_nome || "Resultados", fmtNum], ["custo_resultado", "Custo/result.", (v) => (v == null ? "—" : moeda(v))],
+      ["var_custo_resultado", "vs. antes", null], ["ctr", "CTR", fmtPct], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v))], ["cpm", "CPM", (v) => (v == null ? "—" : moeda(v))],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX]] : [])],
+    custo: "gasto", resultado: "resultados", cpr: "custo_resultado",
+    ativa: (s) => s === "ACTIVE",
+  },
+  google: {
+    tela: "googleads", nome: "Google Ads",
+    barra: ["custo", "Investimento", moeda, fmtMoedaCurta],
+    kpis: (t) => [["custo", "Investimento", moeda, 0], ["conversoes", "Conversões", fmtNum, 1], ["cpa", "Custo por conversão", (v) => (v == null ? "—" : moeda(v)), -1],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, 1], ["valor", "Valor das conversões", moeda, 1]] : []),
+      ["cliques", "Cliques", fmtNum, 1], ["ctr", "CTR", fmtPct, 1], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), -1], ["impressoes", "Impressões", fmtNum, 0]],
+    linhas: (t) => [["conversoes", "Conversões", fmtNum, fmtCurto], ["cpa", "Custo por conversão", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ["cliques", "Cliques", fmtNum, fmtCurto], ["ctr", "CTR", fmtPct, (v) => `${numBR(v, 1)}%`], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v)), fmtMoedaCurta],
+      ...(t.total.valor ? [["roas", "ROAS", fmtX, (v) => `${numBR(v, 1)}x`]] : [])],
+    colunas: () => [["tipo", "Tipo", (v) => esc(v || "")], ["custo", "Investimento", moeda], ["conversoes", "Conversões", fmtNum], ["cpa", "CPA", (v) => (v == null ? "—" : moeda(v))],
+      ["var_cpa", "vs. antes", null], ["cliques", "Cliques", fmtNum], ["ctr", "CTR", fmtPct], ["cpc", "CPC", (v) => (v == null ? "—" : moeda(v))],
+      ["orcamento_diario", "Orç./dia", moeda], ["parcela_impressoes", "Parcela impr.", fmtPct]],
+    custo: "custo", resultado: "conversoes", cpr: "cpa",
+    ativa: (s) => s === "ENABLED",
+  },
+};
+
+// Variação colorida: verde quando é bom (sobe o que é bom subir, cai o que é bom cair).
+function chipVar(v, sentido) {
+  if (v == null || !Number.isFinite(+v)) return '<em class="ind-var neutro">—</em>';
+  const bom = sentido === 0 ? null : (v > 0) === (sentido > 0);
+  return `<em class="ind-var ${bom == null || v === 0 ? "neutro" : bom ? "bom" : "ruim"}">${v > 0 ? "▲" : v < 0 ? "▼" : ""} ${numBR(Math.abs(v), 1)}%</em>`;
+}
+
+function barrasQuebra(titulo, linhas, def, plataforma) {
+  if (!linhas?.length) return "";
+  const custo = plataforma === "meta" ? "gasto" : "custo";
+  const res = plataforma === "meta" ? "resultados" : "conversoes";
+  const cpr = plataforma === "meta" ? "custo_resultado" : "cpa";
+  const total = linhas.reduce((s, x) => s + (x[custo] || 0), 0) || 1;
+  return `<section class="bloco ind-quebra"><h2>${esc(titulo)}</h2><ul>
+    ${linhas.map((x) => `<li><div class="ind-quebra-topo"><span>${esc(x.nome)}</span><span class="sub">${moeda(x[custo])} · ${fmtNum(x[res])} · ${x[cpr] ? moeda(x[cpr]) : "—"}/result.</span></div>
+      <div class="ind-quebra-barra"><span style="width:${Math.max(1, Math.round((x[custo] || 0) / total * 100))}%"></span></div></li>`).join("")}
+  </ul><p class="sub">Investimento · resultados · custo por resultado</p></section>`;
+}
+
+async function paginaIndicadores(plataforma, contaId) {
+  const def = IND_DEF[plataforma];
+  const base = plataforma === "meta" ? `trafego/contas/${encodeURIComponent(contaId)}/indicadores` : `googleads/contas/${encodeURIComponent(contaId)}/indicadores`;
+  main.innerHTML = `
+    <div class="topo"><div><a class="voltar" href="#/${def.tela}">← ${esc(def.nome)}</a>
+        <p class="ind-relatorio-marca">HAIZEN · Relatório de indicadores ${plataforma === "meta" ? "Meta Ads" : "Google Ads"}</p>
+        <h1 id="ind-titulo">Carregando…</h1><p class="sub" id="ind-sub"></p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ind-atualizar">Atualizar dados</button>
+        <button class="botao" data-exportar="pdf">Exportar PDF</button><button class="botao" data-exportar="jpg">Exportar JPG</button>
+        <button class="botao primario" id="ind-analisar">Pedir análise do gestor</button></div></div>
+    <div id="ind-periodo" class="ind-periodo"></div>
+    <div id="ind-corpo"><p class="vazio">Buscando os números…</p></div>`;
+  const corpo = $("#ind-corpo");
+  let linhaAtual = null, ordem = { col: def.custo, desc: true };
+  const carregar = async (datas, novo = false) => {
+    corpo.innerHTML = '<p class="vazio">Buscando os números…</p>';
+    let r;
+    try { r = await api("GET", `${base}?ini=${datas.ini}&fim=${datas.fim}${novo ? "&novo=1" : ""}`); } catch (e) {
+      corpo.innerHTML = `<div class="traf-faixa erro">${esc(e.message)}</div>`; window.__indicadoresErro = e.message; return;
+    }
+    if (!document.body.contains(corpo)) return;
+    const c = r.conta_info || {};
+    $("#ind-titulo").textContent = c.cliente_nome || c.nome || contaId;
+    $("#ind-sub").textContent = [c.nome, plataforma === "meta" ? c.id : c.id_formatado, c.negocio ? (/^bm\b/i.test(c.negocio) ? c.negocio : `BM ${c.negocio}`) : ""].filter(Boolean).join(" · ");
+    const t = r;
+    const kpis = def.kpis(t);
+    const linhas = def.linhas(t);
+    if (!linhaAtual || !linhas.some((l) => l[0] === linhaAtual)) linhaAtual = linhas[0][0];
+    const P = r.periodo, A = r.anterior;
+    const semGasto = !(t.total[def.custo] > 0);
+    const desenharGrafico = () => {
+      const l = linhas.find((x) => x[0] === linhaAtual);
+      const o = { barra: def.barra[0], rotBarra: def.barra[1], fmtBarra: def.barra[2], fmtBarraCurto: def.barra[3],
+        linha: l[0], rotLinha: l[1], fmtLinha: l[2], fmtLinhaCurto: l[3], grupo: P.agrupamento };
+      const caixa = $("#ind-grafico", corpo);
+      caixa.innerHTML = grafico(r.serie, o);
+      ligarGrafico(caixa, r.serie, o);
+      $$("[data-linha]", corpo).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.linha === linhaAtual)));
+    };
+    const colunas = def.colunas(t);
+    const desenharTabela = () => {
+      const lista = [...r.campanhas].sort((a, b) => {
+        const va = a[ordem.col], vb = b[ordem.col];
+        if (va == null) return 1; if (vb == null) return -1;
+        return (typeof va === "string" ? va.localeCompare(vb) : va - vb) * (ordem.desc ? -1 : 1);
+      });
+      const sentidoVar = { var_custo_resultado: -1, var_cpa: -1 };
+      $("#ind-campanhas", corpo).innerHTML = lista.length ? `<div class="ind-tabela-caixa"><table class="ind-tabela">
+        <thead><tr><th>Campanha</th>${colunas.map(([k, rot]) => `<th><button type="button" data-ordem="${k}" class="${ordem.col === k ? (ordem.desc ? "desc" : "asc") : ""}">${esc(rot)}</button></th>`).join("")}</tr></thead>
+        <tbody>${lista.map((x) => `<tr class="${def.ativa(x.status) ? "" : "pausada"}"><td><span class="ind-status ${def.ativa(x.status) ? "on" : ""}" title="${esc(x.status || "")}"></span>${esc(x.nome || "—")}</td>
+          ${colunas.map(([k, , f]) => `<td>${f ? f(x[k]) : chipVar(x[k], sentidoVar[k] ?? 1)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+        : '<p class="vazio">Nenhuma campanha com entrega neste período.</p>';
+      $$("[data-ordem]", corpo).forEach((b) => b.addEventListener("click", () => {
+        ordem = { col: b.dataset.ordem, desc: ordem.col === b.dataset.ordem ? !ordem.desc : true }; desenharTabela();
+      }));
+    };
+    const an = r.analise;
+    const acoes = r.acoes || [];
+    const quebras = plataforma === "meta"
+      ? barrasQuebra("Por plataforma", r.quebras.plataforma, def, plataforma) + barrasQuebra("Por gênero", r.quebras.genero, def, plataforma) + barrasQuebra("Por idade", r.quebras.idade, def, plataforma)
+      : barrasQuebra("Por dispositivo", r.quebras.dispositivo, def, plataforma);
+    corpo.innerHTML = `
+      <div class="ind-comparando"><p class="sub">${dataBr(P.ini)} a ${dataBr(P.fim)} (${P.dias} ${P.dias === 1 ? "dia" : "dias"}) · comparado com ${dataBr(A.ini)} a ${dataBr(A.fim)}${plataforma === "meta" ? `<span class="ind-so-exportar"> · resultado principal: ${esc(t.resultado_nome)}</span>` : ""}</p>
+        ${plataforma === "meta" ? `<label class="ind-resultado">Resultado principal
+          <select id="ind-resultado"><option value=""${t.resultado_fixo ? "" : " selected"}>Automático (${esc(t.resultado_fixo ? "pelo objetivo" : t.resultado_nome)})</option>
+            ${t.resultados_opcoes.map((o) => `<option value="${o.id}"${t.resultado_fixo && o.id === t.resultado ? " selected" : ""}>${esc(o.nome)}${o.total ? ` · ${fmtNum(o.total)} no período` : ""}</option>`).join("")}</select></label>` : ""}</div>
+      ${acoes.length ? `<div class="traf-faixa">${acoes.length} ${acoes.length === 1 ? "proposta espera" : "propostas esperam"} a sua aprovação nesta conta. <a href="#/${def.tela}">Ver propostas</a></div>` : ""}
+      ${semGasto ? '<div class="traf-faixa">Sem investimento neste período.</div>' : ""}
+      <section class="ind-kpis">${kpis.map(([k, rot, f, sentido]) => `<div class="ind-kpi"><span>${esc(rot)}</span><strong>${f(t.total[k])}</strong>
+        <small>${chipVar(t.variacao[k], sentido)} <span>antes ${f(t.total_anterior[k])}</span></small></div>`).join("")}</section>
+      <section class="bloco ind-bloco-grafico"><div class="bloco-topo"><h2>Evolução ${P.agrupamento === "dia" ? "por dia" : P.agrupamento === "semana" ? "por semana" : "por mês"}</h2>
+        <div class="ind-periodos" role="group" aria-label="Métrica da linha">${linhas.map(([k, rot]) => `<button type="button" class="ind-chip" data-linha="${k}">${esc(rot)}</button>`).join("")}</div></div>
+        <div id="ind-grafico"></div></section>
+      ${an ? `<section class="bloco ind-analise"><h2>Última análise do gestor</h2><p>${esc(an.resumo || "")}</p>${an.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</section>` : ""}
+      <section class="traf-secao"><h2>Campanhas</h2><div id="ind-campanhas"></div></section>
+      ${quebras ? `<div class="ind-quebras">${quebras}</div>` : ""}
+      ${plataforma === "google" && r.termos?.length ? `<section class="traf-secao"><h2>Termos de pesquisa que mais gastaram</h2><div class="ind-tabela-caixa"><table class="ind-tabela"><thead><tr><th>Termo</th><th>Investimento</th><th>Cliques</th><th>Conversões</th><th>CPA</th></tr></thead>
+        <tbody>${r.termos.slice(0, 25).map((x) => `<tr class="${x.conversoes ? "" : "sem-conv"}"><td>${esc(x.termo)}</td><td>${moeda(x.custo)}</td><td>${fmtNum(x.cliques)}</td><td>${fmtNum(x.conversoes)}</td><td>${x.cpa ? moeda(x.cpa) : "—"}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+      <p class="sub">Números direto da API ${plataforma === "meta" ? "da Meta" : "do Google Ads"}, atualizados ${new Date(r.gerado_em * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}. Os dos últimos 2 a 3 dias ainda podem mudar um pouco.</p>`;
+    $$("[data-linha]", corpo).forEach((b) => b.addEventListener("click", () => { linhaAtual = b.dataset.linha; desenharGrafico(); }));
+    $("#ind-resultado", corpo)?.addEventListener("change", async (ev) => {
+      try {
+        await api("PATCH", `trafego/contas/${encodeURIComponent(contaId)}`, { resultado: ev.target.value });
+        avisar(ev.target.value ? "Resultado principal salvo para esta conta" : "Resultado volta a ser automático");
+        linhaAtual = null; carregar(datas);
+      } catch (e) { avisar(e.message); }
+    });
+    desenharGrafico();
+    desenharTabela();
+    window.__indicadoresProntos = true;
+  };
+  let datas = seletorPeriodoInd($("#ind-periodo"), (d) => { datas = d; carregar(d); });
+  $("#ind-atualizar").addEventListener("click", () => carregar(datas, true));
+  $$("[data-exportar]").forEach((b) => b.addEventListener("click", async () => {
+    const formato = b.dataset.exportar, rotulo = b.textContent;
+    b.disabled = true; b.textContent = "Gerando…";
+    try {
+      const resp = await fetch(`/api/${base}/exportar?formato=${formato}&ini=${datas.ini}&fim=${datas.fim}`, { headers: { "X-Central": "1" } });
+      if (!resp.ok) { const j = await resp.json().catch(() => ({})); throw new Error(j.erro || `erro ${resp.status}`); }
+      const nome = decodeURIComponent((resp.headers.get("Content-Disposition") || "").split("''")[1] || `indicadores.${formato}`);
+      const url = URL.createObjectURL(await resp.blob());
+      const a = Object.assign(document.createElement("a"), { href: url, download: nome });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      avisar(`${formato.toUpperCase()} salvo em Downloads: ${nome}`);
+    } catch (e) { avisar(`Não consegui exportar: ${e.message}`); }
+    finally { b.disabled = false; b.textContent = rotulo; }
+  }));
+  $("#ind-analisar").addEventListener("click", async () => {
+    try {
+      if (plataforma === "meta") await api("POST", "trafego/analisar", { contas: [contaId] });
+      else { const r = await api("POST", `googleads/contas/${encodeURIComponent(contaId)}/analisar`, {}); if (!r.ok) throw new Error("Já tem uma análise rodando: espere terminar"); }
+      avisar("O gestor começou a análise desta conta. As propostas aparecem na tela principal.");
+    } catch (e) { avisar(e.message); }
+  });
+  await carregar(datas);
+}
+
+// ── Google Ads dos clientes ─────────────────────────────────────────────────
+function gaDetalhes(a) {
+  const d = a.detalhes || {};
+  const camp = d.campanha_nome ? `<span class="sub">${esc(d.campanha_nome)}</span>` : "";
+  switch (a.tipo) {
+    case "orcamento": return `<p class="ec-mudanca">${d.orcamento_anterior ? `${moeda(d.orcamento_anterior)} → ` : ""}<strong>${moeda(d.orcamento_diario)}/dia</strong> ${camp}</p>`;
+    case "negativar_termos": return `<p class="ec-mudanca">${camp}</p><p class="ga-termos">${(d.termos || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(" ")}</p>`;
+    case "pausar_campanha": case "ativar_campanha": return `<p class="ec-mudanca">${camp}</p>`;
+    case "criar_campanha_pesquisa": {
+      const lance = { conversoes: "maximizar conversões", cliques: "maximizar cliques", cpa: `CPA alvo ${moeda(d.cpa_alvo)}` }[d.lance] || d.lance;
+      const dominio = (() => { try { return new URL(d.url_final).hostname.replace(/^www\./, ""); } catch (_) { return d.url_final; } })();
+      return `<p class="ec-mudanca"><strong>${esc(d.nome)}</strong> · ${moeda(d.orcamento_diario)}/dia · ${esc(lance)} · ${esc((d.locais || []).join(", ") || "Brasil")}</p>
+        ${(d.grupos || []).map((g) => `<div class="ga-anuncio"><span class="ga-patrocinado">Patrocinado · ${esc(dominio)}${g.caminho1 ? ` › ${esc(g.caminho1)}` : ""}${g.caminho2 ? ` › ${esc(g.caminho2)}` : ""}</span>
+          <p class="ga-titulo">${esc(g.titulos.slice(0, 3).join(" | "))}</p><p class="ga-desc">${esc(g.descricoes[0] || "")}</p>
+          <details class="traf-detalhes"><summary>${esc(g.nome)}: ${g.palavras.length} palavras, ${g.titulos.length} títulos, ${g.descricoes.length} descrições</summary>
+            <p class="ga-termos">${g.palavras.map((k) => `<span class="tag">${esc(k.correspondencia === "EXACT" ? `[${k.texto}]` : k.correspondencia === "PHRASE" ? `"${k.texto}"` : k.texto)}</span>`).join(" ")}</p>
+            <ol class="ga-lista">${g.titulos.map((t) => `<li>${esc(t)} <span class="sub">${t.length}</span></li>`).join("")}</ol>
+            <ul class="ga-lista">${g.descricoes.map((t) => `<li>${esc(t)} <span class="sub">${t.length}</span></li>`).join("")}</ul></details></div>`).join("")}
+        ${d.negativas?.length ? `<p class="sub">Negativas: ${esc(d.negativas.join(", "))}</p>` : ""}`;
+    }
+    case "criar_campanha_demand_gen": case "criar_campanha_display": {
+      const lance = { conversoes: "maximizar conversões", cliques: "maximizar cliques", cpa: `CPA alvo ${moeda(d.cpa_alvo)}` }[d.lance] || d.lance;
+      const nomeArq = (r) => esc(String(r).split(/[\\/]/).pop().replace(/^anexo:/, ""));
+      const v = d.anuncio_video, im = d.anuncio_imagem;
+      const lista = (t, xs) => xs?.length ? `<p class="sub">${t}: ${xs.map(esc).join(" · ")}</p>` : "";
+      return `<p class="ec-mudanca"><strong>${esc(d.nome)}</strong> · ${moeda(d.orcamento_diario)}/dia · ${esc(lance)} · ${esc((d.locais || []).join(", ") || "Brasil")}</p>
+        <p class="sub">${esc(d.nome_empresa)} · logo ${nomeArq(d.logo)}</p>
+        ${v ? `<div class="ga-anuncio"><span class="ga-patrocinado">Vídeo · ${v.videos.map((x) => x.youtube ? `youtu.be/${esc(x.youtube)}` : `${nomeArq(x.arquivo)} (vai para o YouTube, não listado)`).join(", ")} · botão ${esc(v.cta)}</span>
+          <p class="ga-titulo">${esc(v.titulos[0] || "")}</p><p class="ga-desc">${esc(v.descricoes[0] || "")}</p>
+          ${lista("Títulos", v.titulos)}${lista("Títulos longos", v.titulos_longos)}${lista("Descrições", v.descricoes)}</div>` : ""}
+        ${im ? `<div class="ga-anuncio"><span class="ga-patrocinado">Imagem · ${im.imagens.map(nomeArq).join(", ")} (cortes 1,91:1, 1:1 e 4:5)</span>
+          <p class="ga-titulo">${esc(im.titulos[0] || "")}</p><p class="ga-desc">${esc(im.descricoes[0] || "")}</p>
+          ${lista("Títulos", im.titulos)}${lista("Descrições", im.descricoes)}</div>` : ""}
+        ${a.tipo === "criar_campanha_display" ? `<div class="ga-anuncio"><span class="ga-patrocinado">Display responsivo · ${(d.imagens || []).map(nomeArq).join(", ")}</span>
+          <p class="ga-titulo">${esc(d.titulos?.[0] || "")}</p><p class="ga-desc">${esc(d.titulo_longo || "")}</p>${lista("Títulos", d.titulos)}${lista("Descrições", d.descricoes)}</div>` : ""}`;
+    }
+    default: return "";
+  }
+}
+
+function gaCartaoAcao(a) {
+  return `<article class="traf-acao">
+    <div class="traf-acao-topo"><span class="traf-tipo">${esc(a.tipo_nome)}</span><span class="sub">${esc(a.conta_nome)}${a.origem !== "analise" ? " · pedido seu" : ""}</span></div>
+    <p class="traf-alvo">${esc(a.titulo)}</p>${gaDetalhes(a)}
+    ${a.motivo ? `<p class="traf-motivo">${esc(a.motivo)}</p>` : ""}${a.impacto ? `<p class="sub traf-impacto">Esperado: ${esc(a.impacto)}</p>` : ""}
+    ${a.status === "erro" ? `<p class="traf-estado erro">Não aplicou: ${esc(a.resultado)}</p>` : ""}
+    <div class="traf-botoes"><button class="botao" data-ga-rejeitar="${a.id}">${a.tipo === "alerta" ? "Dispensar" : "Rejeitar"}</button>
+      ${a.tipo === "orcamento" || a.tipo.startsWith("criar_campanha") ? `<button class="botao" data-ga-ajustar="${a.id}">Ajustar verba</button>` : ""}
+      <button class="botao primario" data-ga-aprovar="${a.id}">${a.tipo === "alerta" ? "Ciente" : a.status === "erro" ? "Tentar de novo" : "Aprovar e aplicar"}</button></div></article>`;
+}
+
+function gaCartaoConta(c) {
+  const m = c.metricas;
+  const kpi = (rot, val, extra = "") => `<div class="traf-kpi"><span>${rot}</span><strong>${val}</strong>${extra}</div>`;
+  const maxDia = m ? Math.max(1, ...m.por_dia.map((d) => d.custo)) : 1;
+  const an = c.analise;
+  return `<article class="traf-conta">
+    <div class="traf-conta-topo"><div><h3><a class="ind-link" href="#/googleads/${c.id}">${esc(c.nome)}</a></h3>
+      <p class="sub">${esc(c.id_formatado)} · ${esc(c.cliente_nome || "sem cliente")}${an ? ` · análise de ${new Date(an.criado_em * 1000).toLocaleDateString("pt-BR")}` : " · ainda sem análise"}${an && an.saude != null ? ` · saúde ${an.saude}/100` : ""}</p></div>
+      <label class="caixa traf-ativo"><input type="checkbox" data-ga-ativo="${esc(c.id)}" checked> Análise diária</label></div>
+    ${c.erro ? `<p class="traf-estado erro">${esc(c.erro)}</p>` : ""}
+    ${m ? `<div class="traf-kpis">
+      ${kpi("Ontem", moeda(m.ontem.custo), `<small>${numBR(m.ontem.conversoes, 1).replace(",0", "")} conversões</small>`)}
+      ${kpi("Gasto 30d", moeda(m.ult30.custo), ecVar(m.var30.custo))}
+      ${kpi("Conversões 30d", numBR(m.ult30.conversoes, 1).replace(",0", ""), ecVar(m.var30.conversoes))}
+      ${kpi("CPA", m.ult30.cpa ? moeda(m.ult30.cpa) : "—", m.var30.cpa != null ? `<em class="ec-var ${m.var30.cpa <= 0 ? "sobe" : "desce"}">${m.var30.cpa > 0 ? "+" : ""}${numBR(m.var30.cpa)}%</em>` : "")}
+      ${kpi("ROAS", m.ult30.roas ? `${numBR(m.ult30.roas, 2)}x` : "—")}
+      ${kpi("Desperdício em termos", moeda(m.desperdicio_termos), "<small>sem conversão, 30d</small>")}
+    </div>
+    <div class="ec-barras" title="Gasto por dia, últimos 30 dias">${m.por_dia.map((d) => `<span style="height:${Math.max(2, Math.round(d.custo / maxDia * 100))}%" title="${dataBr(d.dia)}: ${moeda(d.custo)} · ${d.conversoes} conv."></span>`).join("")}</div>` : ""}
+    ${m?.rastreamento_suspeito ? '<p class="traf-estado erro">Cliques sem nenhuma conversão em 30 dias: confira se a conversão está sendo registrada.</p>' : ""}
+    ${an?.resumo ? `<p class="traf-resumo">${esc(an.resumo)}</p>` : ""}
+    ${an?.alertas?.length ? `<ul class="traf-alertas">${an.alertas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    ${m?.campanhas?.length ? `<details class="traf-detalhes"><summary>Campanhas (30 dias)</summary>
+      <table class="ec-tabela"><tr><th>Campanha</th><th>Gasto</th><th>Conv.</th><th>CPA</th><th>Orç./dia</th><th>Perde por orç.</th></tr>
+      ${m.campanhas.slice(0, 12).map((x) => `<tr><td>${esc(x.nome)}${x.status !== "ENABLED" ? ' <span class="sub">(pausada)</span>' : ""}</td><td>${moeda(x.custo)}</td><td>${numBR(x.conversoes, 1).replace(",0", "")}</td><td>${x.cpa ? moeda(x.cpa) : "—"}</td><td>${moeda(x.orcamento_diario)}</td><td>${x.perda_orcamento != null ? `${numBR(x.perda_orcamento, 1)}%` : "—"}</td></tr>`).join("")}</table></details>` : ""}
+    ${m?.termos_sem_conversao?.length ? `<details class="traf-detalhes"><summary>Termos que gastaram sem converter</summary><table class="ec-tabela"><tr><th>Termo</th><th>Campanha</th><th>Gasto</th><th>Cliques</th></tr>
+      ${m.termos_sem_conversao.slice(0, 15).map((t) => `<tr><td>${esc(t.termo)}</td><td>${esc(t.campanha)}</td><td>${moeda(t.custo)}</td><td>${t.cliques}</td></tr>`).join("")}</table></details>` : ""}
+    ${c.historico?.length ? `<details class="traf-detalhes"><summary>Aplicado recentemente</summary><ul class="ec-hist">${c.historico.map((a) => `<li><span class="traf-tipo">${esc(a.tipo_nome)}</span> ${esc(a.titulo)} <span class="sub">${esc(a.resultado)}</span></li>`).join("")}</ul></details>` : ""}
+    <div class="traf-botoes"><a class="botao primario" href="#/googleads/${c.id}">Indicadores</a><button class="botao" data-ga-editar="${esc(c.id)}">Cliente e objetivo</button><button class="botao" data-ga-analisar="${esc(c.id)}">Analisar agora</button></div></article>`;
+}
+
+ROTAS.googleads = async (param) => {
+  if (param) return paginaIndicadores("google", decodeURIComponent(param));
+  main.innerHTML = `
+    <div class="topo"><div><h1>Google Ads</h1><p class="sub" id="ga-sub">Contas dos clientes: análise diária e mudanças com a sua aprovação.</p></div>
+      <div class="traf-topo-botoes"><button class="botao" id="ga-config">Configurar</button><button class="botao" id="ga-sync">Atualizar contas</button><button class="botao primario" id="ga-analisar">Analisar ativas</button></div></div>
+    <div id="ga-corpo"><p class="vazio">Carregando…</p></div>`;
+  const corpo = $("#ga-corpo");
+  let dados = null; let timer = null;
+  const desenhar = async () => {
+    if (!document.body.contains(corpo)) { clearInterval(timer); return; }
+    dados = await api("GET", "googleads");
+    const { contas, estado, config: cfg } = dados;
+    $("#ga-sub").textContent = dados.conectado ? `Análise todo dia às ${cfg.horario} das contas marcadas. Nada muda sem a sua aprovação.` : "Conecte a sua conta Google que acessa as contas dos clientes.";
+    ["#ga-sync", "#ga-analisar"].forEach((s) => { $(s).hidden = !dados.conectado; });
+    const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>Analisando ${esc(estado.fazendo)}… leva 1 a 3 minutos por conta.</div>` : "";
+    const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    if (!dados.conectado) {
+      corpo.innerHTML = `${erro}<section class="bloco traf-conectar"><h2>Conectar o Google Ads</h2>
+        <p>Pela API oficial do Google. Desde setembro de 2026 não precisa mais de developer token: o acesso é pelo projeto do Google Cloud. Uma vez só:</p>
+        <ol><li>No <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, use o mesmo projeto do Google Agenda do Jarvis (ou crie um). Em <strong>APIs e serviços → Biblioteca</strong>, ative a <strong>Google Ads API</strong>.</li>
+          <li>Na página da Google Ads API, em <strong>Visão geral → Upgrade access level</strong>, peça o acesso <strong>Explorer</strong> (aprovação automática na maioria dos casos). Sem ele, o projeto só enxerga contas de teste.</li>
+          <li>Em <strong>APIs e serviços → Credenciais</strong>, use (ou crie) um <strong>ID do cliente OAuth</strong> do tipo <strong>App para computador</strong> e copie o Client ID e o Client secret (ou cole o JSON baixado). Se a tela de consentimento estiver em "Teste", adicione o seu e-mail como usuário de teste.</li>
+          <li>Cole abaixo, salve e clique em <strong>Conectar com o Google</strong>, neste computador, com a conta Google que acessa as contas dos clientes (ou a conta de administrador/MCC da agência).</li></ol>
+        <div class="campos">${campo({ nome: "client_id", rotulo: "Client ID (ou o JSON inteiro)", largo: true })}${campo({ nome: "client_secret", rotulo: "Client secret", tipo: "password", largo: true })}</div>
+        <div class="traf-botoes"><button class="botao" id="ga-salvar-cliente">Salvar</button><button class="botao" id="ga-conectar-sem"${dados.tem_cliente ? "" : " disabled"}>Conectar sem o YouTube</button><button class="botao primario" id="ga-conectar"${dados.tem_cliente ? "" : " disabled"}>Conectar com o Google</button></div>
+        <p class="sub">"Sem o YouTube" pede só o acesso ao Google Ads: tudo funciona, mas vídeo para anúncio precisa ser um link do YouTube (o Jarvis não envia o arquivo).</p></section>`;
+      $("#ga-salvar-cliente").addEventListener("click", async () => {
+        try { await api("POST", "googleads/config", { client_id: $("[name=client_id]", corpo).value, client_secret: $("[name=client_secret]", corpo).value }); avisar("Salvo"); desenhar(); } catch (e) { avisar(e.message); }
+      });
+      $("#ga-conectar").addEventListener("click", async () => {
+        try { const r = await api("POST", "googleads/autorizar", {}); window.open(r.url, "_blank"); avisar("Autorize na janela do Google; esta tela atualiza sozinha"); } catch (e) { avisar(e.message); }
+      });
+      $("#ga-conectar-sem").addEventListener("click", async () => {
+        try { const r = await api("POST", "googleads/autorizar", { youtube: false }); window.open(r.url, "_blank"); avisar("Autorize na janela do Google; esta tela atualiza sozinha"); } catch (e) { avisar(e.message); }
+      });
+      return;
+    }
+    const ativas = contas.filter((c) => c.ativo);
+    const outras = contas.filter((c) => !c.ativo);
+    const propostas = ativas.flatMap((c) => c.propostas);
+    const aplicando = contas.flatMap((c) => (c.historico || []).filter((a) => a.status === "aplicando"));
+    dados.aplicando = aplicando.length;
+    const faixaAplicando = aplicando.map((a) => `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>Criando "${esc(a.detalhes?.nome || a.titulo)}": ${esc(a.resultado)} Pode levar alguns minutos (vídeo indo para o YouTube).</div>`).join("");
+    corpo.innerHTML = `${fazendo}${erro}${faixaAplicando}
+      <section class="traf-secao"><h2>Esperando sua aprovação ${propostas.length ? `<span class="selo">${propostas.length}</span>` : ""}</h2>
+        ${propostas.length ? `<div class="traf-acoes">${propostas.map(gaCartaoAcao).join("")}</div>` : '<p class="vazio">Nenhuma mudança pendente.</p>'}</section>
+      <section class="traf-secao"><h2>Contas analisadas</h2>${ativas.length ? `<div class="traf-contas">${ativas.map(gaCartaoConta).join("")}</div>` : '<p class="vazio">Marque abaixo as contas que o Jarvis deve analisar.</p>'}</section>
+      ${outras.length ? `<section class="traf-secao"><h2>Outras contas que o seu login acessa</h2><ul class="lista">${outras.map((c) => `<li><span>${esc(c.nome)} <span class="sub">${esc(c.id_formatado)}${c.cliente_nome ? ` · ${esc(c.cliente_nome)}` : ""}</span></span>
+        <span class="hoje-botoes"><button class="botao pequeno" data-ga-editar="${esc(c.id)}">Cliente</button><button class="botao pequeno primario" data-ga-ligar="${esc(c.id)}">Analisar esta conta</button></span></li>`).join("")}</ul></section>` : ""}`;
+    const todas = contas;
+    $$("[data-ga-aprovar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const a = propostas.find((x) => String(x.id) === b.dataset.gaAprovar);
+      const aplicar = async (corpoReq) => {
+        b.disabled = true;
+        try { const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, corpoReq); avisar(r.status === "erro" ? `Não aplicou: ${r.resultado}` : r.resultado || "Aplicado"); } catch (e) { avisar(e.message); }
+        desenhar();
+      };
+      if (a.tipo.startsWith("criar_campanha")) {
+        dialogo({ titulo: `Criar "${a.detalhes.nome}"`, corpo: `<p>A campanha vai ser criada na conta ${esc(a.conta_nome)} com ${moeda(a.detalhes.orcamento_diario)}/dia.</p>
+            <div class="campos">${campo({ nome: "ativar", rotulo: "Criar já ativa (começa a gastar hoje)", tipo: "checkbox", valor: false, largo: true })}</div>
+            <p class="sub">Sem marcar, ela nasce pausada: confira no Google Ads e ative quando quiser.</p>`,
+          acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Criar campanha", classe: "primario", enviar: true, acao: async (v) => { await aplicar({ ativar: !!v.ativar }); } }] });
+        return;
+      }
+      if (a.tipo !== "alerta" && !(await confirmarAcao(`Aplicar no Google Ads (${a.conta_nome}): ${a.titulo}?`, "Aplicar"))) return;
+      await aplicar({});
+    }));
+    $$("[data-ga-rejeitar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { await api("POST", `googleads/acoes/${b.dataset.gaRejeitar}/rejeitar`, {}); } catch (e) { avisar(e.message); } desenhar(); }));
+    $$("[data-ga-ajustar]", corpo).forEach((b) => b.addEventListener("click", () => {
+      const a = propostas.find((x) => String(x.id) === b.dataset.gaAjustar);
+      if (a.tipo.startsWith("criar_campanha")) {
+        dialogo({ titulo: `Verba · ${a.detalhes.nome}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Só muda a proposta; a campanha é criada quando você clicar em Aprovar.</p>`,
+          acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+            await api("POST", `googleads/acoes/${a.id}/editar`, { detalhes: { ...a.detalhes, orcamento_diario: +v.orcamento_diario } }); avisar("Verba ajustada"); desenhar();
+          } }] });
+        return;
+      }
+      dialogo({ titulo: `Ajustar · ${a.titulo}`, corpo: `<div class="campos">${campo({ nome: "orcamento_diario", rotulo: "Orçamento diário (R$)", tipo: "number", valor: a.detalhes.orcamento_diario })}</div><p class="sub">Salvar e aplicar já muda a campanha.</p>`,
+        acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar e aplicar", classe: "primario", enviar: true, acao: async (v) => {
+          const r = await api("POST", `googleads/acoes/${a.id}/aprovar`, { detalhes: { ...a.detalhes, orcamento_diario: +v.orcamento_diario } });
+          if (r.status === "erro") throw new Error(`Não aplicou: ${r.resultado}`);
+          avisar(r.resultado); desenhar();
+        } }] });
+    }));
+    $$("[data-ga-analisar]", corpo).forEach((b) => b.addEventListener("click", async () => { try { const r = await api("POST", `googleads/contas/${b.dataset.gaAnalisar}/analisar`, {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } }));
+    $$("[data-ga-ativo]", corpo).forEach((cx) => cx.addEventListener("change", async () => { await api("POST", `googleads/contas/${cx.dataset.gaAtivo}`, { ativo: cx.checked }); desenhar(); }));
+    $$("[data-ga-ligar]", corpo).forEach((b) => b.addEventListener("click", async () => { await api("POST", `googleads/contas/${b.dataset.gaLigar}`, { ativo: true }); avisar("Conta marcada: clique em Analisar agora no cartão dela"); desenhar(); }));
+    $$("[data-ga-editar]", corpo).forEach((b) => b.addEventListener("click", async () => {
+      const c = todas.find((x) => x.id === b.dataset.gaEditar);
+      const clientes = await api("GET", "clientes").catch(() => []);
+      dialogo({ titulo: c.nome, corpo: `<div class="campos">${campo({ nome: "cliente_id", rotulo: "Cliente", tipo: "select", valor: c.cliente_id || "", opcoes: [["", "—"], ...clientes.map((x) => [x.id, x.nome])] })}
+          ${campo({ nome: "meta_cpa", rotulo: "CPA alvo (R$)", tipo: "number", valor: c.meta_cpa ?? "" })}
+          ${campo({ nome: "objetivo", rotulo: "Objetivo e observações (o que conta como conversão, campanhas que não pode mexer, sazonalidade)", tipo: "textarea", valor: c.objetivo, largo: true })}</div>`,
+        acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `googleads/contas/${c.id}`, v); desenhar(); } }] });
+    }));
+    $("#ga-analisar").disabled = !!estado.fazendo || !ativas.length;
+  };
+  $("#ga-analisar").addEventListener("click", async () => { try { const r = await api("POST", "googleads/analisar", {}); avisar(r.ok ? "Análise começou" : "Já tem uma análise rodando: espere terminar"); setTimeout(desenhar, 800); } catch (e) { avisar(e.message); } });
+  $("#ga-sync").addEventListener("click", async () => { try { await api("POST", "googleads/sincronizar", {}); avisar("Contas atualizadas"); desenhar(); } catch (e) { avisar(e.message); } });
+  $("#ga-config").addEventListener("click", () => dados && dialogo({
+    titulo: "Google Ads",
+    corpo: `<div class="campos">${campo({ nome: "agenda_ativa", rotulo: "Análise diária", tipo: "checkbox", valor: dados.config.agenda_ativa })}
+      ${campo({ nome: "horario", rotulo: "Horário", tipo: "time", valor: dados.config.horario })}
+      ${campo({ nome: "client_id", rotulo: "Trocar Client ID (vazio = manter)", largo: true })}${campo({ nome: "client_secret", rotulo: "Client secret", tipo: "password", largo: true })}</div>`,
+    acoes: [
+      ...(dados.conectado ? [{ texto: "Desconectar", classe: "esquerda", acao: async () => { await api("POST", "googleads/desconectar", {}); desenhar(); } }] : []),
+      { texto: "Cancelar", acao: () => {} },
+      { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", "googleads/config", v); avisar("Salvo"); desenhar(); } }],
+  }));
+  await desenhar();
+  timer = setInterval(() => {
+    if (document.hidden || $("#dialogo").open) return;
+    if (dados?.estado?.fazendo || dados?.aplicando || !dados?.conectado || Date.now() - (window.__gaVisto || 0) > 60000) { window.__gaVisto = Date.now(); desenhar().catch(() => {}); }
+  }, 6000);
 };
 
 // ── Social: o Instagram da HAIZEN ───────────────────────────────────────────
@@ -1966,10 +2593,31 @@ function configSocial(dados, recarregar) {
   });
 }
 
+const META_PERMS = `<code>ads_management</code>, <code>ads_read</code>, <code>business_management</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>`;
+const META_PASSOS_TOKEN = `<ol><li>Primeiro, no <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">painel do app</a> → <strong>Casos de uso</strong>, confira que estão adicionados "Gerenciar tudo na sua Página", "Gerenciar mensagens e conteúdo no Instagram" e "Criar e gerenciar anúncios". Em cada um, clique em <strong>Personalizar</strong> e adicione as permissões que faltarem (é isso que causa o erro "permission(s) … are not available").</li>
+  <li>No <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Gerenciador de Negócios → Usuários do sistema</a>, crie um usuário do sistema <strong>Administrador</strong> (ou use o que já existe).</li>
+  <li>Em <strong>Atribuir ativos</strong>, dê a ele a Página e o Instagram da HAIZEN e as contas de anúncios dos clientes, todos com <strong>controle total</strong>.</li>
+  <li>Clique em <strong>Gerar novo token</strong>, escolha o app do Jarvis, validade <strong>Nunca</strong> e marque: ${META_PERMS}.</li>
+  <li>Cole aqui. O mesmo token passa a valer para a aba Social e para o Tráfego, criptografado só neste computador. Ele não vence: só para de valer se você apagar o usuário do sistema ou tirar o acesso dele.</li>
+  <li>O token certo começa com <code>EAA</code> e é bem comprido. Não use o "Token do cliente" nem a "Chave secreta" das configurações do app.</li></ol>`;
+const SOC_PASSOS_TOKEN = `<p class="sub">O Instagram da HAIZEN precisa ser conta profissional ligada à Página do Facebook da HAIZEN.</p>${META_PASSOS_TOKEN}`;
+
+function trocarTokenSocial(recarregar) {
+  dialogo({
+    titulo: "Trocar o token do Instagram",
+    corpo: `${SOC_PASSOS_TOKEN}<div class="campos"><label class="largo">Token novo<input type="password" name="token" autocomplete="off" required></label></div>
+      <p class="sub">O Jarvis confere com a Meta antes de trocar: se o token novo não funcionar, o atual continua guardado.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Conferir e trocar", classe: "primario", enviar: true, acao: async (v) => {
+      const r = await api("POST", "social/conectar", { token: v.token.trim() });
+      avisar(`Conectado: @${r.escolhida.username}`); recarregar();
+    } }],
+  });
+}
+
 ROTAS.social = async () => {
   main.innerHTML = `
     <div class="topo"><div><h1>Social</h1><p class="sub" id="soc-sub">O Instagram da HAIZEN: análise, ideias, produção e publicação.</p></div>
-      <div class="traf-topo-botoes"><button class="botao" id="soc-config">Configurar</button><button class="botao" id="soc-novo">Novo post</button><button class="botao primario" id="soc-analisar">Analisar agora</button></div></div>
+      <div class="traf-topo-botoes"><button class="botao" id="soc-token-topo">Trocar token</button><button class="botao" id="soc-config">Configurar</button><button class="botao" id="soc-novo">Novo post</button><button class="botao primario" id="soc-analisar">Analisar agora</button></div></div>
     <div id="soc-corpo"><p class="vazio">Carregando…</p></div>`;
   const corpo = $("#soc-corpo");
   let dados = null; let timer = null;
@@ -1977,17 +2625,19 @@ ROTAS.social = async () => {
     if (!document.body.contains(corpo)) { clearInterval(timer); return; }
     dados = await api("GET", "social");
     const { config: c, estado, analise: an, itens, raiox } = dados;
-    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
+    $("#soc-sub").textContent = dados.conectado ? `@${c.username} · análise toda ${SOC_DIAS[c.dia]} às ${c.horario}${c.token_vence ? ` · token vale até ${new Date(c.token_vence * 1000).toLocaleDateString("pt-BR")}` : " · token não vence"}. Nada é publicado sem o seu clique.` : "O Instagram da HAIZEN: análise, ideias, produção e publicação.";
     const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc(estado.fazendo[0].toUpperCase() + estado.fazendo.slice(1))}… leva alguns minutos.</div>` : "";
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
+    const vence = c.token_vence ? new Date(c.token_vence * 1000) : null;
+    const diasVence = vence ? Math.ceil((vence - Date.now()) / 86400000) : null;
+    const tokenRuim = /token|OAuth|venceu|revogad|permiss/i.test(estado.erro || "");
+    const faltando = c.token_faltando || [];
+    const faixaToken = dados.conectado && (tokenRuim || faltando.length || (diasVence !== null && diasVence <= 7))
+      ? `<div class="traf-faixa erro">${faltando.length ? `O token não tem a(s) permissão(ões) <strong>${faltando.map(esc).join(", ")}</strong>: sem elas ${faltando.includes("instagram_content_publish") || faltando.includes("pages_manage_posts") ? "o Jarvis não consegue publicar" : "parte da análise fica de fora"}.` : tokenRuim ? esc(estado.erro) : diasVence <= 0 ? "O token do Instagram venceu." : `O token do Instagram vence em ${diasVence} dia(s).`} <button class="botao" data-soc-token>Trocar token</button></div>` : "";
     if (!dados.conectado) {
       corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar o Instagram da HAIZEN</h2>
         <p>Pela API oficial da Meta, com o mesmo app que você criou para o Meta Ads. Uma vez só:</p>
-        <ol><li>O Instagram da HAIZEN precisa ser <strong>conta profissional</strong> ligada à <strong>Página do Facebook</strong> da HAIZEN.</li>
-          <li>Abra <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener">o Explorador da Graph API</a>, escolha o seu app e, em Permissões, marque: <code>instagram_basic</code>, <code>instagram_manage_insights</code>, <code>instagram_content_publish</code>, <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>pages_manage_posts</code>, <code>business_management</code>.</li>
-          <li>Clique em <strong>Generate Access Token</strong>, entre e autorize a Página e o Instagram da HAIZEN.</li>
-          <li>Para durar ~60 dias: abra <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener">o Depurador de Token</a>, cole o token, clique em <strong>Extend Access Token</strong> e copie o token novo.</li>
-          <li>Cole abaixo. Ele fica só neste PC.</li></ol>
+        ${SOC_PASSOS_TOKEN}
         <div class="campos"><label class="largo">Token de acesso<input type="password" id="soc-token" autocomplete="off"></label></div>
         <div class="traf-botoes"><button class="botao primario" id="soc-conectar">Conectar</button></div></section>`;
       $("#soc-conectar").addEventListener("click", async () => {
@@ -2009,7 +2659,7 @@ ROTAS.social = async () => {
       </section>` : `<section class="bloco"><p class="vazio">Ainda sem análise. Clique em "Analisar agora".</p></section>`;
     const ativos = itens.filter((i) => i.status !== "publicado");
     const publicados = itens.filter((i) => i.status === "publicado").slice(-6);
-    corpo.innerHTML = `${fazendo}${erro}${perfilHtml}
+    corpo.innerHTML = `${fazendo}${tokenRuim ? "" : erro}${faixaToken}${perfilHtml}
       <section class="traf-secao" style="margin-top:22px"><h2>Calendário</h2>
         ${ativos.length ? `<div class="soc-posts">${ativos.map(cartaoPost).join("")}</div>` : '<p class="vazio">Nenhum post planejado.</p>'}</section>
       ${publicados.length ? `<section class="traf-secao"><h2>Publicados</h2><div class="soc-posts">${publicados.map(cartaoPost).join("")}</div></section>` : ""}
@@ -2032,6 +2682,7 @@ ROTAS.social = async () => {
     on("[data-soc-agendar]", (b) => dialogo({ titulo: "Agendar publicação", corpo: `<div class="campos">${campo({ nome: "quando", rotulo: "Dia e hora", tipo: "datetime-local", largo: true, obrig: true })}</div>`,
       acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Agendar", classe: "primario", enviar: true, acao: async (v) => { await api("POST", `social/itens/${b.dataset.socAgendar}/publicar`, { quando: v.quando }); avisar("Agendado"); desenhar(); } }] }));
     on("[data-soc-adaptar]", (b) => { const [r, i] = b.dataset.socAdaptar.split(":"); chamar(() => api("POST", `social/raiox/${r}/adaptar/${i}`, {}), "No calendário como ideia"); });
+    $$("[data-soc-token]", corpo).forEach((b) => b.addEventListener("click", () => trocarTokenSocial(desenhar)));
     $("#soc-raiox", corpo)?.addEventListener("click", () => chamar(() => api("POST", "social/raiox", { alvo: $("#soc-alvo").value }), "Raio-x começou"));
     $("#soc-copiar-bio", corpo)?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(an.bio_sugerida); avisar("Bio copiada"); } catch (_) { avisar("Não consegui copiar"); } });
     $("#soc-relatorio", corpo)?.addEventListener("click", () => dialogo({ titulo: "Relatório do Instagram", corpo: `<div class="md traf-relatorio">${mdSimples(an.relatorio || an.resumo)}</div>`, acoes: [{ texto: "Fechar", classe: "primario", acao: () => {} }] }));
@@ -2041,6 +2692,7 @@ ROTAS.social = async () => {
   $("#soc-analisar").addEventListener("click", async () => { try { await api("POST", "social/analisar", {}); avisar("Análise começou"); desenhar(); } catch (e) { avisar(e.message); } });
   $("#soc-novo").addEventListener("click", () => editarPost({}, desenhar));
   $("#soc-config").addEventListener("click", () => dados && configSocial(dados, desenhar));
+  $("#soc-token-topo").addEventListener("click", () => trocarTokenSocial(desenhar));
   await desenhar();
   timer = setInterval(() => {
     if (document.hidden || $("#dialogo").open || document.activeElement?.id === "soc-alvo") return;
@@ -2472,35 +3124,46 @@ if ("serviceWorker" in navigator) {
 }
 
 // ── WhatsApp ──────────────────────────────────────────────────────────────
-const WA = { conversa: null, timer: null };   // conversa: {contato, mensagens, cliente}
+const WA = { conversa: null, timer: null, auto: null, filtro: "todas", ocupado: false, n: 20, respostas: null };   // conversa: {contato, mensagens, cliente}
 
 ROTAS.whatsapp = async () => {
-  clearTimeout(WA.timer);
+  clearTimeout(WA.timer); clearInterval(WA.auto);
   main.innerHTML = `
-    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida.</p></div>
-      <div class="wa-topo-acoes"><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
+    <div class="topo"><div><h1>WhatsApp</h1><p class="sub">Suas conversas do WhatsApp, aqui no Jarvis. Abrir uma conversa a marca como lida. Nada é enviado sem o seu OK.</p></div>
+      <div class="wa-topo-acoes"><button class="botao" id="wa-janela">Mostrar o WhatsApp Web</button><button class="botao" id="wa-atualizar">Atualizar</button></div></div>
     <div class="wa">
       <section class="bloco wa-lista">
-        <h2>Conversas</h2>
+        <div class="wa-lista-topo"><h2>Conversas</h2><span class="sub" id="wa-hora"></span></div>
+        <input class="wa-busca" id="wa-busca" type="search" placeholder="Buscar conversa" aria-label="Buscar conversa">
+        <div class="ind-periodos wa-filtros" role="group" aria-label="Filtro">
+          ${[["todas", "Todas"], ["nao_lidas", "Não lidas"], ["clientes", "Clientes"]].map(([id, rot]) => `<button type="button" class="ind-chip" data-filtro="${id}" aria-pressed="${WA.filtro === id}">${rot}</button>`).join("")}</div>
         <div id="wa-lista"><p class="carregando">Abrindo o WhatsApp Web…</p></div>
         <form id="wa-abrir" class="wa-abrir"><input name="contato" placeholder="Abrir conversa pelo nome exato" aria-label="Nome do contato"><button class="botao" type="submit">Abrir</button></form>
       </section>
-      <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder ou transformar em tarefa e evento.</p></section>
+      <section class="bloco wa-conversa" id="wa-conversa"><p class="vazio">Escolha uma conversa para ler, responder, resumir ou transformar em tarefa e evento.</p></section>
     </div>`;
   const caixa = $("#wa-lista");
   const viva = () => document.body.contains(caixa);
-  const carregarLista = async () => {
-    caixa.innerHTML = '<p class="carregando">Lendo as conversas…</p>';
+  let conversas = [];
+  const desenharLista = () => {
+    const busca = ($("#wa-busca").value || "").trim().toLowerCase();
+    const lista = conversas.filter((c) => (WA.filtro === "nao_lidas" ? c.nao_lidas : WA.filtro === "clientes" ? c.cliente : true)
+      && (!busca || `${c.contato} ${c.previa} ${c.cliente?.nome || ""}`.toLowerCase().includes(busca)));
+    caixa.innerHTML = lista.length ? `<ul class="wa-itens">${lista.map((c) => `
+        <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}${WA.conversa?.contato === c.contato ? " atual" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
+          <span class="wa-previa">${c.cliente ? `<span class="wa-tag">Cliente</span>` : ""}${esc(c.previa)}</span></button></li>`).join("")}</ul>`
+      : `<p class="vazio">${conversas.length ? "Nenhuma conversa com esse filtro." : "Nenhuma conversa apareceu ainda. Clique em Atualizar em alguns segundos."}</p>`;
+    $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
+  };
+  const carregarLista = async (silencioso = false) => {
+    if (!silencioso) caixa.innerHTML = '<p class="carregando">Lendo as conversas…</p>';
     try {
-      const { conversas } = await api("GET", "whatsapp/recentes");
+      const r = await api("GET", "whatsapp/recentes");
       if (!viva()) return;
-      conversas.sort((a, b) => (b.nao_lidas > 0) - (a.nao_lidas > 0));
-      caixa.innerHTML = conversas.length ? `<ul class="wa-itens">${conversas.map((c) => `
-        <li><button type="button" data-contato="${esc(c.contato)}" class="${c.nao_lidas ? "tem-nao-lidas" : ""}"><span class="wa-nome">${esc(c.contato)}</span>${c.nao_lidas ? `<span class="selo">${c.nao_lidas}</span>` : "<span></span>"}
-          <span class="wa-previa">${esc(c.previa)}</span></button></li>`).join("")}</ul>`
-        : '<p class="vazio">Nenhuma conversa apareceu ainda. Clique em Atualizar em alguns segundos.</p>';
-      $$("[data-contato]", caixa).forEach((b) => b.addEventListener("click", () => abrirConversaWa(b.dataset.contato)));
-    } catch (e) { if (viva()) erroWa(e.message); }
+      conversas = r.conversas.sort((a, b) => (b.nao_lidas > 0) - (a.nao_lidas > 0));
+      $("#wa-hora").textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+      desenharLista();
+    } catch (e) { if (viva() && !silencioso) erroWa(e.message); }
   };
   const erroWa = (msg) => {
     caixa.innerHTML = `<p class="erro">${esc(msg)}</p><button class="botao" type="button" id="wa-tentar">Tentar de novo</button>`;
@@ -2512,7 +3175,13 @@ ROTAS.whatsapp = async () => {
     let e;
     try { e = await api("GET", "whatsapp/estado"); } catch (err) { e = { estado: "erro", erro: err.message }; }
     if (!viva()) return;
-    if (e.estado === "ok") { await carregarLista(); return; }
+    if (e.estado === "ok") {
+      await carregarLista();
+      // A lista se atualiza sozinha enquanto a tela está aberta (sem abrir conversas: nada é marcado como lido).
+      clearInterval(WA.auto);
+      WA.auto = setInterval(() => { if (!viva()) { clearInterval(WA.auto); return; } if (!document.hidden && !WA.ocupado) carregarLista(true); }, 60000);
+      return;
+    }
     if (e.estado === "qr") {
       caixa.innerHTML = `<div class="wa-qr"><img alt="QR Code para conectar o WhatsApp" src="data:image/png;base64,${e.imagem}">
         <ol><li>No celular, abra o WhatsApp.</li><li>Toque em Configurações (ou ⋮) e depois em <strong>Aparelhos conectados</strong>.</li><li>Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para este código.</li></ol>
@@ -2523,6 +3192,11 @@ ROTAS.whatsapp = async () => {
     WA.timer = setTimeout(() => { if (viva()) conferir(); }, e.estado === "qr" ? 4000 : 3000);
   };
   $("#wa-atualizar").addEventListener("click", conferir);
+  $("#wa-janela").addEventListener("click", async () => { try { await api("POST", "whatsapp/janela", { mostrar: true }); } catch (e) { avisar(e.message); } });
+  $("#wa-busca").addEventListener("input", desenharLista);
+  $$("[data-filtro]").forEach((b) => b.addEventListener("click", () => {
+    WA.filtro = b.dataset.filtro; $$("[data-filtro]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); desenharLista();
+  }));
   $("#wa-abrir").addEventListener("submit", (e) => { e.preventDefault(); const n = e.target.contato.value.trim(); if (n) abrirConversaWa(n); });
   if (WA.conversa) desenharConversaWa();
   await conferir();
@@ -2531,7 +3205,7 @@ ROTAS.whatsapp = async () => {
 function msgWa(m) {
   if (m.tipo === "audio") {
     return `<div class="msg ${m.de === "eu" ? "eu" : "ele"} audio"><p><span class="msg-voz" aria-hidden="true">🎤</span> Mensagem de voz${m.duracao ? ` · ${esc(m.duracao)}` : ""}</p>
-      ${m.transcricao ? `<p class="msg-transcricao">${esc(m.transcricao)}</p>` : `<button class="botao mini" type="button" data-ouvir="${esc(m.id)}">Transcrever</button>`}
+      ${m.transcricao ? `<p class="msg-transcricao">${esc(m.transcricao)}</p>` : `${m.erro_audio ? `<p class="msg-erro-audio">${esc(m.erro_audio)}</p>` : ""}<button class="botao mini" type="button" data-ouvir="${esc(m.id)}">${m.erro_audio ? "Tentar de novo" : "Transcrever"}</button>`}
       <span class="msg-acoes">${esc(m.hora)}</span></div>`;
   }
   return `<div class="msg ${m.de === "eu" ? "eu" : "ele"}${m.tipo === "midia" ? " midia" : ""}"><p>${esc(m.texto)}</p><span class="msg-acoes">${esc(m.hora)}</span></div>`;
@@ -2541,9 +3215,30 @@ async function abrirConversaWa(contato) {
   const caixa = $("#wa-conversa");
   caixa.innerHTML = `<p class="carregando">Abrindo a conversa com ${esc(contato)}…</p>`;
   try {
-    WA.conversa = await api("GET", `whatsapp/conversa?contato=${encodeURIComponent(contato)}&n=20`);
+    if (WA.conversa?.contato !== contato) WA.n = 20;
+    WA.ocupado = true;
+    WA.conversa = await api("GET", `whatsapp/conversa?contato=${encodeURIComponent(contato)}&n=${WA.n}`);
+    $$(".wa-itens [data-contato]").forEach((b) => { b.classList.toggle("atual", b.dataset.contato === contato); if (b.dataset.contato === contato) { b.classList.remove("tem-nao-lidas"); b.querySelector(".selo")?.remove(); } });
     desenharConversaWa();
   } catch (e) { caixa.innerHTML = `<p class="erro">${esc(e.message)}</p>`; }
+  finally { WA.ocupado = false; }
+}
+
+function respostasRapidasWa() {
+  const lista = WA.respostas || [];
+  dialogo({
+    titulo: "Respostas rápidas",
+    corpo: `<p class="sub" style="margin-top:0">Textos que você usa sempre. Clicar num deles na conversa só preenche a resposta: você revisa antes de enviar.</p>
+      <div class="wa-rr-edicao" id="wa-rr">${[...lista, { titulo: "", texto: "" }].map((r, i) => `<div class="campos wa-rr-linha">
+        ${campo({ nome: `t${i}`, rotulo: "Nome", valor: r.titulo })}${campo({ nome: `x${i}`, rotulo: "Texto", tipo: "textarea", valor: r.texto, largo: true })}</div>`).join("")}</div>
+      <p class="sub">Para apagar uma, deixe o nome vazio. Para criar, preencha a última linha.</p>`,
+    acoes: [{ texto: "Cancelar", acao: () => {} }, { texto: "Salvar", classe: "primario", enviar: true, acao: async (v) => {
+      const novas = [];
+      for (let i = 0; i <= lista.length; i++) if ((v[`t${i}`] || "").trim() && (v[`x${i}`] || "").trim()) novas.push({ titulo: v[`t${i}`], texto: v[`x${i}`] });
+      WA.respostas = (await api("POST", "whatsapp/respostas", { respostas: novas })).respostas;
+      avisar("Respostas salvas"); desenharConversaWa();
+    } }],
+  });
 }
 
 function desenharConversaWa() {
@@ -2551,8 +3246,10 @@ function desenharConversaWa() {
   const caixa = $("#wa-conversa");
   if (!c || !caixa) return;
   caixa.innerHTML = `
-    <header class="wa-topo"><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</header>
-    <div class="wa-msgs" id="wa-msgs">${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
+    <header class="wa-topo"><div><h2>${esc(c.contato)}</h2>${c.cliente ? `<a class="sub" href="#/clientes/${c.cliente.id}">Cliente da central: ${esc(c.cliente.nome)}</a>` : '<span class="sub">Não está nos clientes da central</span>'}</div>
+      <div class="wa-topo-acoes"><button class="botao pequeno" type="button" id="wa-resumir">Resumir conversa</button><button class="botao pequeno" type="button" id="wa-recarregar">Atualizar</button></div></header>
+    <div class="wa-resumo" id="wa-resumo" hidden></div>
+    <div class="wa-msgs" id="wa-msgs">${c.mensagens.length >= WA.n && WA.n < 80 ? '<button class="botao pequeno wa-mais" type="button" id="wa-mais">Carregar mensagens anteriores</button>' : ""}${c.mensagens.map(msgWa).join("") || '<p class="vazio">Sem mensagens.</p>'}</div>
     ${c.mensagens.some((m) => m.tipo === "audio" && !m.transcricao) ? '<p class="wa-audios-aviso" id="wa-audios-aviso"><span class="traf-girando" aria-hidden="true"></span> <span class="sub">Transcrevendo os áudios aqui no PC para você (e o Jarvis) responder certo…</span></p>' : ""}
     <div class="wa-acoes">
       <button class="botao" type="button" id="wa-sugerir">Sugerir resposta</button>
@@ -2560,6 +3257,8 @@ function desenharConversaWa() {
       <button class="botao" type="button" id="wa-evento">Criar evento</button>
       <button class="botao" type="button" id="wa-livre">Ver disponibilidade</button>
     </div>
+    <div class="wa-rapidas" id="wa-rapidas">${(WA.respostas || []).map((r, i) => `<button type="button" class="ind-chip" data-rapida="${i}" title="${esc(r.texto)}">${esc(r.titulo)}</button>`).join("")}<button type="button" class="ind-chip wa-rr-editar" id="wa-rr-editar">Editar respostas rápidas</button></div>
+    <input class="wa-orientacao" id="wa-orientacao" placeholder="Orientação para a sugestão (opcional). Ex.: confirmar para quinta às 14h, tom mais formal" aria-label="Orientação para a sugestão">
     <form class="compositor" id="wa-compositor">
       <textarea id="wa-texto" rows="2" placeholder="Escreva a resposta para ${esc(c.contato)}" aria-label="Resposta"></textarea>
       <button class="botao primario" type="submit">Enviar</button>
@@ -2572,10 +3271,11 @@ function desenharConversaWa() {
     b.disabled = true; b.textContent = "Ouvindo…";
     try {
       const r = await api("POST", "whatsapp/transcrever", { contato: c.contato, id: m.id });
-      Object.assign(m, { transcricao: r.texto, texto: `[áudio] ${r.texto}` });
-      b.closest(".msg").outerHTML = msgWa(m);
-      ligarOuvir();
-    } catch (e) { avisar(e.message); b.disabled = false; b.textContent = "Transcrever"; }
+      Object.assign(m, { transcricao: r.texto, texto: `[áudio] ${r.texto}`, erro_audio: "" });
+    } catch (e) { m.erro_audio = e.message; }
+    const el = b.closest(".msg");
+    if (el) el.outerHTML = msgWa(m);
+    ligarOuvir();
   };
   const ligarOuvir = () => $$("[data-ouvir]", msgs).forEach((b) => { if (!b.dataset.ligado) { b.dataset.ligado = "1"; b.addEventListener("click", () => transcrever(b)); } });
   ligarOuvir();
@@ -2593,11 +3293,38 @@ function desenharConversaWa() {
     try {
       await transcrevendo;
       b.textContent = "Pensando…";
-      $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens })).texto;
+      $("#wa-texto").value = (await api("POST", "whatsapp/sugerir", { contato: c.contato, mensagens: c.mensagens, pedido: $("#wa-orientacao").value })).texto;
     }
     catch (e) { avisar(e.message); }
     finally { b.disabled = false; b.textContent = "Sugerir resposta"; }
   });
+  $("#wa-resumir").addEventListener("click", async (ev) => {
+    const b = ev.currentTarget, caixaR = $("#wa-resumo");
+    b.disabled = true; b.textContent = pendentes.length ? "Ouvindo os áudios…" : "Resumindo…";
+    try {
+      await transcrevendo; b.textContent = "Resumindo…";
+      const r = await api("POST", "whatsapp/resumir", { contato: c.contato, mensagens: c.mensagens });
+      caixaR.innerHTML = `<div class="bloco-topo"><strong>Resumo</strong><button class="botao-icone" type="button" aria-label="Fechar resumo" id="wa-resumo-fechar">×</button></div><div class="md">${mdSimples(r.texto)}</div>`;
+      caixaR.hidden = false;
+      $("#wa-resumo-fechar").addEventListener("click", () => { caixaR.hidden = true; });
+    } catch (e) { avisar(e.message); }
+    finally { b.disabled = false; b.textContent = "Resumir conversa"; }
+  });
+  $("#wa-recarregar").addEventListener("click", () => abrirConversaWa(c.contato));
+  $("#wa-mais")?.addEventListener("click", () => { WA.n = Math.min(80, WA.n + 20); abrirConversaWa(c.contato); });
+  const desenharRapidas = () => {
+    const alvo = $("#wa-rapidas");
+    if (!alvo || WA.conversa !== c) return;
+    alvo.innerHTML = (WA.respostas || []).map((x, i) => `<button type="button" class="ind-chip" data-rapida="${i}" title="${esc(x.texto)}">${esc(x.titulo)}</button>`).join("")
+      + '<button type="button" class="ind-chip wa-rr-editar" id="wa-rr-editar">Editar respostas rápidas</button>';
+    $$("[data-rapida]", alvo).forEach((b) => b.addEventListener("click", () => {
+      const t = $("#wa-texto"); const r = WA.respostas[+b.dataset.rapida];
+      t.value = t.value.trim() ? `${t.value.trim()}\n${r.texto}` : r.texto; t.focus();
+    }));
+    $("#wa-rr-editar", alvo).addEventListener("click", respostasRapidasWa);
+  };
+  desenharRapidas();
+  if (!WA.respostas) api("GET", "whatsapp/respostas").then((r) => { WA.respostas = r.respostas; desenharRapidas(); }).catch(() => {});
   $("#wa-tarefa").addEventListener("click", () => editarTarefa({
     titulo: `${c.contato}: ${(dele()[dele().length - 1] || "").slice(0, 70)}`, cliente_id: c.cliente?.id ?? "",
     descricao: `Pedido pelo WhatsApp:\n${resumo()}`,

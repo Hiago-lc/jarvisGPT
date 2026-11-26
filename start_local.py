@@ -370,7 +370,7 @@ def vocabulario_whisper(limite: int = 60) -> str:
 
 
 # ── iniciar com o Windows (só a janela) ─────────────────────────────────────
-NOME_ATALHO = "Jarvis HAIZEN.cmd"
+NOME_ATALHO = "Jarvis HAIZEN.vbs"     # .vbs: inicia sem o console preto
 
 
 def _pasta_inicializar() -> Path:
@@ -388,10 +388,11 @@ def iniciar_com_windows(perfil: str, ligar: bool) -> str:
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.is_file() else Path(sys.executable)
     raiz = Path(__file__).resolve().parent
+    (_pasta_inicializar() / "Jarvis HAIZEN.cmd").unlink(missing_ok=True)
+    cmd = f'"{exe}" "{raiz / "start_local.py"}" --perfil {perfil} --aguardar'
     atalho.write_text("\r\n".join([
-        "@echo off", f'cd /d "{raiz}"',
-        f'start "" "{exe}" "{raiz / "start_local.py"}" --perfil {perfil} --aguardar', ""]),
-        encoding="utf-8")
+        'Set sh = CreateObject("WScript.Shell")', f'sh.CurrentDirectory = "{raiz}"',
+        'sh.Run "' + cmd.replace('"', '""') + '", 0, False', ""]), encoding="cp1252", errors="replace")
     return ("Pronto: ao ligar o PC, abre o Jarvis (a janela com voz), com a central da HAIZEN "
             f"dentro dele. ({atalho})")
 

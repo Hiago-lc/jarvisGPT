@@ -70,7 +70,24 @@ def config() -> dict:
         return dict(PADRAO)
 
 
+def _compartilhar_com_social(tk: str) -> None:
+    """Token único: se o token do Meta Ads também publica no Instagram, a aba Social passa a usá-lo."""
+    try:
+        from haizen import social
+        from haizen.social import instagram
+        escopos = (instagram.info_do_token(tk) or {}).get("escopos") or []
+        if "instagram_content_publish" in escopos and "pages_manage_posts" in escopos:
+            social.conectar(tk)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def salvar_config(mudancas: dict) -> dict:
+    if str(mudancas.get("meta_token") or "").strip():
+        from haizen.trafego import envio
+        envio.salvar_token(str(mudancas["meta_token"]))
+        _ENVIO_CACHE.clear()
+        _compartilhar_com_social(str(mudancas["meta_token"]).strip())
     c = config()
     for k in ("horario", "whatsapp_ativo", "whatsapp_contato"):
         if k in mudancas:
@@ -214,7 +231,11 @@ def conta(cid: str) -> dict:
 def atualizar_conta(cid: str, campos: dict) -> dict:
     conta(cid)
     sets, args = [], []
-    for k in ("ativo", "cliente_id", "objetivo", "meta_cpa", "meta_roas", "verba_mensal", "notas"):
+    if "resultado" in campos:
+        from haizen import indicadores
+        if campos["resultado"] and campos["resultado"] not in indicadores.RESULTADOS_META:
+            raise ValueError("resultado desconhecido")
+    for k in ("ativo", "cliente_id", "objetivo", "meta_cpa", "meta_roas", "verba_mensal", "notas", "resultado"):
         if k not in campos:
             continue
         v = campos[k]
@@ -280,6 +301,10 @@ def prompt_analise(c: dict, hoje: dt.date | None = None) -> str:
     metas = []
     if c.get("objetivo"):
         metas.append(f"objetivo: {c['objetivo']}")
+    if c.get("resultado"):
+        from haizen import indicadores
+        metas.append(f"resultado principal desta conta (use para custo por resultado): "
+                     f"{indicadores.RESULTADOS_META.get(c['resultado'], c['resultado'])}")
     if c.get("meta_cpa"):
         metas.append(f"custo por resultado alvo: {reais(c['meta_cpa'])}")
     if c.get("meta_roas"):
@@ -497,6 +522,65 @@ def propor(conta_id: str, tipo: str, alvo_nome: str, motivo: str, nivel: str = "
     return acao(cur.lastrowid)
 
 
+_EDITAVEIS = ("nivel", "alvo_id", "alvo_nome", "de", "para", "motivo", "impacto", "prioridade")
+
+
+def _caminho_peca(ref: str) -> str:
+    """Caminho do arquivo de uma peça: aceita o id do anexo ([anexo:ID]) ou o caminho."""
+    ref = str(ref or "").strip()
+    alvo = Path(ref)
+    if alvo.is_file():
+        return str(alvo)
+    from haizen.central import anexos as _anexos
+    m = re.fullmatch(r"\[?(?:anexo:)?([^\]/\\]+)\]?", ref)
+    if m:
+        try:
+            p = _anexos.caminho(m.group(1))
+            if p.is_file():
+                return str(p)
+        except Exception:  # noqa: BLE001
+            pass
+    raise ValueError(f"arquivo não encontrado: {ref}")
+
+
+def editar(aid: int, campos: dict) -> dict:
+    """Muda uma proposta que ainda não foi aplicada (pedido no chat: "troca o texto", "usa este
+    outro conjunto", "acrescenta esta peça"). Detalhes são mesclados; "pecas" substitui a lista."""
+    a = acao(aid)
+    if a["status"] not in ("proposta", "falhou"):
+        raise ValueError(f"a ação {aid} está {a['status']}: só dá para editar proposta ainda não aplicada")
+    sets = {k: str(campos[k])[:1500] for k in _EDITAVEIS if k in campos and campos[k] is not None}
+    det = _detalhes(a)
+    novos = campos.get("detalhes") or {}
+    if not isinstance(novos, dict):
+        raise ValueError("detalhes precisa ser um objeto")
+    antigas = {str(p.get("arquivo")): p for p in det.get("pecas") or []}
+    det.update({k: v for k, v in novos.items() if k != "pecas"})
+    if "pecas" in novos:
+        pecas = []
+        for p in novos["pecas"] or []:
+            p = dict(p)
+            p["arquivo"] = _caminho_peca(p.get("arquivo"))
+            velha = antigas.get(p["arquivo"]) or {}
+            for k in ("image_hash", "image_url", "video_id", "thumbnail_url"):    # já enviado: não sobe de novo
+                if velha.get(k) and k not in p:
+                    p[k] = velha[k]
+            pecas.append(p)
+        if not pecas and a["tipo"] == "subir_criativo":
+            raise ValueError("a proposta precisa de pelo menos uma peça")
+        det["pecas"] = pecas
+        det["arquivos"] = [p["arquivo"] for p in pecas]
+    sets["detalhes"] = json.dumps(det, ensure_ascii=False)[:12000]
+    sets["atualizado_em"] = time.time()
+    if a["status"] == "falhou":
+        sets["status"] = "proposta"
+    historico = (a.get("resultado") or "") if a["status"] == "falhou" else ""
+    sets["resultado"] = (historico + f"\nEditada em {time.strftime('%d/%m %H:%M')}: {campos.get('nota') or 'ajustes do dono'}").strip()[-2000:]
+    with store.conexao() as con:
+        con.execute(f"UPDATE trafego_acoes SET {', '.join(k + '=?' for k in sets)} WHERE id=?", (*sets.values(), int(aid)))
+    return acao(aid)
+
+
 def rejeitar(aid: int, motivo: str = "") -> dict:
     a = acao(aid)
     if a["status"] not in ("proposta", "falhou"):
@@ -591,6 +675,21 @@ def aplicar(aid: int) -> dict:
         if a["tipo"] in CRIAM and a.get("ativar"):
             escrita.append("ads_activate_entity")
         extra, pastas = [], []
+        det = _detalhes(a)
+        if det.get("pecas") and a["tipo"] in ("subir_criativo", "estrutura"):
+            # O conector da Meta não envia arquivo: o Jarvis envia antes e passa hash/id prontos.
+            from haizen.trafego import envio
+            anterior = a.get("resultado") or ""        # notas da tentativa anterior e a resposta do dono
+
+            def _aviso(texto):
+                _mudar(aid, "aplicando", texto)
+            try:
+                envio.preparar_pecas(a["conta_id"], det["pecas"], _aviso)
+            finally:
+                with store.conexao() as con:          # o que já subiu fica guardado: tentar de novo não reenvia
+                    con.execute("UPDATE trafego_acoes SET detalhes=?, resultado=? WHERE id=?",
+                                (json.dumps(det, ensure_ascii=False)[:12000], anterior[:2000], aid))
+            a = acao(aid)
         if a["tipo"] == "subir_criativo":
             arquivos = [Path(x) for x in (_detalhes(a).get("arquivos") or [])]
             pastas = list(dict.fromkeys(f.parent for f in arquivos))
@@ -605,9 +704,10 @@ def aplicar(aid: int) -> dict:
     except Exception as e:  # noqa: BLE001
         ok, detalhe = False, str(e)
     if not ok and detalhe.upper().startswith("SEM_UPLOAD"):
-        detalhe = ("O conector da Meta não deixou enviar o arquivo daqui (" + detalhe.split(":", 1)[-1].strip()[:300] +
-                   "). Peça ao Claude para ligar o envio pela Ads CLI da Meta; enquanto isso, suba a peça no "
-                   "Gerenciador e use os textos aprovados.")
+        detalhe = ("O Meta não recebeu o arquivo (" + detalhe.split(":", 1)[-1].strip()[:300] +
+                   "). Cadastre o token do Meta Ads em Tráfego → Configurar para o Jarvis enviar as peças e tente de novo.")
+    elif not ok and "ErroEnvio" not in detalhe and _e_erro_envio(detalhe):
+        detalhe = "Não consegui enviar as peças para a conta de anúncios: " + detalhe
     feito = _mudar(aid, "aplicada" if ok else "falhou", detalhe or ("feito" if ok else "não aplicada"))
     try:
         from haizen import notificar
@@ -616,6 +716,11 @@ def aplicar(aid: int) -> dict:
     except Exception:  # noqa: BLE001
         pass
     return feito
+
+
+def _e_erro_envio(texto: str) -> bool:
+    return any(x in texto for x in ("token do Meta Ads", "ads_management", "conta de anúncios", "não devolveu o hash",
+                                    "processar o vídeo", "arquivo não encontrado"))
 
 
 def _detalhes(a: dict) -> dict:
@@ -632,17 +737,26 @@ def _detalhes_texto(a: dict) -> str:
 
 def _instrucao_subir(a: dict) -> str:
     d = _detalhes(a)
+    def midia(p):
+        if p.get("video_id"):
+            return f"video_id {p['video_id']} (vídeo já na conta; miniatura image_url {p.get('thumbnail_url') or '(a padrão)'})"
+        if p.get("image_hash"):
+            return f"image_hash {p['image_hash']} (imagem já na conta)"
+        if p.get("image_url"):
+            return f"image_url {p['image_url']} (imagem pública)"
+        return "(sem mídia enviada)"
     pecas = "\n".join(
-        f"- Arquivo `{p.get('arquivo')}`: texto principal: {p.get('texto_principal')!r}; título: {p.get('titulo')!r}; "
-        f"descrição: {p.get('descricao') or ''!r}; CTA: {p.get('cta') or d.get('cta')!r}"
+        f"- Peça `{Path(str(p.get('arquivo'))).name}` → use {midia(p)}: texto principal: {p.get('texto_principal')!r}; "
+        f"título: {p.get('titulo')!r}; descrição: {p.get('descricao') or ''!r}; CTA: {p.get('cta') or d.get('cta')!r}"
         for p in d.get("pecas") or [])
     return (f"Suba estes criativos como anúncios NOVOS no conjunto {a['alvo_id']} (\"{a['alvo_nome']}\"), "
             f"página {d.get('page_id') or '(a do conjunto)'}, destino {d.get('destino') or '(o dos outros anúncios do conjunto)'}"
             f"{', Instagram ' + str(d.get('instagram_id')) if d.get('instagram_id') else ''}:\n{pecas}\n"
-            "Para cada peça: crie o criativo com ads_create_creative (use o arquivo local; se a ferramenta só aceitar "
-            "URL/hash de imagem já enviada à conta e não houver como enviar o arquivo, NÃO invente: responda ok=false "
-            "com detalhe começando por 'SEM_UPLOAD:' e o que a ferramenta pede) e depois o anúncio com ads_create_ad "
-            "no conjunto, com o nome do arquivo como nome do anúncio. Use exatamente os textos aprovados.")
+            "As mídias JÁ ESTÃO na conta de anúncios (o Jarvis enviou): para cada peça crie o criativo com "
+            "ads_create_creative usando o image_hash / video_id / image_url indicado (não tente enviar arquivo) e depois "
+            "o anúncio com ads_create_ad no conjunto, com o nome do arquivo como nome do anúncio. Use exatamente os "
+            "textos aprovados. Se alguma peça estiver '(sem mídia enviada)', responda ok=false com detalhe começando "
+            "por 'SEM_UPLOAD:'.")
 
 
 # ── subir criativos da HAIZEN com legendas prontas ─────────────────────────
@@ -862,10 +976,25 @@ def em_segundo_plano(fazer, rotulo: str) -> None:
     threading.Thread(target=_rodar, daemon=True, name=f"trafego-{rotulo}").start()
 
 
+_ENVIO_CACHE: dict = {}
+
+
+def situacao_envio() -> dict:
+    if _ENVIO_CACHE.get("em", 0) > time.time() - 600:
+        return _ENVIO_CACHE["v"]
+    try:
+        from haizen.trafego import envio
+        v = envio.situacao()
+    except Exception as e:  # noqa: BLE001
+        v = {"pronto": False, "aviso": str(e)}
+    _ENVIO_CACHE.update(em=time.time(), v=v)
+    return v
+
+
 def painel() -> dict:
     c = config()
     return {"config": {k: c[k] for k in ("horario", "whatsapp_ativo", "whatsapp_contato", "ultima_rodada",
-                                           "aviso_conexao")},
+                                           "aviso_conexao")}, "envio": situacao_envio(),
             "conectado": bool(c["conectado_em"]), "conectado_em": c["conectado_em"],
             "estado": dict(ESTADO), "contas": contas_lista(), "analises": ultimas_analises(),
             "acoes": [{**a, "detalhes": _detalhes(a)} for a in acoes(("proposta", "aplicando", "falhou"))],

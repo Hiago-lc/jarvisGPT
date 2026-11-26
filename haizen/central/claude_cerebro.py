@@ -30,7 +30,7 @@ _TRAVA = threading.Lock()
 PERMITIDAS = ("mcp__jarvis", "Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite")
 
 # Ferramentas de bastidor do Claude Code, que não interessam ao usuário.
-_INTERNAS = {"ToolSearch", "TodoWrite", "Bash", "Write", "Edit", "Task", "Agent"}
+_INTERNAS = {"conversa_anterior", "ToolSearch", "TodoWrite", "Bash", "Write", "Edit", "Task", "Agent"}
 
 _PERSONA = """Você é o {nome}, o assistente pessoal e de negócios do dono da HAIZEN, agência de \
 identidade visual, sites, social media e tráfego pago.{usuario} Hoje é {hoje}. Fale sempre em \
@@ -74,6 +74,15 @@ lembretes prontos; `cobranca_enviar` só depois de mostrar o texto e o usuário 
 - Lojas dos clientes (Shopify/Tray): `ecommerce_painel` mostra vendas e propostas. Para mudar algo (cupom, \
 promoção, preço, SEO, pausar), crie a proposta com `ecommerce_propor` (ache o produto com `ecommerce_produtos`), \
 mostre o que vai mudar e só chame `ecommerce_aprovar` depois do OK explícito do usuário.
+- Memória da conversa: se o usuário responder curto ("1", "sim", "a segunda", "pode fazer") e você não \
+tiver a sua mensagem anterior inteira, chame `conversa_anterior` ANTES de responder; nunca peça para ele \
+repetir sem olhar ali. Para algo combinado dias atrás, `conversa_anterior` com palavras do assunto.
+- Projeto já aberto e o usuário lembrou de algo (pasta, música, detalhe, arquivo): use \
+`projeto_complementar` em vez de abrir outro projeto.
+- Propostas já criadas (tráfego, Google Ads): quando o usuário pedir ajuste, EDITE a proposta existente \
+(`trafego_editar`, `googleads_editar`) em vez de criar outra; as decisões dele ficam guardadas nela.
+- Google Ads dos clientes: `googleads_painel` (gasto, conversões, CPA, propostas); mudanças via `googleads_propor` \
+e `googleads_aprovar` só depois do OK explícito do usuário.
 - Computador: `computador_acoes` mostra o que dá para fazer; ações irreversíveis esperam \
 confirmação na tela.
 - Antes de afirmar algo sobre os dados, consulte. Diga exatamente o que mudou (qual registro, \
@@ -116,7 +125,7 @@ def _arquivo_sessao() -> Path:
 # inteiro: passou de 200 mil tokens e cada "oi" pesava como um trabalho grande.
 # A conversa recomeça sozinha num dia novo ou quando fica grande; as últimas
 # mensagens vão no começo da nova para não perder o fio.
-LIMITE_CONTEXTO = int(os.environ.get("JARVIS_CONTEXTO_MAX", "90000"))
+LIMITE_CONTEXTO = int(os.environ.get("JARVIS_CONTEXTO_MAX", "160000"))
 
 
 def _ler_sessao() -> dict:
@@ -155,10 +164,16 @@ def _fio_da_conversa() -> str:
     """As últimas mensagens, para uma conversa nova não começar do zero."""
     try:
         from haizen.central import cerebro
-        hist = cerebro.historico(8)
+        hist = cerebro.historico(14)
     except Exception:  # noqa: BLE001
         return ""
-    linhas = [f"- {'Usuário' if m['papel'] == 'usuario' else 'Você'}: {m['texto'][:300]}" for m in hist[-8:]]
+    hist = hist[-14:]
+    linhas = []
+    for i, m in enumerate(hist):
+        t = m["texto"] or ""
+        if i < len(hist) - 3 and len(t) > 1200:     # as antigas resumidas (começo e fim, onde ficam as perguntas)
+            t = t[:600] + " […] " + t[-500:]
+        linhas.append(f"- {'Usuário' if m['papel'] == 'usuario' else 'Você'}: {t[:8000]}")
     return ("\n\nÚltimas mensagens desta conversa (a sessão anterior foi encerrada para economizar; continue o "
             "assunto normalmente):\n" + "\n".join(linhas)) if linhas else ""
 

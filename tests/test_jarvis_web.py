@@ -984,7 +984,7 @@ class InicioComWindowsTests(unittest.TestCase):
 
     def test_voice_window_too(self):
         msg, cmd = self._gerar(com_janela=True)
-        self.assertIn('start_local.py" --perfil local --aguardar', cmd)
+        self.assertIn('start_local.py"" --perfil local --aguardar', cmd)
         self.assertLess(cmd.index("jarvis_web.py"), cmd.index("start_local.py"))
         self.assertIn("janela de voz", msg)
 
