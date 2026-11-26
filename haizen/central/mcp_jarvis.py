@@ -212,7 +212,7 @@ def projeto_criar(pedido: str, cliente: str = "", marca: str = "", anexos: list[
 def projeto_complementar(id: int, informacao: str = "", anexos: list[str] | None = None, marca: str = "") -> dict:
     """Acrescenta a um projeto JÁ ABERTO o que o usuário lembrou depois: informação nova (ex.: a
     música de fundo, um detalhe do roteiro), arquivos enviados (`anexos`) ou a pasta do cliente
-    (`marca`, ex.: "61 - ACI Moc"). Vale para as etapas que ainda não foram feitas. Use isto em vez
+    (`marca`, ex.: "12 - Cliente Exemplo"). Vale para as etapas que ainda não foram feitas. Use isto em vez
     de abrir um projeto novo duplicado."""
     return _api("POST", f"projetos/{int(id)}/complementar", {"informacao": informacao, "anexos": anexos or [],
                                                              "marca": marca})

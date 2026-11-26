@@ -37,8 +37,9 @@ ITERACOES = 600_000
 FORA_DADOS = {"jarvis-claude/anexos", "janela-web", "whatsapp-web-profile", "backups"}
 FORA_EXT = {".log", ".lock", ".pyc", ".tmp"}
 # Dentro da pasta do Jarvis: o que é local (não está no GitHub) e precisa ir junto.
-LOCAIS_RAIZ = ["config/api_keys.json", "client_secret.json", "memory/long_term.json", "importar_base44",
-               "haizen/gerar_maxiflora.py"]
+LOCAIS_RAIZ = ["config/api_keys.json", "client_secret.json", "memory/long_term.json", "importar_base44"]
+# Scripts feitos para um cliente específico (ficam só no PC, fora do GitHub).
+LOCAIS_PADROES = ["haizen/gerar_*.py"]
 
 
 # ── criptografia do pacote ──────────────────────────────────────────────────
@@ -168,7 +169,8 @@ def exportar(destino: Path, senha: str) -> Path:
                 conteudo = f.read_bytes()
             z.writestr("dados/" + rel, conteudo)
             resumo["dados"] += 1
-        for item in LOCAIS_RAIZ:
+        extras = [str(x.relative_to(RAIZ)) for padrao in LOCAIS_PADROES for x in RAIZ.glob(padrao)]
+        for item in LOCAIS_RAIZ + extras:
             p = RAIZ / item
             arquivos = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file()) if p.is_dir() else []
             for f in arquivos:

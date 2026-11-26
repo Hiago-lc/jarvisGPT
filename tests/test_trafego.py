@@ -278,7 +278,7 @@ class TrafegoTests(unittest.TestCase):
         with patch("haizen.central.anexos.caminho", return_value=a2):
             e = self.t.editar(a["id"], {"alvo_id": "52591677986663", "alvo_nome": "Vendas | Público engajado 60 dias",
                                         "nota": "trocar conjunto e acrescentar peça", "detalhes": {"cta": "SHOP_NOW", "pecas": [
-                {"arquivo": a1.as_posix(), "texto_principal": "Black Friday Khotz", "titulo": "Kit 4 por R$ 399"},
+                {"arquivo": a1.as_posix(), "texto_principal": "Black Friday Loja", "titulo": "Kit 4 por R$ 399"},
                 {"arquivo": "[anexo:20261111-b.jpg]", "texto_principal": "Polos", "titulo": "2 por R$ 398"}]}})
         self.assertEqual((e["status"], e["alvo_id"]), ("proposta", "52591677986663"))
         d = json.loads(e["detalhes"])
@@ -289,7 +289,7 @@ class TrafegoTests(unittest.TestCase):
         r = self.t.aprovar(a["id"], em_segundo_plano=False)
         self.assertEqual(r["status"], "aplicada")
         self.assertEqual(self.enviadas, ["a.jpg", "b.jpg"])                       # só a nova subiu
-        self.assertIn("Black Friday Khotz", self.chamadas[-1][1])
+        self.assertIn("Black Friday Loja", self.chamadas[-1][1])
         self.assertIn("52591677986663", self.chamadas[-1][1])
         with self.assertRaises(ValueError):
             self.t.editar(a["id"], {"motivo": "x"})                               # aplicada não edita
