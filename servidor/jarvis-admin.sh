@@ -4,7 +4,7 @@ set -euo pipefail
 APP=/opt/jarvis
 ENVF=/etc/jarvis/jarvis.env
 comando="${1:-ajuda}"
-comoJarvis() { sudo -u jarvis -H bash -c 'set -a; . /etc/jarvis/jarvis.env; set +a; exec "$@"' _ "$@"; }
+comoJarvis() { sudo -u jarvis -H bash -c 'cd /var/lib/jarvis; set -a; . /etc/jarvis/jarvis.env; set +a; exec "$@"' _ "$@"; }
 
 case "$comando" in
   drive)
