@@ -21,6 +21,13 @@ clientes continuam no seu Google Drive (o servidor monta o Drive em `/srv/drive`
 4. Copie o **ID do cliente** e a **Chave secreta**.
 5. Se a tela de consentimento estiver em "Teste", adicione o seu e-mail em **Usuários de teste**.
 
+## 2b. Cliente próprio para o Drive (recomendado)
+
+O cliente compartilhado do rclone está sendo desativado pelo Google. No mesmo projeto:
+1. **APIs e serviços → Biblioteca → Google Drive API → Ativar**.
+2. **Credenciais → Criar credenciais → ID do cliente OAuth → App para computador**, nome `rclone Drive`.
+3. Guarde o ID e a chave; use-os em `rclone authorize "drive" "ID" "CHAVE"` e no `sudo jarvis drive`.
+
 ## 3. Instalar (no terminal do VPS: painel da Hostinger → Terminal do navegador)
 
 ```bash
