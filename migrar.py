@@ -131,8 +131,45 @@ def _banco_trocar(caminho: Path, abrir: bool | None, troca_caminho: tuple[str, s
     return n
 
 
+# ── caminhos do Windows → servidor Linux ───────────────────────────────────
+_DRIVE_RE = __import__("re").compile(r'[A-Za-z]:(\\\\|\\)Meu Drive(\\\\|\\)([^"\r\n<>|*?]*)')
+
+
+def para_linux(texto: str, raiz_drive: str) -> str:
+    """Troca "G:\\Meu Drive\\CLIENTES\\X" (também escapado em JSON) por "<raiz>/CLIENTES/X"."""
+    if not raiz_drive or "Meu Drive" not in (texto or ""):
+        return texto
+    raiz = raiz_drive.rstrip("/")
+
+    def troca(m):
+        resto = m.group(3).replace("\\\\", "/").replace("\\", "/")
+        return f"{raiz}/{resto}"
+    return _DRIVE_RE.sub(troca, texto)
+
+
+def _banco_para_linux(caminho: Path, raiz_drive: str) -> int:
+    n = 0
+    con = sqlite3.connect(caminho)
+    try:
+        for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+            cols = [r[1] for r in con.execute(f'PRAGMA table_info("{t}")') if (r[2] or "").upper() in ("TEXT", "")]
+            for c in cols:
+                for rid, v in con.execute(f'SELECT rowid, "{c}" FROM "{t}" WHERE "{c}" LIKE ?', ("%Meu Drive%",)).fetchall():
+                    novo = para_linux(v, raiz_drive)
+                    if novo != v:
+                        con.execute(f'UPDATE "{t}" SET "{c}"=? WHERE rowid=?', (novo, rid))
+                        n += 1
+        con.commit()
+    finally:
+        con.close()
+    return n
+
+
 # ── exportar ────────────────────────────────────────────────────────────────
 def _pasta_drive() -> Path | None:
+    raiz = os.environ.get("HAIZEN_RAIZ_DRIVE", "")
+    if raiz and Path(raiz).is_dir():          # servidor: o Drive montado pelo rclone
+        return Path(raiz)
     for letra in "GHIJKLMNOPDEF":
         p = Path(f"{letra}:/Meu Drive")
         if p.is_dir():
@@ -210,6 +247,10 @@ def importar(pacote: Path, senha: str) -> dict:
             shutil.copytree(dados, guarda, ignore=shutil.ignore_patterns("janela-web", "whatsapp-web-profile", "anexos"))
             print(f"O que havia neste computador foi guardado em: {guarda}")
         troca = (manifesto.get("pasta_usuario") or "", str(Path.home()))
+        # No servidor (Linux) as pastas do Drive ficam montadas em outra raiz (HAIZEN_RAIZ_DRIVE).
+        raiz_drive = os.environ.get("HAIZEN_RAIZ_DRIVE", "") if os.name != "nt" else ""
+        if raiz_drive:
+            troca = ("", "")
         for nome in z.namelist():
             if nome.endswith("/") or nome == "manifesto.json":
                 continue
@@ -225,11 +266,16 @@ def importar(pacote: Path, senha: str) -> dict:
                 texto = corpo.decode("utf-8", errors="replace")
                 if troca[0] and troca[0] != troca[1]:
                     texto = texto.replace(json.dumps(troca[0])[1:-1], json.dumps(troca[1])[1:-1]).replace(troca[0], troca[1])
+                texto = para_linux(texto, raiz_drive)
                 trocado = _json_segredos(texto, False)
                 corpo = (trocado if trocado is not None else texto).encode("utf-8")
+            elif alvo.suffix.lower() in (".md", ".txt") and raiz_drive:
+                corpo = para_linux(corpo.decode("utf-8", errors="replace"), raiz_drive).encode("utf-8")
             alvo.write_bytes(corpo)
             if alvo.suffix.lower() == ".db":
                 _banco_trocar(alvo, False, troca if troca[0] else None)
+                if raiz_drive:
+                    print(f"  {_banco_para_linux(alvo, raiz_drive)} caminhos do Drive ajustados para {raiz_drive}")
     print("\nImportado. O Jarvis deste computador agora tem os mesmos clientes, tarefas, projetos, "
           "configurações e tokens do outro.")
     return manifesto

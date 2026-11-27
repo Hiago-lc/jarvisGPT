@@ -23,6 +23,7 @@ async function api(metodo, caminho, corpo) {
     body: corpo === undefined ? undefined : JSON.stringify(corpo),
   });
   const dados = await r.json().catch(() => ({}));
+  if (r.status === 401 && dados.login) { location.href = dados.login; throw new Error("faça login de novo"); }
   if (!r.ok) throw new Error(dados.erro || `Erro ${r.status}`);
   return dados;
 }
@@ -3095,6 +3096,12 @@ async function conferirVersao() {
     const v = await api("GET", "sistema/versao");
     $("#versao").hidden = !(v.desatualizado && v.pode_reiniciar);
     conferirVersao.pid = conferirVersao.pid || v.pid;
+    if (v.servidor) $("#desligar-jarvis")?.setAttribute("hidden", "");
+    const rodape = $(".trilho-rodape");
+    if (v.servidor && rodape && !rodape.dataset.servidor) {
+      rodape.dataset.servidor = "1";
+      rodape.innerHTML = `No servidor · ${esc(v.email || "")} · <a href="/sair">Sair</a>`;
+    }
   } catch (_) { /* central reiniciando ou fora do ar */ }
 }
 
@@ -3115,6 +3122,61 @@ $("#versao-reiniciar").addEventListener("click", async () => {
   botao.textContent = "Reiniciar agora";
   avisar("O Jarvis não voltou sozinho. Abra de novo pelo atalho ou com py jarvis_web.py.");
 });
+
+// ── atualizações pelo GitHub e pacote de diagnóstico ───────────────────────
+async function esperarReinicio(pidAntigo) {
+  for (let i = 0; i < 300; i++) {               // até 10 minutos (espera agentes, backup, bibliotecas)
+    await new Promise((ok) => setTimeout(ok, 2000));
+    try {
+      const v = await api("GET", "sistema/versao");
+      if (v.pid !== pidAntigo) { location.reload(); return true; }
+      const a = await api("GET", "sistema/atualizacao?buscar=0");
+      const el = $("#sis-etapa");
+      if (el) el.textContent = a.erro ? `Não deu: ${a.erro}` : (a.etapa || "trabalhando…");
+      if (a.erro) return false;
+    } catch (_) { /* reiniciando */ }
+  }
+  return false;
+}
+
+async function dialogoSistema() {
+  let a;
+  try { a = await api("GET", "sistema/atualizacao"); } catch (e) { avisar(e.message); return; }
+  const novidades = a.novidades || [];
+  const corpo = !a.disponivel
+    ? `<p>${esc(a.motivo || "Atualização automática indisponível neste computador.")}</p>`
+    : `${a.erro && !a.rodando ? `<p class="erro">${esc(a.erro)}</p>` : ""}
+      <p>Versão instalada: <strong>${esc(a.atual || "")}</strong>${a.data ? ` · ${new Date(a.data).toLocaleString("pt-BR")}` : ""}</p>
+      ${novidades.length ? `<p><strong>${novidades.length} ${novidades.length === 1 ? "novidade" : "novidades"} para instalar:</strong></p>
+        <ul class="sis-novidades">${novidades.map((c) => `<li>${esc(c.titulo)} <span class="sub">${new Date(c.quando).toLocaleDateString("pt-BR")}</span></li>`).join("")}</ul>
+        <p class="sub">Antes de atualizar o Jarvis faz o backup do banco e espera os agentes terminarem. Depois reinicia sozinho (cerca de 1 minuto).</p>`
+        : "<p>Este Jarvis já está na versão mais nova.</p>"}
+      <p id="sis-etapa" class="sub" role="status">${a.rodando ? esc(a.etapa || "atualizando…") : ""}</p>`;
+  const acoes = [{ texto: "Fechar", acao: () => {} }];
+  acoes.push({ texto: "Baixar diagnóstico", acao: async () => {
+    const r = await fetch("/api/sistema/diagnostico", { headers: { "X-Central": "1" } });
+    if (!r.ok) { avisar("Não consegui gerar o diagnóstico"); return; }
+    const nome = decodeURIComponent((r.headers.get("Content-Disposition") || "").split("''")[1] || "jarvis-diagnostico.zip");
+    const url = URL.createObjectURL(await r.blob());
+    const link = Object.assign(document.createElement("a"), { href: url, download: nome });
+    document.body.append(link); link.click(); link.remove();
+    avisar("Diagnóstico salvo em Downloads: mande esse arquivo para o Claude");
+  } });
+  if (a.disponivel && a.anterior) acoes.push({ texto: `Voltar à versão ${a.anterior}`, acao: async () => {
+    const pid = (await api("GET", "sistema/versao")).pid;
+    await api("POST", "sistema/atualizar", { acao: "voltar" });
+    avisar("Voltando à versão anterior…");
+    if (!(await esperarReinicio(pid))) avisar("Não voltou sozinho: veja Atualizações e diagnóstico");
+  } });
+  if (a.disponivel && novidades.length) acoes.push({ texto: "Atualizar agora", classe: "primario", acao: async () => {
+    const pid = (await api("GET", "sistema/versao")).pid;
+    await api("POST", "sistema/atualizar", { acao: "atualizar" });
+    avisar("Atualizando… a página recarrega sozinha quando terminar");
+    if (!(await esperarReinicio(pid))) avisar("A atualização não terminou: abra Atualizações e diagnóstico para ver o motivo");
+  } });
+  dialogo({ titulo: "Atualizações e diagnóstico", corpo, acoes });
+}
+$("#abrir-sistema")?.addEventListener("click", dialogoSistema);
 
 conferirVersao();
 setInterval(conferirVersao, 60000);

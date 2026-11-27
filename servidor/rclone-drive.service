@@ -1,0 +1,20 @@
+[Unit]
+Description=Google Drive da HAIZEN montado em /srv/drive (rclone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=jarvis
+Group=jarvis
+ExecStart=/usr/bin/rclone mount drive: /srv/drive \
+  --config /etc/jarvis/rclone.conf \
+  --vfs-cache-mode full --vfs-cache-max-size 20G --vfs-cache-max-age 72h \
+  --dir-cache-time 30s --poll-interval 30s --umask 002 \
+  --cache-dir /var/cache/jarvis-rclone
+ExecStop=/bin/fusermount3 -u /srv/drive
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -898,3 +898,5 @@ html.exportando .ind-so-exportar { display: inline; }
 html.exportando .ind-resultado { display: none; }
 .ind-resultado { font-size: 13.5px; color: var(--cinza); display: inline-flex; gap: 8px; align-items: center; }
 .ind-resultado select { border: 1px solid var(--linha); border-radius: var(--raio); padding: 5px 8px; background: var(--superficie); color: var(--tinta); max-width: 100%; }
+.sis-novidades { margin: 6px 0 10px; padding-left: 20px; max-height: 240px; overflow-y: auto; font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.sis-novidades .sub { font-size: 12px; }
