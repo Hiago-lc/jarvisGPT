@@ -1631,14 +1631,14 @@ ROTAS.trafego = async (param) => {
     $("#traf-sub").textContent = `Meta Ads: análise todo dia às ${cfg.horario}${cfg.whatsapp_ativo ? ", resumo no seu WhatsApp" : ""}. Nada muda nas campanhas sem a sua aprovação.`;
     const fazendo = estado.fazendo ? `<div class="traf-faixa"><span class="traf-girando" aria-hidden="true"></span>${esc({ analisando: "Analisando as contas", conectando: "Conectando ao Meta Ads", "preparando os criativos": "Preparando os criativos (conjunto e legendas)" }[estado.fazendo] || estado.fazendo)}${estado.progresso ? ` (${esc(estado.progresso)})` : ""}… pode levar alguns minutos por conta.</div>` : "";
     const erro = !estado.fazendo && estado.erro ? `<div class="traf-faixa erro">${esc(estado.erro)}</div>` : "";
-    const aviso = cfg.aviso_conexao ? `<div class="traf-faixa erro">${esc(cfg.aviso_conexao)} <button class="botao" data-conectar>Já entrei, conferir</button></div>` : "";
+    const aviso = cfg.aviso_conexao ? `<div class="traf-faixa erro">${esc(cfg.aviso_conexao)} <button class="botao" data-traf-token>Configurar o token</button> <button class="botao" data-conectar>Conferir de novo</button></div>` : "";
     if (!dados.conectado) {
       corpo.innerHTML = `${fazendo}${erro}<section class="bloco traf-conectar"><h2>Conectar ao Meta Ads</h2>
-        <p>O Jarvis usa o conector oficial da Meta. Uma vez só:</p>
-        <ol><li>Dê dois cliques em <code>conectar-meta.bat</code>, em <code>C:\\JARVIS</code>, e siga o passo a passo que aparece (precisa do ID de um app seu no Meta for Developers; o arquivo explica como criar).</li>
-          <li>No Claude Code que abrir, digite <code>/mcp</code>, escolha <strong>meta-ads</strong> e faça o login no Facebook, marcando as contas dos clientes.</li>
-          <li>Volte aqui e clique no botão abaixo: o Jarvis confere a conexão e traz as suas contas de anúncio.</li></ol>
-        <button class="botao primario" data-conectar ${estado.fazendo ? "disabled" : ""}>Já fiz o login, buscar minhas contas</button></section>`;
+        <p>O Jarvis fala com o Meta Ads pelo token do usuário do sistema do seu Gerenciador de Negócios, que não vence. Uma vez só:</p>
+        <ol><li>Clique em <strong>Configurar o token</strong> e siga o guia (usuário do sistema → Gerar token com validade Nunca).</li>
+          <li>Volte aqui e clique em <strong>Buscar minhas contas</strong>.</li></ol>
+        <div class="traf-botoes"><button class="botao" data-traf-token>Configurar o token</button>
+        <button class="botao primario" data-conectar ${estado.fazendo ? "disabled" : ""}>Buscar minhas contas</button></div></section>`;
     } else {
       const ordem = { critico: 0, atencao: 1, erro: 2, bem: 3 };
       const lista = [...contas].sort((a, b) => (b.ativo - a.ativo) || ((ordem[analises[a.id]?.situacao] ?? 4) - (ordem[analises[b.id]?.situacao] ?? 4)));

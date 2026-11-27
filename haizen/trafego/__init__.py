@@ -1,10 +1,10 @@
 """Gestor de tráfego da HAIZEN: análise diária do Meta Ads e otimizações com aprovação.
 
-O Claude (Claude Code da assinatura) lê as contas pelo conector oficial da Meta
-(Meta Ads MCP, https://mcp.facebook.com/ads, cadastrado no Claude Code como
-"meta-ads" por conectar-meta.bat). Na análise ele só tem as ferramentas de
-LEITURA; as otimizações viram propostas na tela Tráfego. Só depois que você
-aprova, uma segunda chamada do Claude, com as ferramentas de alteração, aplica
+O Claude (Claude Code da assinatura) lê as contas pelas ferramentas próprias do Jarvis
+(haizen/trafego/mcp_meta.py), que falam com a Marketing API usando o token do usuário do sistema,
+o que não vence (Tráfego → Configurar). Não depende mais do login do conector oficial da Meta.
+Na análise ele só tem as ferramentas de LEITURA; as otimizações viram propostas na tela Tráfego.
+Só depois que você aprova, uma segunda chamada do Claude, com as ferramentas de alteração, aplica
 exatamente aquela mudança e confere.
 """
 from __future__ import annotations
@@ -19,27 +19,25 @@ from pathlib import Path
 
 from haizen import executor, store
 
-SERVIDOR = "meta-ads"
+SERVIDOR = "meta"
 PREFIXO = f"mcp__{SERVIDOR}__"
+MCP_META = Path(__file__).resolve().parent / "mcp_meta.py"
 PLAYBOOK = Path(__file__).resolve().parent / "playbook.md"
 TIMEOUT = int(os.environ.get("HAIZEN_TRAFEGO_TIMEOUT", "900"))
 
-# Ferramentas do conector oficial (documentação da Meta, jul/2026).
-LEITURA = ("ads_get_ad_accounts", "ads_get_field_context", "ads_get_ad_entities", "ads_get_creatives",
-           "ads_get_creative_ads", "ads_get_ad_preview", "ads_get_ad_account_pages",
-           "ads_get_ad_account_custom_audiences", "ads_get_custom_audience", "ads_get_custom_audience_adsets",
-           "ads_get_opportunity_score", "ads_insights_advertiser_context", "ads_insights_anomaly_signal",
-           "ads_insights_auction_ranking_benchmarks", "ads_insights_industry_benchmark",
-           "ads_insights_performance_trend", "ads_library_search")
-ESCRITA = ("ads_update_entity", "ads_activate_entity")       # o que uma ação aprovada pode usar
-# Ferramentas de alteração por tipo de ação aprovada (nada além disso).
-# Com o "modo rascunho" da Meta ligado, a alteração fica como rascunho e só vale
-# depois de publicada com ads_activate_entity no próprio item: por isso ele vai junto.
+# Ferramentas próprias (mcp_meta.py), com os mesmos nomes do conector oficial da Meta.
+LEITURA = ("ads_get_ad_accounts", "ads_get_ad_entities", "ads_insights_performance_trend", "ads_get_creatives",
+           "ads_get_ad_preview", "ads_get_ad_account_pages", "ads_get_ad_account_custom_audiences",
+           "ads_get_activity_log", "ads_graph_get")
+ESCRITA = ("ads_update_entity", "ads_activate_entity", "ads_create_campaign", "ads_create_ad_set",
+           "ads_create_creative", "ads_create_ad")
+# Ferramentas de alteração por tipo de ação aprovada (nada além disso). Pela API a mudança vale
+# na hora (não há rascunho).
 ESCRITA_POR_TIPO = {
-    "pausar": ("ads_update_entity", "ads_activate_entity"),
+    "pausar": ("ads_update_entity",),
     "reativar": ("ads_activate_entity",),
-    "orcamento": ("ads_update_entity", "ads_activate_entity"),
-    "publico": ("ads_update_entity", "ads_activate_entity"),
+    "orcamento": ("ads_update_entity",),
+    "publico": ("ads_update_entity",),
     # Estrutura nova inclui os anúncios (com criativos que já existem na conta).
     "estrutura": ("ads_create_campaign", "ads_create_ad_set", "ads_create_ad", "ads_update_entity"),
     "subir_criativo": ("ads_create_creative", "ads_create_ad"),
@@ -105,9 +103,8 @@ def _gravar(c: dict) -> dict:
 
 
 def ferramentas_leitura() -> list[str]:
-    """Nomes completos (mcp__meta-ads__...) das ferramentas de leitura."""
-    achadas = [n for n in config().get("ferramentas") or [] if _LE.match(n) and not _ESCREVE.search(n)]
-    return [PREFIXO + n for n in dict.fromkeys([*LEITURA, *achadas])]
+    """Nomes completos (mcp__meta__...) das ferramentas de leitura."""
+    return [PREFIXO + n for n in LEITURA]
 
 
 def ferramentas_escrita() -> list[str]:
@@ -122,11 +119,20 @@ def _pasta() -> Path:
     return p
 
 
+def _config_mcp() -> Path:
+    cfg = {"mcpServers": {SERVIDOR: {"command": executor._python_console(), "args": [str(MCP_META)],
+                                     "env": {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(MCP_META.parents[2])}}}}
+    arq = _pasta() / "mcp-meta.json"
+    arq.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    return arq
+
+
 def _claude(prompt: str, ferramentas: list[str], instrucao: str, referencia: str = "",
             pastas: list[Path] | None = None) -> str:
     from haizen import uso
     modelo = uso.modelo("trafego")
     args = ["-p", instrucao, "--output-format", "json", "--permission-mode", "dontAsk",
+            "--mcp-config", str(_config_mcp()), "--strict-mcp-config",
             "--allowedTools", ",".join(ferramentas), *(["--model", modelo] if modelo else [])]
     for d in pastas or []:
         args += ["--add-dir", str(d)]
@@ -138,15 +144,14 @@ def _claude(prompt: str, ferramentas: list[str], instrucao: str, referencia: str
         raise
 
 
-AVISO_CONEXAO = ("O Jarvis não conseguiu entrar no Meta Ads. Dê dois cliques em conectar-meta.bat (em C:\\JARVIS), "
-                 "faça o login no Facebook e volte aqui. O acesso da Meta vence a cada ~60 dias.")
+AVISO_CONEXAO = ("O Jarvis não conseguiu entrar no Meta Ads: confira o token do Meta Ads (usuário do sistema) em "
+                 "Tráfego → Configurar. Ele precisa da permissão ads_management e de acesso às contas.")
 
 
 def _sem_conexao(texto: str) -> bool:
     t = (texto or "").lower()
-    return any(s in t for s in ("needs authentication", "not authenticated", "unauthorized", "401",
-                                "oauth", "invalid oauth", "session has expired", "error validating access token",
-                                "meta-ads", "sem_conexao_meta"))
+    return any(s in t for s in ("sem_conexao_meta", "o token do meta ads venceu", "error validating access token",
+                                "invalid oauth access token", "sem token do meta ads"))
 
 
 def _json(texto: str) -> dict:
@@ -159,24 +164,32 @@ def _json(texto: str) -> dict:
 
 
 def descobrir() -> dict:
-    """Confere a conexão, anota as ferramentas e traz as contas de anúncio."""
-    prompt = (
-        "Você está conectado ao Meta Ads pelo servidor MCP 'meta-ads'.\n"
-        "1. Liste o nome de TODAS as ferramentas mcp__meta-ads__ que você tem (sem o prefixo).\n"
-        "2. Chame ads_get_ad_accounts e traga todas as contas de anúncio que o usuário acessa.\n"
-        "Se as ferramentas meta-ads não existirem ou pedirem autenticação, responda só "
-        '{"erro": "SEM_CONEXAO_META", "detalhe": "..."}.\n'
-        "Responda SÓ com JSON: {\"ferramentas\": [\"ads_...\"], \"contas\": [{\"id\": \"act_...\", "
-        "\"nome\": \"...\", \"negocio\": \"nome do business ou vazio\", \"moeda\": \"BRL\", "
-        "\"status\": \"ativa|desativada|...\"}]}")
-    r = _json(_claude(prompt, [PREFIXO + "ads_get_ad_accounts"], "Siga a entrada. Responda só com o JSON pedido."))
-    if r.get("erro"):
-        raise ConnectionError(AVISO_CONEXAO + (f" ({r.get('detalhe')})" if r.get("detalhe") else ""))
+    """Confere o token e traz as contas de anúncio (direto da API, sem gastar Claude)."""
+    from haizen.trafego import envio
+    if not envio.token():
+        raise ConnectionError(AVISO_CONEXAO)
+    try:
+        url = f"{envio.GRAPH}/me/adaccounts?" + __import__("urllib.parse").parse.urlencode(
+            {"fields": "id,name,currency,account_status,business{name}", "limit": 200, "access_token": envio.token()})
+        contas, n = [], 0
+        while url and n < 20:
+            r = envio._http("GET", url, timeout=60)
+            contas += r.get("data") or []
+            url = (r.get("paging") or {}).get("next")
+            n += 1
+    except envio.ErroEnvio as e:
+        raise ConnectionError(f"{AVISO_CONEXAO} ({e})") from None
+    situacoes = {1: "ativa", 2: "desativada", 3: "com pendência", 7: "em análise", 9: "em período de carência",
+                 100: "fechando", 101: "fechada"}
     c = config()
-    c["ferramentas"] = sorted({str(n).removeprefix(PREFIXO) for n in r.get("ferramentas") or []})
+    c["ferramentas"] = [*LEITURA, *ESCRITA]
     c["conectado_em"], c["aviso_conexao"] = time.time(), ""
     _gravar(c)
-    return {"contas": sincronizar_contas(r.get("contas") or []), "ferramentas": c["ferramentas"]}
+    return {"contas": sincronizar_contas([{"id": x.get("id"), "nome": x.get("name"), "moeda": x.get("currency"),
+                                           "negocio": (x.get("business") or {}).get("name", ""),
+                                           "status": situacoes.get(x.get("account_status"), str(x.get("account_status") or ""))}
+                                          for x in contas]),
+            "ferramentas": c["ferramentas"]}
 
 
 def sincronizar_contas(contas: list[dict]) -> list[dict]:
@@ -648,16 +661,12 @@ def instrucao_aplicar(a: dict) -> str:
         o_que = _instrucao_subir(a)
     else:
         raise ValueError(f"o tipo {a['tipo']} não é aplicado pelo Jarvis")
-    if a["tipo"] in ("pausar", "orcamento", "publico"):
-        o_que += ("\nSe a conta estiver no modo rascunho (a alteração fica is_draft e o valor ao vivo não muda), publique "
-                  "a alteração com ads_activate_entity NESTE MESMO item e confira o valor ao vivo. Não use "
-                  "ads_activate_entity em nenhum outro item.")
     if a["tipo"] in CRIAM:
         o_que += ("\nDepois de criar, ATIVE o que criou com ads_activate_entity (o dono escolheu publicar já ativo)."
                   if a.get("ativar") else
-                  "\nNÃO ative nada: deixe tudo pausado/rascunho para o dono revisar no Gerenciador. Neste modo NÃO pause "
+                  "\nNÃO ative nada: deixe tudo PAUSADO para o dono revisar no Gerenciador. Neste modo NÃO pause "
                   "nem altere o que já está rodando (isso depende da ativação). SUCESSO aqui = tudo criado e conferido "
-                  "como rascunho/pausado: responda ok=true e diga no detalhe o que fica para o dono (publicar, pausar os "
+                  "como pausado: responda ok=true e diga no detalhe o que fica para o dono (ativar, pausar os "
                   "antigos depois).")
     if a.get("resultado") and a.get("status") in ("falhou", "aplicando"):
         o_que += ("\n\nTENTATIVA ANTERIOR (continue de onde parou; NÃO recrie o que já foi criado, use os ids abaixo):\n"
@@ -677,7 +686,7 @@ def aplicar(aid: int) -> dict:
         extra, pastas = [], []
         det = _detalhes(a)
         if det.get("pecas") and a["tipo"] in ("subir_criativo", "estrutura"):
-            # O conector da Meta não envia arquivo: o Jarvis envia antes e passa hash/id prontos.
+            # O Jarvis envia os arquivos antes e passa hash/id prontos para ads_create_creative.
             from haizen.trafego import envio
             anterior = a.get("resultado") or ""        # notas da tentativa anterior e a resposta do dono
 
