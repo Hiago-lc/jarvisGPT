@@ -1,0 +1,22 @@
+[Unit]
+Description=Jarvis HAIZEN (central, agentes e rotinas)
+After=network-online.target rclone-drive.service
+Wants=network-online.target
+Requires=rclone-drive.service
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+WorkingDirectory=/opt/jarvis
+EnvironmentFile=/etc/jarvis/jarvis.env
+ExecStart=/opt/jarvis/.venv/bin/python /opt/jarvis/jarvis_web.py --sem-navegador --perfil local
+Restart=always
+RestartSec=5
+# Ao atualizar, o Jarvis sai e o systemd sobe a versão nova.
+KillMode=mixed
+TimeoutStopSec=30
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

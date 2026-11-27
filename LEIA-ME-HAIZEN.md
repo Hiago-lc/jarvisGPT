@@ -231,3 +231,14 @@ tokens e memória) vai num pacote protegido por senha:
 Não vão: anexos do chat (podem ter vários GB), o perfil do WhatsApp Web e caches. Use um
 computador de cada vez: cada um tem o seu próprio banco, e os dois ligados rodariam as rotinas
 (análises, resumos, publicações) em dobro.
+
+## Meta Ads sem reconexão
+
+O gestor de tráfego agora fala com o Meta Ads pelas ferramentas próprias do Jarvis
+(`haizen/trafego/mcp_meta.py`), usando o token do usuário do sistema cadastrado em
+Tráfego → Configurar (o que não vence). O `conectar-meta.bat` e o login do conector oficial não
+são mais necessários. As mudanças pela API valem na hora (não ficam como rascunho).
+
+## Servidor
+
+Para rodar o Jarvis num VPS (Hostinger) com login pelo Google: veja `servidor/LEIA-ME.md`.

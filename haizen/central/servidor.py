@@ -217,8 +217,69 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(corpo)
 
     def _host_ok(self) -> bool:
+        from haizen.central import acesso
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        if acesso.ativo() and host == acesso.host_publico():
+            return True
         return host in _HOSTS or host.endswith(_SUFIXOS_HOST)
+
+    # ── login (só no modo servidor) ─────────────────────────────────────────
+    def _redirecionar(self, destino: str, cookie: str = ""):
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", destino)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _pagina(self, corpo: bytes, status=HTTPStatus.OK):
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _login(self, url) -> bool:
+        """True se o pedido já foi respondido (página de login, retorno do Google, sem sessão)."""
+        from haizen.central import acesso
+        if not acesso.ativo():
+            return False
+        q = {k: v[-1] for k, v in parse_qs(url.query).items()}
+        token = acesso.token_do_cookie(self.headers.get("Cookie"))
+        if url.path == "/entrar":
+            self._pagina(acesso.pagina_login(volta=q.get("volta", "")))
+            return True
+        if url.path == "/auth/google":
+            try:
+                self._redirecionar(acesso.url_login(q.get("volta", "/")))
+            except RuntimeError as e:
+                self._pagina(acesso.pagina_login(str(e)), HTTPStatus.SERVICE_UNAVAILABLE)
+            return True
+        if url.path == "/auth/google/retorno":
+            try:
+                if q.get("error"):
+                    raise ValueError("o login foi cancelado")
+                novo, volta = acesso.concluir(q.get("state", ""), q.get("code", ""))
+                self._redirecionar(volta, acesso.cookie(novo))
+            except (ValueError, PermissionError, RuntimeError) as e:
+                self._pagina(acesso.pagina_login(str(e)), HTTPStatus.FORBIDDEN)
+            return True
+        if url.path == "/sair":
+            acesso.encerrar(token)
+            self._redirecionar("/entrar", acesso.cookie("", apagar=True))
+            return True
+        if url.path in ("/icone.svg", "/manifest.webmanifest", "/icone-192.png", "/icone-512.png"):
+            return False
+        if acesso.sessao(token):
+            return False
+        if url.path.startswith("/api/"):
+            self._json({"erro": "faça login de novo", "login": "/entrar"}, HTTPStatus.UNAUTHORIZED)
+        else:
+            self._redirecionar("/entrar")
+        return True
 
     # ── roteamento ──────────────────────────────────────────────────────────
     def do_GET(self):
@@ -237,6 +298,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._erro(HTTPStatus.FORBIDDEN, "host não permitido")
         url = urlparse(self.path)
+        if self._login(url):
+            return
         if url.path == "/oauth/google-ads" and metodo == "GET":
             return self._retorno_google_ads(url)
         if not url.path.startswith("/api/"):
@@ -280,7 +343,7 @@ class _Handler(BaseHTTPRequestHandler):
         if partes and partes[0] == "jarvis":
             return self._jarvis(metodo, partes[1:], q)
         if partes and partes[0] == "sistema":
-            return self._sistema(metodo, partes[1:])
+            return self._sistema(metodo, partes[1:], q)
         if partes and partes[0] == "janela":
             return self._janela(metodo, partes[1:], q)
         if partes and partes[0] == "whatsapp":
@@ -649,10 +712,15 @@ class _Handler(BaseHTTPRequestHandler):
             ga.salvar_config(self._corpo())
             return ga.painel()
         if rota == "autorizar" and metodo == "POST":
+            from haizen.central import acesso
             host = self.headers.get("Host", f"127.0.0.1:{PORTA}")
-            if not host.split(":")[0] in ("127.0.0.1", "localhost"):
+            if acesso.ativo():
+                retorno = f"{acesso.url_publica()}/oauth/google-ads"
+            elif host.split(":")[0] in ("127.0.0.1", "localhost"):
+                retorno = f"http://127.0.0.1:{PORTA}/oauth/google-ads"
+            else:
                 raise ValueError("conecte o Google Ads pelo próprio computador (o Google só volta para 127.0.0.1)")
-            return {"url": gapi.url_autorizacao(f"http://127.0.0.1:{PORTA}/oauth/google-ads",
+            return {"url": gapi.url_autorizacao(retorno,
                                                 youtube=self._corpo().get("youtube", True) is not False)}
         if rota == "midia" and metodo == "GET":
             from haizen.googleads import midia
@@ -920,14 +988,27 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         return _NAO_ACHOU
 
-    def _sistema(self, metodo, partes):
+    def _sistema(self, metodo, partes, q=None):
         rota = partes[0] if partes else ""
         if rota == "versao" and metodo == "GET":
+            from haizen.central import acesso
+            s = acesso.sessao(acesso.token_do_cookie(self.headers.get("Cookie"))) if acesso.ativo() else None
             return {"desatualizado": desatualizado(), "pode_reiniciar": bool(COMANDO_REINICIO),
-                    "pid": os.getpid()}
+                    "pid": os.getpid(), "servidor": acesso.ativo(), "email": (s or {}).get("email", "")}
         if rota == "reiniciar" and metodo == "POST":
             reiniciar()
             return {"ok": True}
+        if rota == "atualizacao" and metodo == "GET":
+            from haizen.central import atualizar
+            return atualizar.info(buscar=(q or {}).get("buscar") != "0")
+        if rota == "atualizar" and metodo == "POST":
+            from haizen.central import atualizar
+            return atualizar.iniciar(self._corpo().get("acao") or "atualizar")
+        if rota == "diagnostico" and metodo == "GET":
+            from haizen.central import atualizar
+            import time as _t
+            return _Arquivo(atualizar.diagnostico(), "application/zip",
+                            f"jarvis-diagnostico-{_t.strftime('%Y-%m-%d-%H%M')}.zip")
         if rota == "desligar" and metodo == "POST":
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
             if host not in _HOSTS:

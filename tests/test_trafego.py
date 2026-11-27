@@ -75,26 +75,27 @@ class TrafegoTests(unittest.TestCase):
     def _conectar(self):
         from haizen.central import dados
         dados.criar("clientes", {"nome": "Viagens Sol"})
-        self.respostas.append(json.dumps({"ferramentas": ["ads_get_ad_entities", "ads_get_new_thing", "ads_update_entity"],
-                                          "contas": [{"id": "act_1", "nome": "Viagens Sol - Anúncios", "moeda": "BRL"},
-                                                     {"id": "2", "nome": "Outra conta"}]}))
-        return self.t.descobrir()
+        contas = {"data": [{"id": "act_1", "name": "Viagens Sol - Anúncios", "currency": "BRL", "account_status": 1},
+                           {"id": "2", "name": "Outra conta", "account_status": 2}]}
+        with patch("haizen.trafego.envio._http", return_value=contas):
+            return self.t.descobrir()
 
     def test_conectar_traz_contas_e_liga_ao_cliente(self):
         r = self._conectar()
         ids = {c["id"]: c for c in r["contas"]}
         self.assertEqual(set(ids), {"act_1", "act_2"})
         self.assertEqual(ids["act_1"]["cliente_nome"], "Viagens Sol")
-        self.assertEqual(self._permitidas(), ["mcp__meta-ads__ads_get_ad_accounts"])
+        self.assertEqual(self.chamadas, [])                      # conectar não gasta Claude
         leitura = self.t.ferramentas_leitura()
-        self.assertIn("mcp__meta-ads__ads_get_new_thing", leitura)       # descoberta e de leitura
-        self.assertNotIn("mcp__meta-ads__ads_update_entity", leitura)
+        self.assertIn("mcp__meta__ads_get_ad_entities", leitura)
+        self.assertNotIn("mcp__meta__ads_update_entity", leitura)
 
     def test_sem_conexao_avisa_como_conectar(self):
-        self.respostas.append('{"erro": "SEM_CONEXAO_META"}')
-        with self.assertRaises(ConnectionError) as c:
-            self.t.descobrir()
-        self.assertIn("conectar-meta.bat", str(c.exception))
+        from haizen.trafego import envio
+        with patch("haizen.trafego.envio._http", side_effect=envio.ErroEnvio("o token do Meta Ads venceu")):
+            with self.assertRaises(ConnectionError) as c:
+                self.t.descobrir()
+        self.assertIn("Tráfego → Configurar", str(c.exception))
 
     def test_analise_so_le_e_vira_propostas(self):
         self._conectar()
@@ -103,8 +104,10 @@ class TrafegoTests(unittest.TestCase):
         an = self.t.analisar_conta("act_1")
         self.assertEqual(an["situacao"], "atencao")
         permitidas = self._permitidas()
-        self.assertTrue(all(p.startswith("mcp__meta-ads__ads_get") or p.startswith("mcp__meta-ads__ads_insights")
-                            or p.startswith("mcp__meta-ads__ads_library") for p in permitidas))
+        self.assertTrue(all(p.startswith(("mcp__meta__ads_get", "mcp__meta__ads_insights", "mcp__meta__ads_graph_get"))
+                            for p in permitidas))
+        args = self.chamadas[-1][0]
+        self.assertIn("--strict-mcp-config", args)             # só as ferramentas próprias do Jarvis
         prompt = self.chamadas[-1][1]
         self.assertIn("R$ 15,00", prompt)
         self.assertIn("verba mensal: R$ 3.000,00", prompt)
@@ -127,8 +130,8 @@ class TrafegoTests(unittest.TestCase):
         feito = self.t.aprovar(orc["id"], em_segundo_plano=False)
         self.assertEqual(feito["status"], "aplicada")
         permitidas = self._permitidas()
-        self.assertIn("mcp__meta-ads__ads_update_entity", permitidas)
-        self.assertNotIn("mcp__meta-ads__ads_create_campaign", permitidas)
+        self.assertIn("mcp__meta__ads_update_entity", permitidas)
+        self.assertNotIn("mcp__meta__ads_create_campaign", permitidas)
         self.assertIn("120300", self.chamadas[-1][1])
         self.assertIn("NÃO altere", self.chamadas[-1][1])
         with self.assertRaises(ValueError):
@@ -206,8 +209,8 @@ class TrafegoTests(unittest.TestCase):
         self.respostas.append('{"ok": true, "detalhe": "idade 25-45 e exclusão aplicadas"}')
         self.assertEqual(self.t.aprovar(pub["id"], em_segundo_plano=False)["status"], "aplicada")
         self.assertIn("25-45", self.chamadas[-1][1])
-        self.assertIn("mcp__meta-ads__ads_update_entity", self._permitidas())
-        self.assertNotIn("mcp__meta-ads__ads_create_ad", self._permitidas())
+        self.assertIn("mcp__meta__ads_update_entity", self._permitidas())
+        self.assertNotIn("mcp__meta__ads_create_ad", self._permitidas())
 
     def test_subir_criativos_com_legendas_e_aprovacao(self):
         from haizen import store
@@ -241,8 +244,8 @@ class TrafegoTests(unittest.TestCase):
         r = self.t.aprovar(a["id"], em_segundo_plano=False)
         self.assertEqual(r["status"], "aplicada")
         p = self._permitidas()
-        self.assertIn("mcp__meta-ads__ads_create_ad", p)
-        self.assertNotIn("mcp__meta-ads__ads_activate_entity", p)
+        self.assertIn("mcp__meta__ads_create_ad", p)
+        self.assertNotIn("mcp__meta__ads_activate_entity", p)
         self.assertIn("NÃO ative nada", self.chamadas[-1][1])
         self.assertIn("Últimas vagas para Porto Seguro!", self.chamadas[-1][1])
         self.assertIn("image_hash HASH-01 - Feed", self.chamadas[-1][1])          # a peça já foi enviada à conta
@@ -258,7 +261,7 @@ class TrafegoTests(unittest.TestCase):
             a = self.t.preparar_criativos("act_1", "", None, ids)
         self.respostas.append('{"ok": false, "detalhe": "SEM_UPLOAD: pede image_hash"}')
         r = self.t.aprovar(a["id"], em_segundo_plano=False, ativar=True)
-        self.assertIn("mcp__meta-ads__ads_activate_entity", self._permitidas())
+        self.assertIn("mcp__meta__ads_activate_entity", self._permitidas())
         self.assertIn("ATIVE o que criou", self.chamadas[-1][1])
         self.assertEqual(r["status"], "falhou")
         self.assertIn("token do Meta Ads", r["resultado"])
@@ -317,7 +320,7 @@ class TrafegoTests(unittest.TestCase):
                           detalhes={"anuncios": "criativos 111 e 222"})
         self.respostas.append('{"ok": false, "detalhe": "Criei a campanha 900 e o conjunto 901; faltaram os anúncios."}')
         r = self.t.aprovar(a["id"], em_segundo_plano=False)
-        self.assertIn("mcp__meta-ads__ads_create_ad", self._permitidas())
+        self.assertIn("mcp__meta__ads_create_ad", self._permitidas())
         self.assertEqual(r["status"], "falhou")
         self.respostas.append('{"ok": true, "detalhe": "anúncios criados no conjunto 901"}')
         self.assertEqual(self.t.aprovar(a["id"], em_segundo_plano=False)["status"], "aplicada")
@@ -325,24 +328,24 @@ class TrafegoTests(unittest.TestCase):
         self.assertIn("campanha 900", self.chamadas[-1][1])
         self.assertIn("LIBERADAS nesta aplicação: ads_create_campaign, ads_create_ad_set, ads_create_ad", self.chamadas[-1][1])
 
-    def test_rascunho_publica_no_proprio_item_e_nota_do_dono(self):
+    def test_orcamento_nao_ativa_nada_e_nota_do_dono(self):
         self._conectar()
         a = self.t.propor("act_1", "orcamento", "Topo", "folga", "conjunto", "555", de="30", para="22")
-        self.respostas.append('{"ok": false, "detalhe": "ficou como rascunho"}')
+        self.respostas.append('{"ok": false, "detalhe": "orçamento atual diferente"}')
         self.t.aprovar(a["id"], em_segundo_plano=False)
-        self.assertIn("mcp__meta-ads__ads_activate_entity", self._permitidas())
-        self.assertIn("NESTE MESMO item", self.chamadas[-1][1])
-        self.respostas.append('{"ok": true, "detalhe": "publicado"}')
-        self.t.aprovar(a["id"], em_segundo_plano=False, nota="pode publicar o rascunho")
+        self.assertIn("mcp__meta__ads_update_entity", self._permitidas())
+        self.assertNotIn("mcp__meta__ads_activate_entity", self._permitidas())
+        self.respostas.append('{"ok": true, "detalhe": "alterado"}')
+        self.t.aprovar(a["id"], em_segundo_plano=False, nota="pode mudar mesmo assim")
         self.assertIn("RESPOSTA DO DONO PARA ESTA TENTATIVA", self.chamadas[-1][1])
-        self.assertIn("pode publicar o rascunho", self.chamadas[-1][1])
+        self.assertIn("pode mudar mesmo assim", self.chamadas[-1][1])
 
     def test_cerebro_le_o_meta_so_depois_de_conectar(self):
         from haizen.central import claude_cerebro
         self.assertFalse(any("meta-ads" in p for p in claude_cerebro.permitidas()))
         self._conectar()
         p = claude_cerebro.permitidas()
-        self.assertIn("mcp__meta-ads__ads_get_ad_entities", p)
+        self.assertIn("mcp__meta__ads_get_ad_entities", p)
         self.assertFalse(any(x.endswith(("update_entity", "activate_entity")) for x in p))
 
 

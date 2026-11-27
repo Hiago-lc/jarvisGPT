@@ -61,7 +61,7 @@ Abra para ver. Se for material para produzir, passe os caminhos em `anexos` do p
 referências) para responder, mas não altera nem apaga nada lá.
 - Quando um agente faz uma pergunta (trabalho aguardando_resposta), mostre a pergunta ao usuário; \
 com a resposta dele, use `trabalho_responder`.
-- Meta Ads: com o conector ligado você LÊ as contas (ferramentas mcp__meta-ads__ de leitura). \
+- Meta Ads: com o conector ligado você LÊ as contas (ferramentas mcp__meta__ de leitura). \
 Você não altera campanhas: para pausar, reativar ou mudar orçamento, crie uma proposta com \
 `trafego_propor` (o usuário aprova na tela Tráfego ou pedindo a você: aí use `trafego_aprovar`). \
 `trafego_painel` mostra a análise diária e as otimizações pendentes. Para subir peças da HAIZEN \
@@ -190,7 +190,12 @@ def _config_mcp() -> Path:
     env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(MCP.parents[2])}
     if os.environ.get("HAIZEN_CENTRAL_PORTA"):
         env["HAIZEN_CENTRAL_PORTA"] = os.environ["HAIZEN_CENTRAL_PORTA"]
-    cfg = {"mcpServers": {"jarvis": {"command": executor._python_console(), "args": [str(MCP)], "env": env}}}
+    from haizen import trafego
+    cfg = {"mcpServers": {"jarvis": {"command": executor._python_console(), "args": [str(MCP)], "env": env},
+                          # Meta Ads (só leitura liberada ao Jarvis) pelo token que não vence.
+                          trafego.SERVIDOR: {"command": executor._python_console(), "args": [str(trafego.MCP_META)],
+                                             "env": {"PYTHONIOENCODING": "utf-8",
+                                                     "PYTHONPATH": str(trafego.MCP_META.parents[2])}}}}
     arq = pasta() / "mcp.json"
     arq.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
     return arq
@@ -242,9 +247,7 @@ def _gravar_persona(por_voz: bool, extra: str = "") -> Path:
 def argumentos(por_voz: bool, sid: str) -> list[str]:
     args = ["-p", "--output-format", "stream-json", "--verbose",
             "--permission-mode", "dontAsk",
-            # Sem --strict-mcp-config: o conector do Meta Ads ("meta-ads") fica no
-            # Claude Code do usuário (conectar-meta.bat) e entra junto. Só as
-            # ferramentas da lista abaixo podem ser usadas.
+            # Só as ferramentas da lista abaixo podem ser usadas (as do Meta Ads, só leitura).
             "--mcp-config", str(_config_mcp()),
             "--allowedTools", ",".join(permitidas()),
             # Em arquivo: no Windows, um claude.cmd (npm) cortaria o texto nas quebras de linha.
